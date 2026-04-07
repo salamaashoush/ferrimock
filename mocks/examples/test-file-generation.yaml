@@ -122,7 +122,7 @@ mocks:
         </style>
       </head>
       <body>
-        <h1>Box Dev Gate - File Generation Tests</h1>
+        <h1>Mockpit - File Generation Tests</h1>
 
         <div class="test-section">
           <h2>PDF Tests</h2>
