@@ -1,0 +1,70 @@
+[package]
+name = "mockpit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"
+keywords = ["mock", "http", "testing", "api", "fake-data"]
+categories = ["development-tools", "web-programming", "testing"]
+
+[features]
+default = ["engine", "fake-data"]
+
+# Core mock engine (types + config + matching + registry + templates)
+engine = [
+  "dep:mockpit-types",
+  "dep:mockpit-config",
+  "dep:mockpit-recorder",
+  "dep:mockpit-template",
+  "dep:mockpit-consolidator",
+  "dep:mockpit-engine",
+  "dep:mockpit-core",
+]
+
+# Fake data generators
+fake-data = ["dep:mockpit-fake-data"]
+
+# Semantic type detection from field names and values
+type-detector = ["dep:mockpit-type-detector"]
+
+# Template code generation from detected types
+codegen = ["type-detector", "dep:mockpit-codegen"]
+
+# GraphQL schema introspection and mock generation
+graphql = ["engine", "codegen", "dep:mockpit-graphql"]
+
+# HTTP server with hot reload and graceful shutdown
+server = ["engine", "dep:mockpit-server"]
+
+# Mock management HTTP API (axum router)
+api = ["server", "dep:mockpit-api"]
+
+# Mock management CLI commands
+cli = ["server", "dep:mockpit-cli"]
+
+# Config schema generation (for editor extensions)
+schema = ["engine", "mockpit-config/schema"]
+
+# Everything
+full = ["engine", "fake-data", "type-detector", "codegen", "graphql", "server", "api", "cli", "schema"]
+
+[dependencies]
+mockpit-core = { path = "../mockpit-core", optional = true }
+mockpit-types = { path = "../mockpit-types", optional = true }
+mockpit-config = { path = "../mockpit-config", optional = true }
+mockpit-recorder = { path = "../mockpit-recorder", optional = true }
+mockpit-codegen = { path = "../mockpit-codegen", optional = true }
+mockpit-template = { path = "../mockpit-template", optional = true }
+mockpit-consolidator = { path = "../mockpit-consolidator", optional = true }
+mockpit-engine = { path = "../mockpit-engine", optional = true }
+mockpit-graphql = { path = "../mockpit-graphql", optional = true }
+mockpit-type-detector = { path = "../mockpit-type-detector", optional = true }
+mockpit-fake-data = { path = "../mockpit-fake-data", optional = true }
+mockpit-server = { path = "../mockpit-server", optional = true }
+mockpit-api = { path = "../mockpit-api", optional = true }
+mockpit-cli = { path = "../mockpit-cli", optional = true }
+
+[lints]
+workspace = true
