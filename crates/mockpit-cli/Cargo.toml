@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Mockpit CLI - HTTP mocking tool with templates, recording, consolidation, and GraphQL support"
+readme = "../../README.md"
 
 [[bin]]
 name = "mockpit"

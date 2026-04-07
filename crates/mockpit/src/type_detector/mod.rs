@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use crate::type_detector::TypeDetector;
+//! use mockpit::type_detector::TypeDetector;
 //! use serde_json::json;
 //!
 //! let detector = TypeDetector::new();
