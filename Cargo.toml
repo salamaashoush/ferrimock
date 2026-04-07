@@ -23,7 +23,6 @@ resolver = "2"
 version = "0.1.0"
 authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
 edition = "2024"
-rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/salamaashoush/mockpit"
 description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"
