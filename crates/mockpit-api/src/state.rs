@@ -9,6 +9,8 @@ pub struct MockApiConfig {
     pub collections_dir: Option<PathBuf>,
     /// Directory containing recorded interactions
     pub recordings_dir: Option<PathBuf>,
+    /// Whether recording is enabled (config-level toggle)
+    pub recording_enabled: bool,
 }
 
 /// Composed state for the mock management API.
