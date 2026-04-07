@@ -134,20 +134,20 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          set -e
           publish() {
-            local crate="$1"
-            local version
-            version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"$crate\") | .version")
-            # Skip if already published
-            if curl -sf "https://crates.io/api/v1/crates/$crate/$version" > /dev/null 2>&1; then
-              echo "Skipping $crate@$version (already published)"
-              return
+            echo "Publishing $1..."
+            local output
+            if output=$(cargo publish -p "$1" --allow-dirty 2>&1); then
+              echo "Published $1"
+              echo "Waiting for crates.io index..."
+              sleep 30
+            elif echo "$output" | grep -q "already exists"; then
+              echo "Skipping $1 (already published)"
+            else
+              echo "$output"
+              echo "Failed to publish $1"
+              exit 1
             fi
-            echo "Publishing $crate@$version..."
-            cargo publish -p "$crate" --allow-dirty
-            echo "Waiting for crates.io index..."
-            sleep 30
           }
 
           # Layer 1: no workspace deps
