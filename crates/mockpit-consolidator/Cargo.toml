@@ -1,0 +1,30 @@
+[package]
+name = "mockpit-consolidator"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Smart consolidation engine for HTTP mocks with pattern detection and template generation"
+categories = ["development-tools", "testing"]
+keywords = ["mock", "http", "testing", "consolidation"]
+
+[dependencies]
+mockpit-codegen = { path = "../mockpit-codegen" }
+mockpit-config = { path = "../mockpit-config" }
+mockpit-template = { path = "../mockpit-template" }
+mockpit-type-detector = { path = "../mockpit-type-detector" }
+anyhow = { workspace = true }
+lazy_static = { workspace = true }
+regex = { workspace = true }
+rustc-hash = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+mockpit-config = { path = "../mockpit-config" }
+mockpit-types = { path = "../mockpit-types" }
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

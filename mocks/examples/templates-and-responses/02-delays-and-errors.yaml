@@ -1,0 +1,365 @@
+name: Delays and Error Responses
+description: Demonstrates delays and various error response patterns
+enabled: true
+mocks:
+- id: slow-endpoint-1s
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/slow/1s
+  delay: 1000ms
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "message": "This response was delayed by 1 second",
+        "delay_ms": 1000,
+        "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}"
+      }
+- id: slow-endpoint-3s
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/slow/3s
+  delay: 3000ms
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "message": "This response was delayed by 3 seconds",
+        "delay_ms": 3000,
+        "simulates": "slow network or heavy processing",
+        "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}"
+      }
+- id: error-400-bad-request
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/errors/bad-request
+  response:
+    status: 400
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "BAD_REQUEST",
+          "message": "The request is malformed or invalid",
+          "status": 400,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "details": [
+            {
+              "field": "email",
+              "issue": "Invalid email format"
+            },
+            {
+              "field": "age",
+              "issue": "Must be a positive integer"
+            }
+          ]
+        }
+      }
+- id: error-401-unauthorized
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/errors/unauthorized
+  response:
+    status: 401
+    headers:
+      content-type: application/json
+      www-authenticate: "Bearer realm=\"API\", error=\"invalid_token\""
+    template: |-
+      {
+        "error": {
+          "code": "UNAUTHORIZED",
+          "message": "Authentication is required to access this resource",
+          "status": 401,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}"
+        }
+      }
+- id: error-403-forbidden
+  priority: 100
+  match:
+    methods: ["DELETE"]
+    url: /api/errors/forbidden
+  response:
+    status: 403
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "FORBIDDEN",
+          "message": "You do not have permission to perform this action",
+          "status": 403,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "required_permission": "admin:delete",
+          "your_permissions": [
+            "user:read",
+            "user:write"
+          ]
+        }
+      }
+- id: error-404-not-found
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "^/api/errors/not-found/(?P<id>\\d+)$"
+  response:
+    status: 404
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "NOT_FOUND",
+          "message": "The requested resource was not found",
+          "status": 404,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "resource_type": "item",
+          "resource_id": "{{ captures.id }}"
+        }
+      }
+- id: error-409-conflict
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/errors/conflict
+  response:
+    status: 409
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "CONFLICT",
+          "message": "A resource with this identifier already exists",
+          "status": 409,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "conflicting_field": "email",
+          "conflicting_value": "user@example.com"
+        }
+      }
+- id: error-422-validation
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/errors/validation
+  response:
+    status: 422
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "VALIDATION_ERROR",
+          "message": "The request contains invalid data",
+          "status": 422,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "validation_errors": [
+            {
+              "field": "username",
+              "constraints": [
+                "min_length:3",
+                "max_length:20",
+                "alphanumeric"
+              ],
+              "provided": "ab",
+              "message": "Username must be between 3 and 20 alphanumeric characters"
+            },
+            {
+              "field": "password",
+              "constraints": [
+                "min_length:8",
+                "requires_uppercase",
+                "requires_number"
+              ],
+              "message": "Password does not meet security requirements"
+            },
+            {
+              "field": "age",
+              "constraints": [
+                "type:integer",
+                "min:18",
+                "max:120"
+              ],
+              "provided": "17",
+              "message": "Age must be at least 18"
+            }
+          ]
+        }
+      }
+- id: error-429-rate-limit
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/errors/rate-limit
+  delay: 500ms
+  response:
+    status: 429
+    headers:
+      content-type: application/json
+      retry-after: "60"
+      x-ratelimit-limit: "100"
+      x-ratelimit-remaining: "0"
+      x-ratelimit-reset: "{{ fake_unix_timestamp() }}"
+    template: |-
+      {
+        "error": {
+          "code": "RATE_LIMIT_EXCEEDED",
+          "message": "Too many requests. Please try again later.",
+          "status": 429,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "rate_limit": {
+            "limit": 100,
+            "remaining": 0,
+            "reset_at": {{ fake_unix_timestamp() }},
+            "retry_after_seconds": 60
+          }
+        }
+      }
+- id: error-500-internal-server
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/errors/internal
+  response:
+    status: 500
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "INTERNAL_SERVER_ERROR",
+          "message": "An unexpected error occurred while processing your request",
+          "status": 500,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "support_message": "Please contact support with the request ID if this issue persists"
+        }
+      }
+- id: error-502-bad-gateway
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/errors/bad-gateway
+  delay: 2000ms
+  response:
+    status: 502
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "BAD_GATEWAY",
+          "message": "The upstream service is unavailable or returned an invalid response",
+          "status": 502,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "upstream_service": "authentication-service"
+        }
+      }
+- id: error-503-service-unavailable
+  priority: 100
+  match:
+    methods: ["GET", "POST"]
+    url: /api/errors/unavailable
+  response:
+    status: 503
+    headers:
+      content-type: application/json
+      retry-after: "120"
+    template: |-
+      {
+        "error": {
+          "code": "SERVICE_UNAVAILABLE",
+          "message": "The service is temporarily unavailable due to maintenance",
+          "status": 503,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "maintenance": {
+            "scheduled": true,
+            "estimated_duration_minutes": 30,
+            "retry_after_seconds": 120
+          }
+        }
+      }
+- id: error-504-gateway-timeout
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/errors/timeout
+  delay: 5000ms
+  response:
+    status: 504
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "GATEWAY_TIMEOUT",
+          "message": "The request timed out while waiting for the upstream service",
+          "status": 504,
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "timeout_seconds": 30,
+          "suggestion": "Try again with a smaller request or contact support"
+        }
+      }
+- id: conditional-error-response
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: /api/conditional-error
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set error_code = query.error | default(value="none") -%}
+      {% if error_code == "400" %}
+      {
+        "error": {
+          "code": "BAD_REQUEST",
+          "message": "Simulated 400 error",
+          "status": 400
+        }
+      }
+      {% elif error_code == "404" %}
+      {
+        "error": {
+          "code": "NOT_FOUND",
+          "message": "Simulated 404 error",
+          "status": 404
+        }
+      }
+      {% elif error_code == "500" %}
+      {
+        "error": {
+          "code": "INTERNAL_SERVER_ERROR",
+          "message": "Simulated 500 error",
+          "status": 500
+        }
+      }
+      {% else %}
+      {
+        "success": true,
+        "message": "No error simulated",
+        "data": {
+          "id": "{{ fake_uuid() }}",
+          "value": "{{ fake_sentence(words=5) }}"
+        }
+      }
+      {% endif %}

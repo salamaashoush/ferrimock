@@ -1,0 +1,299 @@
+name: Template Features
+description: Comprehensive template engine features demonstration
+enabled: true
+mocks:
+- id: loop-basic-range
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/loops/basic
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "items": [
+          {% for i in range(start=0, end=5) %}
+          {
+            "index": {{ i }},
+            "loop_info": {
+              "is_first": {{ loop.first }},
+              "is_last": {{ loop.last }},
+              "index0": {{ loop.index0 }},
+              "index": {{ loop.index }}
+            }
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: conditionals-demo
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/conditionals
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set user_role = query.role | default(value="user") -%}
+      {%- set is_premium = query.premium | default(value="false") -%}
+      {
+        "role": "{{ user_role }}",
+        "permissions": [
+          "read"
+          {% if user_role == "admin" or user_role == "editor" %}
+          ,
+          "write",
+          "delete"
+          {% endif %}
+          {% if user_role == "admin" %}
+          ,
+          "admin",
+          "manage_users"
+          {% endif %}
+        ],
+        "tier": "{% if is_premium == 'true' %}premium{% else %}free{% endif %}",
+        "features": {
+          "storage_gb": {% if is_premium == "true" %}1000{% else %}10{% endif %},
+          "api_calls_per_day": {% if is_premium == "true" %}100000{% else %}1000{% endif %},
+          "priority_support": {{ is_premium == "true" }}
+        },
+        "badge": "{% if user_role == 'admin' %}🔐 Admin{% elif user_role == 'editor' %}✏️ Editor{% elif user_role == 'viewer' %}👁️ Viewer{% else %}👤 User{% endif %}"
+      }
+- id: filters-string-manipulation
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/filters/string
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set sample_text = "Hello World Template Example" -%}
+      {%- set sample_email = "user@EXAMPLE.COM" -%}
+      {
+        "original": "{{ sample_text }}",
+        "uppercase": "{{ sample_text | upper }}",
+        "lowercase": "{{ sample_text | lower }}",
+        "title_case": "{{ sample_text | title }}",
+        "first_word": "{{ sample_text | split(pat=' ') | first }}",
+        "last_word": "{{ sample_text | split(pat=' ') | last }}",
+        "slice_first_5": "{{ sample_text | truncate(length=5) }}",
+        "replace_example": "{{ sample_text | replace(from='World', to='Universe') }}",
+        "email_normalized": "{{ sample_email | lower }}",
+        "length": {{ sample_text | length }},
+        "trim_example": "{{ '  spaces  ' | trim }}"
+      }
+- id: filters-arrays
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/filters/arrays
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set numbers = range(start=1, end=11) -%}
+      {%- set tags = ["nodejs", "python", "rust", "golang", "java"] -%}
+      {
+        "array_operations": {
+          "numbers": {{ numbers | json_encode() }},
+          "first": {{ numbers | first }},
+          "last": {{ numbers | last }},
+          "length": {{ numbers | length }},
+          "joined": "{{ numbers | join(sep=', ') }}",
+          "slice_3": {{ numbers | truncate(length=3) | json_encode() }},
+          "tags": {{ tags | json_encode() }},
+          "tags_joined": "{{ tags | join(sep=' | ') }}",
+          "random_tag": "{{ tags | random_choice }}"
+        }
+      }
+- id: date-formatting
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/dates
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "timestamps": {
+          "iso_8601": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "human_readable": "{{ now() | date(format='%B %d, %Y at %I:%M %p') }}",
+          "date_only": "{{ now() | date(format='%Y-%m-%d') }}",
+          "time_only": "{{ now() | date(format='%H:%M:%S') }}",
+          "unix_timestamp": {{ fake_unix_timestamp() }},
+          "iso_date_helper": "{{ fake_iso_date() }}",
+          "relative_time": "{{ fake_relative_time() }}"
+        }
+      }
+- id: complex-nested-data
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/complex
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "company": {
+          "name": "{{ fake_company() }}",
+          "industry": "{{ fake_industry() }}",
+          "employees": {{ fake_number(min=50, max=5000) }},
+          "headquarters": {
+            "address": {
+              "street": "{{ fake_street() }} {{ fake_building_number() }}",
+              "city": "{{ fake_city() }}",
+              "state": "{{ fake_state_abbr() }}",
+              "zip": "{{ fake_zip() }}",
+              "country": "{{ fake_country() }}"
+            },
+            "coordinates": {
+              "lat": "{{ fake_latitude() }}",
+              "lon": "{{ fake_longitude() }}"
+            }
+          },
+          "departments": [
+            {% for i in range(start=0, end=4) %}
+            {
+              "id": "{{ fake_uuid() }}",
+              "name": "{{ ["Engineering", "Sales", "Marketing", "HR"] | nth(n=i) }}",
+              "head": {
+                "name": "{{ fake_name() }}",
+                "title": "{{ fake_job_position() }}",
+                "email": "{{ fake_email() }}"
+              },
+              "employee_count": {{ fake_number(min=5, max=100) }}
+            }{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ],
+          "tech_stack": [
+            {% set technologies = ["Node.js", "Python", "Rust", "PostgreSQL", "Redis", "Docker", "Kubernetes"] %}
+            {% for tech in technologies %}
+            "{{ tech }}"{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }
+      }
+- id: math-operations
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/math
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set price = 99.99 -%}
+      {%- set quantity = 5 -%}
+      {%- set tax_rate = 0.08 -%}
+      {%- set subtotal = price * quantity -%}
+      {%- set tax = subtotal * tax_rate -%}
+      {%- set total = subtotal + tax -%}
+      {
+        "order": {
+          "item_price": {{ price }},
+          "quantity": {{ quantity }},
+          "subtotal": {{ subtotal }},
+          "tax_rate": {{ tax_rate }},
+          "tax": {{ tax | round(precision=2) }},
+          "total": {{ total | round(precision=2) }},
+          "discount_10_percent": {{ (total * 0.9) | round(precision=2) }},
+          "percentage_saved": "{{ ((100 - (total * 0.9 / total * 100)) | round(precision=1)) }}%"
+        }
+      }
+- id: request-context-demo
+  priority: 100
+  match:
+    methods: ["GET", "POST"]
+    url: "^/api/context/(?P<resource>\\w+)/(?P<id>\\d+)$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "request_info": {
+          "method": "{{ method }}",
+          "path": "{{ path }}",
+          "uri": "{{ uri }}",
+          "captures": {
+            "resource": "{{ captures.resource }}",
+            "id": "{{ captures.id }}"
+          },
+          "query_params": {
+            "limit": "{{ query.limit | default(value='not provided') }}",
+            "offset": "{{ query.offset | default(value='not provided') }}"
+          },
+          "headers": {
+            "user_agent": "{{ headers['user-agent'] | default(value='not provided') }}",
+            "authorization": "{{ headers['authorization'] | default(value='not provided') | truncate(length=30) }}..."
+          }
+        },
+        "generated_data": {
+          "request_id": "{{ fake_uuid() }}",
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}"
+        }
+      }
+- id: kitchen-sink-template
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/template/kitchen-sink
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set item_count = query.count | default(value="5") -%}
+      {%- set include_details = query.details | default(value="true") -%}
+      {
+        "meta": {
+          "generated_at": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+          "request_id": "{{ fake_uuid() }}",
+          "version": "{{ fake_semver() }}",
+          "include_details": {{ include_details == "true" }}
+        },
+        "summary": {
+          "total_items": {{ item_count }},
+          "status": "{{ ["success", "partial", "complete"] | random_choice }}"
+        },
+        "items": [
+          {% for i in range(start=0, end=item_count) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "name": "{{ fake_sentence(words=4) | title }}",
+            "type": "{{ ["document", "file", "folder"] | random_choice }}",
+            "size": {{ fake_file_size(min=1024, max=10485760) }},
+            "created_at": "{{ fake_iso_date() }}",
+            {% if include_details == "true" %}
+            "details": {
+              "owner": {
+                "name": "{{ fake_name() }}",
+                "email": "{{ fake_email() }}"
+              },
+              "metadata": {
+                "tags": [
+                  {% for j in range(start=0, end=3) %}
+                  "{{ fake_word() }}"{% if not loop.last %},{% endif %}
+                  {% endfor %}
+                ],
+                "version": "{{ fake_semver() }}"
+              }
+            },
+            {% endif %}
+            "priority": "{% if i < 2 %}high{% elif i < 4 %}medium{% else %}low{% endif %}",
+            "progress": {{ (i + 1) * 100 / item_count | round(precision=0) }}
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }

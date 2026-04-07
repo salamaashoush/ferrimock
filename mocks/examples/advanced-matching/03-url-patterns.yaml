@@ -1,0 +1,195 @@
+name: URL Pattern Matching
+description: Demonstrates all URL pattern matching types
+enabled: true
+mocks:
+- id: exact-match-users-123
+  priority: 300
+  match:
+    methods: ["GET"]
+    url: /api/users/123
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body: |-
+      {
+        "id": "123",
+        "name": "John Doe (Exact Match)",
+        "email": "john.doe@example.com",
+        "match_type": "exact"
+      }
+- id: prefix-api-files
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: ^/api/files
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "message": "Matched by prefix: /api/files",
+        "path": "{{ path }}",
+        "match_type": "prefix",
+        "files": [
+          {% for i in range(start=0, end=5) %}
+          {
+            "id": "{{ fake_numeric_id() }}",
+            "name": "{{ fake_filename() }}",
+            "size": {{ fake_file_size(min=1024, max=10485760) }}
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: suffix-download
+  priority: 150
+  match:
+    methods: ["GET"]
+    url: /download$
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+      content-disposition: "attachment; filename=\"file.pdf\""
+    template: |-
+      {
+        "message": "Download endpoint matched by suffix",
+        "path": "{{ path }}",
+        "match_type": "suffix",
+        "download_url": "{{ fake_download_url() }}",
+        "expires_in": 3600
+      }
+- id: regex-user-id-files
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: "^/api/users/(?P<user_id>\\d+)/files/(?P<file_id>\\d+)$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "user_id": "{{ captures.user_id }}",
+        "file_id": "{{ captures.file_id }}",
+        "match_type": "regex with captures",
+        "file": {
+          "id": "{{ captures.file_id }}",
+          "name": "{{ fake_filename() }}",
+          "owner": {
+            "id": "{{ captures.user_id }}",
+            "name": "{{ fake_name() }}"
+          },
+          "size": {{ fake_file_size(min=1024, max=5242880) }},
+          "etag": "{{ fake_etag() }}",
+          "created_at": "{{ fake_iso_date() }}"
+        }
+      }
+- id: glob-api-wildcard-profile
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/api/*/profile"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "message": "Matched by glob pattern: /api/*/profile",
+        "path": "{{ path }}",
+        "match_type": "glob",
+        "profile": {
+          "id": "{{ fake_uuid() }}",
+          "name": "{{ fake_name() }}",
+          "email": "{{ fake_email() }}",
+          "avatar_url": "{{ fake_url() }}"
+        }
+      }
+- id: regex-version-resource-id
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: "^/api/v(?P<version>\\d+)/(?P<resource>\\w+)/(?P<id>[a-f0-9-]+)$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+      x-api-version: "{{ captures.version }}"
+    template: |-
+      {
+        "api_version": "v{{ captures.version }}",
+        "resource_type": "{{ captures.resource }}",
+        "resource_id": "{{ captures.id }}",
+        "match_type": "complex regex",
+        "data": {
+          "id": "{{ captures.id }}",
+          "type": "{{ captures.resource }}",
+          "attributes": {
+            "name": "{{ fake_sentence(words=3) }}",
+            "created_at": "{{ fake_iso_date() }}",
+            "status": "{{ ["active", "inactive", "pending"] | random_choice }}"
+          }
+        }
+      }
+- id: regex-any-user
+  priority: 50
+  match:
+    methods: ["GET"]
+    url: "^/api/users/(?P<user_id>\\d+)$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "{{ captures.user_id }}",
+        "name": "{{ fake_name() }}",
+        "email": "{{ fake_email() }}",
+        "match_type": "generic user (low priority)",
+        "priority": 50
+      }
+- id: exact-special-user-999
+  priority: 500
+  match:
+    methods: ["GET"]
+    url: /api/users/999
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body: |-
+      {
+        "id": "999",
+        "name": "VIP User (High Priority Match)",
+        "email": "vip@example.com",
+        "match_type": "exact match for VIP user",
+        "priority": 500,
+        "vip": true
+      }
+- id: glob-multi-wildcard
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/api/*/*/metadata"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "message": "Matched metadata endpoint with glob",
+        "path": "{{ path }}",
+        "match_type": "glob (multiple wildcards)",
+        "metadata": {
+          "created_at": "{{ fake_iso_date() }}",
+          "updated_at": "{{ fake_iso_date() }}",
+          "version": "{{ fake_semver() }}",
+          "tags": [
+            {% for i in range(start=0, end=3) %}
+            "{{ fake_word() }}"{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }
+      }

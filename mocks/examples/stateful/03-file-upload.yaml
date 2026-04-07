@@ -1,0 +1,260 @@
+name: File Upload Workflow Example
+description: Multi-part file upload with chunk tracking and progress monitoring
+enabled: true
+mocks:
+- id: upload-initialize
+  priority: 200
+  match:
+    methods: ["POST"]
+    url: /api/files/upload/sessions
+  response:
+    status: 201
+    headers:
+      content-type: application/json
+      location: "/api/files/upload/sessions/{{ fake_uuid() }}"
+    template: |-
+      {%- set upload_id = fake_uuid() -%}
+      {%- set file_name = body_json.file_name | default(value="untitled.dat") -%}
+      {%- set file_size = body_json.file_size | default(value=10485760) -%}
+      {%- set part_size = body_json.part_size | default(value=5242880) -%}
+      {%- set total_parts = file_size / part_size -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".file_name", value=file_name) -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".file_size", value=file_size) -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".part_size", value=part_size) -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".total_parts", value=total_parts) -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".uploaded_parts", value=0) -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".status", value="in_progress", ttl_seconds=3600) -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".created_at", value=fake_unix_timestamp()) -%}
+      {%- set _ = store_incr(key="uploads.total_initiated") -%}
+      {
+        "upload_session_id": "{{ upload_id }}",
+        "file_name": "{{ file_name }}",
+        "file_size": {{ file_size }},
+        "part_size": {{ part_size }},
+        "total_parts": {{ total_parts }},
+        "status": "in_progress",
+        "expires_at": "{{ fake_iso_date() }}",
+        "upload_url": "{{ fake_api_url() }}/files/upload/sessions/{{ upload_id }}/parts"
+      }
+- id: upload-part
+  priority: 200
+  match:
+    methods: ["PUT"]
+    url: "^/api/files/upload/sessions/[a-f0-9-]+/parts/\\d+$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set path_parts = path | split(pat="/") -%}
+      {%- set upload_id = path_parts | nth(n=5) -%}
+      {%- set part_number = path_parts | nth(n=7) -%}
+      {%- set part_key = "upload." ~ upload_id ~ ".part." ~ part_number -%}
+      {%- set uploaded_parts_key = "upload." ~ upload_id ~ ".uploaded_parts" -%}
+      {%- set total_parts = store_get(key="upload." ~ upload_id ~ ".total_parts") | default(value=0) -%}
+      {%- set file_size = store_get(key="upload." ~ upload_id ~ ".file_size") | default(value=0) -%}
+      {%- set part_exists = store_has(key=part_key) -%}
+      {%- if not part_exists -%}
+      {%- set _ = store_set(key=part_key, value="uploaded") -%}
+      {%- set uploaded_count = store_incr(key=uploaded_parts_key) -%}
+      {%- else -%}
+      {%- set uploaded_count = store_get(key=uploaded_parts_key) | default(value=0) -%}
+      {%- endif -%}
+      {%- set progress = ((uploaded_count / total_parts) * 100) | round(precision=1) -%}
+      {%- set bytes_uploaded = uploaded_count * (file_size / total_parts) -%}
+      {
+        "upload_session_id": "{{ upload_id }}",
+        "part_number": {{ part_number }},
+        "etag": "{{ fake_etag() }}",
+        "uploaded_parts": {{ uploaded_count }},
+        "total_parts": {{ total_parts }},
+        "progress_percent": {{ progress }},
+        "bytes_uploaded": {{ bytes_uploaded }},
+        "bytes_total": {{ file_size }},
+        "status": {% if uploaded_count >= total_parts %}"ready_to_commit"{% else %}"in_progress"{% endif %}
+      }
+- id: upload-status
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: "^/api/files/upload/sessions/[a-f0-9-]+$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set path_parts = path | split(pat="/") -%}
+      {%- set upload_id = path_parts | nth(n=5) -%}
+      {%- set file_name = store_get(key="upload." ~ upload_id ~ ".file_name") | default(value="unknown.dat") -%}
+      {%- set file_size = store_get(key="upload." ~ upload_id ~ ".file_size") | default(value=0) -%}
+      {%- set total_parts = store_get(key="upload." ~ upload_id ~ ".total_parts") | default(value=0) -%}
+      {%- set uploaded_parts = store_get(key="upload." ~ upload_id ~ ".uploaded_parts") | default(value=0) -%}
+      {%- set status = store_get(key="upload." ~ upload_id ~ ".status") | default(value="not_found") -%}
+      {%- set created_at = store_get(key="upload." ~ upload_id ~ ".created_at") | default(value=fake_unix_timestamp()) -%}
+      {%- if total_parts > 0 -%}
+      {%- set progress = ((uploaded_parts / total_parts) * 100) | round(precision=1) -%}
+      {%- set bytes_uploaded = uploaded_parts * (file_size / total_parts) -%}
+      {%- else -%}
+      {%- set progress = 0 -%}
+      {%- set bytes_uploaded = 0 -%}
+      {%- endif -%}
+      {%- set ttl = store_ttl(key="upload." ~ upload_id ~ ".status") | default(value=3600) -%}
+      {
+        "upload_session_id": "{{ upload_id }}",
+        "file_name": "{{ file_name }}",
+        "file_size": {{ file_size }},
+        "total_parts": {{ total_parts }},
+        "uploaded_parts": {{ uploaded_parts }},
+        "progress_percent": {{ progress }},
+        "bytes_uploaded": {{ bytes_uploaded }},
+        "bytes_remaining": {{ file_size - bytes_uploaded }},
+        "status": "{{ status }}",
+        "created_at": {{ created_at }},
+        "expires_in_seconds": {{ ttl }},
+        "uploaded_part_numbers": [
+          {%- for i in range(start=1, end=uploaded_parts + 1) -%}
+          {{ i }}{% if not loop.last %},{% endif %}
+          {%- endfor -%}
+        ]
+      }
+- id: upload-complete
+  priority: 200
+  match:
+    methods: ["POST"]
+    url: "^/api/files/upload/sessions/[a-f0-9-]+/commit$"
+  response:
+    status: 201
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set path_parts = path | split(pat="/") -%}
+      {%- set upload_id = path_parts | nth(n=5) -%}
+      {%- set file_name = store_get(key="upload." ~ upload_id ~ ".file_name") | default(value="uploaded_file.dat") -%}
+      {%- set file_size = store_get(key="upload." ~ upload_id ~ ".file_size") | default(value=0) -%}
+      {%- set total_parts = store_get(key="upload." ~ upload_id ~ ".total_parts") | default(value=0) -%}
+      {%- set uploaded_parts = store_get(key="upload." ~ upload_id ~ ".uploaded_parts") | default(value=0) -%}
+      {%- set file_id = fake_uuid() -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".status", value="completed") -%}
+      {%- set _ = store_set(key="upload." ~ upload_id ~ ".file_id", value=file_id) -%}
+      {%- set _ = store_incr(key="uploads.total_completed") -%}
+      {%- set _ = store_incr(key="files.total_count") -%}
+      {%- set _ = store_set(key="file." ~ file_id ~ ".name", value=file_name) -%}
+      {%- set _ = store_set(key="file." ~ file_id ~ ".size", value=file_size) -%}
+      {
+        "id": "{{ file_id }}",
+        "type": "file",
+        "name": "{{ file_name }}",
+        "size": {{ file_size }},
+        "etag": "{{ fake_etag() }}",
+        "sha1": "{{ fake_sha1() }}",
+        "created_at": "{{ fake_iso_date() }}",
+        "modified_at": "{{ fake_iso_date() }}",
+        "upload_session_id": "{{ upload_id }}",
+        "total_parts_uploaded": {{ uploaded_parts }},
+        "upload_completed_at": "{{ fake_iso_date() }}",
+        "parent": {
+          "id": "{{ fake_numeric_id() }}",
+          "type": "folder",
+          "name": "Uploads"
+        }
+      }
+- id: upload-cancel
+  priority: 200
+  match:
+    methods: ["DELETE"]
+    url: "^/api/files/upload/sessions/[a-f0-9-]+$"
+  response:
+    status: 204
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set path_parts = path | split(pat="/") -%}
+      {%- set upload_id = path_parts | nth(n=5) -%}
+      {%- set total_parts = store_get(key="upload." ~ upload_id ~ ".total_parts") | default(value=0) -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".file_name") -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".file_size") -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".part_size") -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".total_parts") -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".uploaded_parts") -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".status") -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".created_at") -%}
+      {%- for i in range(start=1, end=total_parts + 1) -%}
+      {%- set _ = store_del(key="upload." ~ upload_id ~ ".part." ~ i) -%}
+      {%- endfor -%}
+      {%- set _ = store_incr(key="uploads.total_cancelled") -%}
+      {
+        "message": "Upload session cancelled and cleaned up",
+        "upload_session_id": "{{ upload_id }}"
+      }
+- id: upload-list-sessions
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/files/upload/sessions
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set all_keys = store_keys() | default(value=[]) -%}
+      {%- set session_count = 0 -%}
+      {
+        "sessions": [
+          {%- for key in all_keys -%}
+          {%- if key | startswith(pat="upload.") and key | endswith(pat=".status") -%}
+          {%- set key_parts = key | split(pat=".") -%}
+          {%- set upload_id = key_parts | nth(n=1) -%}
+          {%- set status = store_get(key=key) | default(value="unknown") -%}
+          {%- if status == "in_progress" or status == "ready_to_commit" -%}
+          {%- set file_name = store_get(key="upload." ~ upload_id ~ ".file_name") | default(value="unknown") -%}
+          {%- set uploaded = store_get(key="upload." ~ upload_id ~ ".uploaded_parts") | default(value=0) -%}
+          {%- set total = store_get(key="upload." ~ upload_id ~ ".total_parts") | default(value=0) -%}
+          {%- set session_count = session_count + 1 -%}
+          {% if session_count > 1 %}
+          ,
+          {% endif %}
+          {
+            "upload_session_id": "{{ upload_id }}",
+            "file_name": "{{ file_name }}",
+            "status": "{{ status }}",
+            "progress": "{{ uploaded }}/{{ total }}"
+          }
+          {%- endif -%}
+          {%- endif -%}
+          {%- endfor -%}
+        ],
+        "total_active_sessions": {{ session_count }}
+      }
+- id: upload-stats
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/files/upload/stats
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set initiated = store_get(key="uploads.total_initiated") | default(value=0) -%}
+      {%- set completed = store_get(key="uploads.total_completed") | default(value=0) -%}
+      {%- set cancelled = store_get(key="uploads.total_cancelled") | default(value=0) -%}
+      {%- set in_progress = initiated - completed - cancelled -%}
+      {%- if initiated > 0 -%}
+      {%- set success_rate = ((completed / initiated) * 100) | round(precision=1) -%}
+      {%- else -%}
+      {%- set success_rate = 0 -%}
+      {%- endif -%}
+      {
+        "stats": {
+          "total_initiated": {{ initiated }},
+          "total_completed": {{ completed }},
+          "total_cancelled": {{ cancelled }},
+          "in_progress": {{ in_progress }},
+          "success_rate_percent": {{ success_rate }},
+          "total_files_stored": {{ store_get(key="files.total_count") | default(value=0) }}
+        },
+        "health": {
+          "status": "operational",
+          "timestamp": "{{ fake_iso_date() }}"
+        }
+      }

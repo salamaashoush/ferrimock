@@ -1,0 +1,161 @@
+name: Stateful Pagination Example
+description: Demonstrates cursor and offset pagination with persistence store
+enabled: true
+mocks:
+- id: list-files-cursor-first-page
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: "^/2\\.0/folders/\\d+/items$"
+    query:
+      marker: ""
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set limit = query.limit | default(value="20") | int -%}
+      {
+        "total_count": {{ store_get_or_set(key="folder.total_count", default=47) }},
+        "limit": {{ limit }},
+        "offset": 0,
+        "entries": [
+          {% for i in range(start=0, end=limit) %}
+          {
+            "type": "{{ ["file", "folder"] | random_choice }}",
+            "id": "{{ fake_numeric_id() }}",
+            "name": "{% if loop.index0 % 3 == 0 %}{{ fake_filename() }}{% else %}{{ fake_slug() }}{% endif %}",
+            "etag": "{{ fake_etag() }}",
+            "created_at": "{{ fake_iso_date() }}",
+            "modified_at": "{{ fake_iso_date() }}",
+            "size": {{ fake_file_size(min=1024, max=10485760) }},
+            "description": "{{ fake_sentence(words=8) }}"
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "next_marker": "cursor_page_2_{{ fake_uuid() | truncate(length=8) }}",
+        "prev_marker": null
+      }
+- id: list-files-cursor-subsequent-pages
+  priority: 150
+  match:
+    methods: ["GET"]
+    url: "^/2\\.0/folders/\\d+/items$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set page_num = store_incr(key="pagination.cursor.page") -%}
+      {%- set limit = query.limit | default(value="20") | int -%}
+      {%- set total = store_get_or_set(key="folder.total_count", default=47) -%}
+      {%- set has_more = (page_num * limit) < total -%}
+      {
+        "total_count": {{ total }},
+        "limit": {{ limit }},
+        "offset": {{ (page_num - 1) * limit }},
+        "entries": [
+          {% for i in range(start=0, end=limit) %}
+          {
+            "type": "{{ ["file", "folder"] | random_choice }}",
+            "id": "{{ fake_numeric_id() }}",
+            "name": "{{ fake_filename() }}",
+            "etag": "{{ fake_etag() }}",
+            "created_at": "{{ fake_iso_date() }}",
+            "modified_at": "{{ fake_iso_date() }}",
+            "size": {{ fake_file_size(min=1024, max=10485760) }}
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "next_marker": {% if has_more %}"cursor_page_{{ page_num + 1 }}_{{ fake_uuid() | truncate(length=8) }}"{% else %}null{% endif %},
+        "prev_marker": "cursor_page_{{ page_num - 1 }}_{{ fake_uuid() | truncate(length=8) }}"
+      }
+- id: list-users-offset-pagination
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/users
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set limit = query.limit | default(value="10") | int -%}
+      {%- set offset = query.offset | default(value="0") | int -%}
+      {%- set total = store_get_or_set(key="users.total", default=156) -%}
+      {%- set current_page = offset / limit + 1 -%}
+      {%- set total_pages = total / limit -%}
+      {
+        "pagination": {
+          "total": {{ total }},
+          "limit": {{ limit }},
+          "offset": {{ offset }},
+          "page": {{ current_page }},
+          "total_pages": {{ total_pages }},
+          "has_next": {{ offset + limit < total }},
+          "has_prev": {{ offset > 0 }},
+          "next_url": {% if offset + limit < total %}"{{ fake_api_url() }}/users?limit={{ limit }}&offset={{ offset + limit }}"{% else %}null{% endif %},
+          "prev_url": {% if offset > 0 %}"{{ fake_api_url() }}/users?limit={{ limit }}&offset={% if offset - limit > 0 %}{{ offset - limit }}{% else %}0{% endif %}"{% else %}null{% endif %}
+        },
+        "data": [
+          {% for i in range(start=0, end=limit) %}
+          {%- if offset + i < total -%}
+          {
+            "id": {{ offset + i + 1 }},
+            "name": "{{ fake_name() }}",
+            "email": "{{ fake_email() }}",
+            "username": "{{ fake_username() }}",
+            "role": "{{ ["admin", "user", "viewer", "editor"] | random_choice }}",
+            "status": "{{ ["active", "inactive", "pending"] | random_choice }}",
+            "created_at": "{{ fake_iso_date() }}",
+            "last_login": "{{ fake_relative_time() }}"
+          }{% if not loop.last %},{% endif %}
+          {%- endif -%}
+          {% endfor %}
+        ]
+      }
+- id: search-with-pagination
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/search
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set limit = query.limit | default(value="20") | int -%}
+      {%- set offset = query.offset | default(value="0") | int -%}
+      {
+        "query": "{{ query.q | default(value='') }}",
+        "total_results": {{ fake_number(min=50, max=500) }},
+        "limit": {{ limit }},
+        "offset": {{ offset }},
+        "search_stats": {
+          "total_searches_today": {{ fake_number(min=10, max=1000) }},
+          "duration_ms": {{ fake_number(min=10, max=250) }}
+        },
+        "results": [
+          {% for i in range(start=0, end=limit) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "type": "{{ ["document", "file", "folder", "comment"] | random_choice }}",
+            "title": "{{ fake_sentence(words=5) }}",
+            "snippet": "{{ fake_paragraph(sentences=2) }}",
+            "relevance_score": {{ fake_float(min=0.5, max=1.0) | round(precision=2) }},
+            "created_at": "{{ fake_iso_date() }}",
+            "match_highlights": [
+              "{{ fake_word() }}",
+              "{{ fake_word() }}"
+            ]
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "facets": {
+          "types": {
+            "document": {{ fake_number(min=10, max=100) }},
+            "file": {{ fake_number(min=5, max=50) }},
+            "folder": {{ fake_number(min=2, max=20) }}
+          }
+        }
+      }

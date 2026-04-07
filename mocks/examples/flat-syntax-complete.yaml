@@ -1,0 +1,643 @@
+name: Flat Syntax Complete Reference
+description: Comprehensive examples of all flat syntax features in YAML format
+mocks:
+- id: simple-get
+  match:
+    methods:
+    - GET
+    url: /api/users
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      users: []
+- id: simple-post
+  match:
+    method: POST
+    url: /api/users
+  response:
+    status: 201
+    headers:
+      content-type: application/json
+    body:
+      created: true
+      id: "123"
+- id: express-single-param
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/users/:id
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "{{ captures.id }}",
+        "name": "{{ fake_name() }}"
+      }
+- id: express-multiple-params
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/users/:user_id/files/:file_id
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "user_id": "{{ captures.user_id }}",
+        "file_id": "{{ captures.file_id }}"
+      }
+- id: glob-pattern
+  match:
+    methods:
+    - GET
+    url: /api/**/*.json
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "path": "{{ path }}",
+        "matched": "glob"
+      }
+- id: regex-pattern
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: ^/api/v\d+/users$
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "api_version": "detected",
+        "path": "{{ path }}"
+      }
+- id: prefix-explicit
+  match:
+    methods:
+    - GET
+    urls:
+    - prefix:/api/v1/
+    - prefix:/api/v2/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      message: API endpoint matched
+- id: header-exact
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /api/data
+    headers:
+      content-type: application/json
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      received: json
+- id: header-regex-inline
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/secure
+    headers:
+      authorization: ~^Bearer\s+.+
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      authenticated: true
+- id: header-present-inline
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/tracking
+    headers:
+      x-request-id: "?"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      tracked: true
+- id: header-absent-inline
+  priority: 150
+  match:
+    methods:
+    - GET
+    url: /api/status
+    headers:
+      x-debug-mode: "!"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      mode: production
+- id: multiple-headers
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /api/premium
+    headers:
+      accept: application/json
+      content-type: application/json
+      x-api-key: ~^[a-f0-9]{32}$
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      premium: true
+- id: query-single
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/search
+    query:
+      filter: active
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      filter: active
+      results: []
+- id: query-multiple
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/items
+    query:
+      limit: \d+
+      page: \d+
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      items: []
+      limit: 10
+      page: 1
+- id: body-jsonpath-inline
+  priority: 250
+  match:
+    methods:
+    - POST
+    url: /api/users
+    body:
+      $.role: admin
+  response:
+    status: 201
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "{{ fake_uuid() }}",
+        "role": "admin",
+        "permissions": [
+          "all"
+        ]
+      }
+- id: body-jsonpath-table
+  priority: 250
+  match:
+    methods:
+    - POST
+    url: /api/orders
+    body:
+      $.type: purchase
+  response:
+    status: 201
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "order_id": "{{ fake_uuid() }}",
+        "status": "confirmed"
+      }
+- id: body-contains-inline
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /api/search
+    body:
+      "@search_term": true
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      found: true
+- id: body-regex-inline
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /api/validate
+    body:
+      ~email.*@.*\.com: true
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      valid: true
+- id: with-conditions
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/conditional
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      matched: with conditions
+- id: custom-status
+  match:
+    methods:
+    - POST
+    url: /api/accepted
+  response:
+    status: 202
+    headers:
+      content-type: application/json
+    body:
+      accepted: true
+- id: multiple-response-headers
+  match:
+    methods:
+    - GET
+    url: /api/cached
+  response:
+    status: 200
+    headers:
+      cache-control: max-age=3600
+      content-type: application/json
+      etag: "{{ fake_uuid() }}"
+      x-custom: value
+    body:
+      cached: true
+- id: body-inline
+  match:
+    methods:
+    - GET
+    url: /api/inline
+  response:
+    status: 200
+    headers:
+      content-type: text/plain
+    body: This is plain text
+- id: body-template-inline
+  match:
+    methods:
+    - GET
+    url: /api/template
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "{{ fake_uuid() }}",
+        "name": "{{ fake_name() }}"
+      }
+- id: body-template-file
+  match:
+    methods:
+    - GET
+    url: /api/template-file
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template_file: responses/user-list.json
+- id: body-file
+  match:
+    methods:
+    - GET
+    url: /api/file
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    file: responses/static-response.json
+- id: json-shorthand
+  match:
+    methods:
+    - GET
+    url: /api/json
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      active: true
+      count: 42
+      id: "123"
+      name: Test
+- id: json-template
+  match:
+    methods:
+    - GET
+    url: /api/json-template
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      email: "{{ fake_email() }}"
+      id: "{{ fake_uuid() }}"
+      name: "{{ fake_name() }}"
+- id: delay-ms
+  match:
+    methods:
+    - GET
+    url: /api/slow
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      delayed: true
+  delay: 500ms
+- id: delay-seconds
+  match:
+    methods:
+    - GET
+    url: /api/very-slow
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body:
+      very_slow: true
+  delay: 2s
+- id: patches-json-patch
+  match:
+    methods:
+    - GET
+    url: /api/patch-json
+  patch:
+    operations:
+    - op: replace
+      path: /status
+      value: active
+    - op: add
+      path: /verified
+      value: true
+- id: patches-jsonpath
+  match:
+    methods:
+    - GET
+    url: /api/patch-jsonpath
+  patch:
+    jsonpath:
+      $.count: 42
+      $.enabled: true
+      $.new_field: added
+- id: patches-regex
+  match:
+    methods:
+    - GET
+    url: /api/patch-regex
+  patch:
+    regex:
+    - pattern: Production
+      replacement: Development
+    - pattern: Environment
+      replacement: Current Environment
+- id: patches-headers
+  match:
+    methods:
+    - GET
+    url: /api/patch-headers
+  patch:
+    headers:
+      add:
+        x-environment: test
+        x-mock: "true"
+        x-version: "1.0"
+      remove:
+      - x-old-header
+      - x-deprecated
+- id: patches-combined
+  match:
+    methods:
+    - GET
+    url: /api/patch-all
+  patch:
+    jsonpath:
+      $.verified: true
+    regex:
+    - pattern: pending
+      replacement: completed
+    headers:
+      add:
+        x-processed: "true"
+    operations:
+    - op: replace
+      path: /status
+      value: active
+- id: oauth-complete
+  priority: 250
+  match:
+    methods:
+    - POST
+    url: /oauth/token
+    headers:
+      authorization: ~^Basic\s+.+
+      content-type: application/x-www-form-urlencoded
+    body:
+      $.grant_type: client_credentials
+  response:
+    status: 200
+    headers:
+      cache-control: no-store
+      content-type: application/json
+      pragma: no-cache
+    template: |-
+      {
+        "access_token": "{{ fake_jwt() }}",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "scope": "read write",
+        "issued_at": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}"
+      }
+- id: user-get-detail
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/users/:id
+    headers:
+      authorization: "?"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "{{ captures.id }}",
+        "name": "{{ fake_name() }}",
+        "email": "{{ fake_email() }}",
+        "role": "user",
+        "created_at": "{{ fake_iso_date() }}",
+        "profile": {
+          "avatar": "{{ fake_avatar_url() }}",
+          "bio": "{{ fake_sentence(words=10) }}",
+          "location": {
+            "city": "{{ fake_city() }}",
+            "country": "{{ fake_country() }}"
+          }
+        },
+        "stats": {
+          "login_count": {{ fake_number(min=1, max=1000) }},
+          "last_login": "{{ fake_iso_date() }}"
+        }
+      }
+- id: pagination-example
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/items
+    query:
+      limit: \d+
+      page: \d+
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set page = query.page | default(value="1") | int -%}
+      {%- set limit = query.limit | default(value="10") | int -%}
+      {%- set total = 100 -%}
+      {
+        "page": {{ page }},
+        "limit": {{ limit }},
+        "total": {{ total }},
+        "total_pages": {{ (total / limit) | round(precision=0) }},
+        "items": [
+          {% for i in range(start=0, end=limit) %}
+            {
+              "id": "{{ fake_uuid() }}",
+              "name": "{{ fake_sentence(words=3) | title }}",
+              "created_at": "{{ fake_iso_date() }}"
+            }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: error-response
+  priority: 300
+  match:
+    methods:
+    - POST
+    url: /api/error
+    body:
+      $.trigger_error: true
+  response:
+    status: 400
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "error": {
+          "code": "VALIDATION_ERROR",
+          "message": "Invalid request payload",
+          "details": [
+            "Field 'email' is required",
+            "Field 'password' must be at least 8 characters"
+          ],
+          "request_id": "{{ fake_uuid() }}",
+          "timestamp": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}"
+        }
+      }
+  delay: 100ms
+- id: file-upload
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /api/files/upload
+    headers:
+      content-type: ~^multipart/form-data
+  response:
+    status: 201
+    headers:
+      content-type: application/json
+      location: /files/{{ fake_uuid() }}
+    template: |-
+      {
+        "id": "{{ fake_uuid() }}",
+        "filename": "{{ fake_filename() }}",
+        "size": {{ fake_file_size(min=1024, max=10485760) }},
+        "mime_type": "{{ fake_mime_type() }}",
+        "uploaded_at": "{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}",
+        "url": "/files/{{ fake_uuid() }}/download"
+      }
+- id: search-complex
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/search
+    headers:
+      accept: application/json
+    query:
+      q: .+
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set search_query = query.q | default(value="") -%}
+      {
+        "query": "{{ search_query }}",
+        "result_count": {{ fake_number(min=1, max=5) }},
+        "took_ms": {{ fake_number(min=10, max=500) }},
+        "results": [
+          {% for i in range(start=0, end=3) %}
+            {
+              "id": "{{ fake_uuid() }}",
+              "title": "{{ fake_sentence(words=5) | title }}",
+              "description": "{{ fake_sentence(words=15) }}",
+              "score": {{ fake_number(min=70, max=100) }},
+              "url": "/items/{{ fake_uuid() }}"
+            }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "facets": {
+          "categories": [
+            {% for cat in ["Documentation", "Code", "Issues", "Pull Requests"] %}
+              {
+                "name": "{{ cat }}",
+                "count": {{ fake_number(min=0, max=20) }}
+              }{% if not loop.last %},{% endif %}
+            {% endfor %}
+          ]
+        }
+      }

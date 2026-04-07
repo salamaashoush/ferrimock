@@ -1,0 +1,193 @@
+mocks:
+- id: get-user-query
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql: GetUser
+  response:
+    status: 200
+    body:
+      data:
+        user:
+          email: john@example.com
+          id: "12345"
+          name: John Doe
+          role: admin
+- id: create-admin-user
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql:
+      mutation: CreateUser
+      operation: CreateUser
+      variables:
+        input.role: admin
+  response:
+    status: 200
+    body:
+      data:
+        createUser:
+          id: new-admin-123
+          name: Admin User
+          permissions:
+          - read
+          - write
+          - admin
+          role: admin
+- id: create-regular-user
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql: CreateUser
+  response:
+    status: 200
+    body:
+      data:
+        createUser:
+          id: new-user-456
+          name: Regular User
+          permissions:
+          - read
+          role: user
+- id: introspection-handler
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql: true
+  response:
+    status: 200
+    body:
+      data:
+        __schema:
+          mutationType:
+            name: Mutation
+          queryType:
+            name: Query
+          subscriptionType:
+            name: Subscription
+          types:
+          - fields:
+            - name: id
+              type:
+                name: ID
+            - name: name
+              type:
+                name: String
+            - name: email
+              type:
+                name: String
+            kind: OBJECT
+            name: User
+- id: message-subscription
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql:
+      subscription: OnMessageReceived
+  response:
+    status: 200
+    body:
+      data:
+        messageReceived:
+          id: msg-789
+          sender: System
+          text: Hello from subscription!
+          timestamp: 2025-01-15T10:30:00Z
+- id: invalid-input-error
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql:
+      operation: CreateUser
+      variables:
+        input.email: invalid-email
+  response:
+    status: 200
+    body:
+      errors:
+      - extensions:
+          code: VALIDATION_ERROR
+          field: email
+        message: Invalid email format
+        path:
+        - createUser
+- id: active-users
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql:
+      operation: ListUsers
+      variables:
+        filter.status: active
+  response:
+    status: 200
+    body:
+      data:
+        users:
+        - id: "1"
+          name: Alice
+          status: active
+        - id: "2"
+          name: Bob
+          status: active
+- id: catch-all-queries
+  priority: 10
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql:
+      query: "*"
+  response:
+    status: 200
+    body:
+      data:
+        message: Generic query response
+- id: all-mutations
+  priority: 50
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql:
+      mutation: "*"
+  response:
+    status: 200
+    body:
+      data:
+        message: Mutation completed successfully
+        success: true
+- id: filtered-search
+  priority: 150
+  match:
+    methods:
+    - POST
+    url: /graphql
+    graphql:
+      operation: SearchItems
+      variables:
+        filters.category: electronics
+        filters.priceRange.max: 1000
+  response:
+    status: 200
+    body:
+      data:
+        items:
+        - category: electronics
+          id: item1
+          name: Laptop
+          price: 899
+        - category: electronics
+          id: item2
+          name: Tablet
+          price: 499

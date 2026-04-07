@@ -1,0 +1,205 @@
+name: Header Matching Examples
+description: Demonstrates various header matching strategies
+enabled: true
+mocks:
+- id: json-content-type-only
+  priority: 200
+  match:
+    methods: ["POST"]
+    url: /api/data
+    headers:
+      content-type: application/json
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body: |-
+      {
+        "message": "Received JSON data",
+        "content_type": "application/json"
+      }
+- id: bearer-token-auth
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: ^/api/secure
+    headers:
+      authorization: "~^Bearer\\s+[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+$"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set auth_header = headers['authorization'] | default(value="") -%}
+      {
+        "message": "Authenticated with valid JWT token",
+        "token_preview": "{{ auth_header | truncate(length=50) }}",
+        "user_id": "{{ fake_uuid() }}",
+        "roles": [
+          "admin",
+          "user"
+        ]
+      }
+- id: request-id-required
+  priority: 150
+  match:
+    methods: ["POST", "PUT", "PATCH"]
+    url: ^/api/
+    headers:
+      x-request-id: "?"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "message": "Request processed successfully",
+        "request_id": "{{ headers['x-request-id'] | default(value='unknown') }}",
+        "timestamp": "{{ fake_iso_date() }}"
+      }
+- id: production-mode-no-debug
+  priority: 150
+  match:
+    methods: ["GET"]
+    url: /api/status
+    headers:
+      x-debug-mode: "!"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    body: |-
+      {
+        "status": "ok",
+        "mode": "production",
+        "debug_enabled": false
+      }
+- id: accept-json
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: /api/users/123
+    headers:
+      accept: ~application/json
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "123",
+        "type": "user",
+        "name": "{{ fake_name() }}",
+        "email": "{{ fake_email() }}",
+        "format": "json"
+      }
+- id: accept-xml
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: /api/users/123
+    headers:
+      accept: ~application/xml
+  response:
+    status: 200
+    headers:
+      content-type: application/xml
+    template: |-
+      <?xml version="1.0" encoding="UTF-8"?>
+      <user>
+        <id>123</id>
+        <type>user</type>
+        <name>{{ fake_name() }}</name>
+        <email>{{ fake_email() }}</email>
+        <format>xml</format>
+      </user>
+- id: api-key-and-json
+  priority: 200
+  match:
+    methods: ["POST"]
+    url: /api/premium/data
+    headers:
+      x-api-key: "~^[a-f0-9]{32}$"
+      content-type: application/json
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "message": "Premium API access granted",
+        "api_key_valid": true,
+        "rate_limit": {
+          "limit": 10000,
+          "remaining": {{ fake_number(min=5000, max=10000) }},
+          "reset_at": "{{ fake_iso_date() }}"
+        }
+      }
+- id: mobile-user-agent
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: /api/app/config
+    headers:
+      user-agent: "~(?i)(mobile|android|iphone|ipad)"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "config": {
+          "theme": "mobile",
+          "features": {
+            "push_notifications": true,
+            "offline_mode": true,
+            "touch_optimized": true
+          },
+          "user_agent": "{{ headers['user-agent'] | default(value='unknown') }}"
+        }
+      }
+- id: desktop-user-agent
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/app/config
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "config": {
+          "theme": "desktop",
+          "features": {
+            "multi_window": true,
+            "keyboard_shortcuts": true,
+            "advanced_tools": true
+          },
+          "user_agent": "{{ headers['user-agent'] | default(value='unknown') }}"
+        }
+      }
+- id: vendor-specific-api
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: ^/api/v2/
+    headers:
+      x-api-version: "~^2\\.[0-9]+$"
+      x-client-id: "?"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+      x-api-version: "2.0"
+      x-ratelimit-limit: "1000"
+      x-ratelimit-remaining: "{{ fake_number(min=500, max=1000) }}"
+    template: |-
+      {
+        "version": "{{ headers['x-api-version'] | default(value='2.0') }}",
+        "client_id": "{{ headers['x-client-id'] | default(value='unknown') }}",
+        "data": {
+          "id": "{{ fake_uuid() }}",
+          "content": "{{ fake_sentence(words=10) }}"
+        }
+      }

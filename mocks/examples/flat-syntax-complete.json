@@ -1,0 +1,820 @@
+{
+  "name": "Flat Syntax Complete Reference",
+  "description": "Comprehensive examples of all flat syntax features in JSON format",
+  "mocks": [
+    {
+      "id": "simple-get",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/users"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "users": []
+        }
+      }
+    },
+    {
+      "id": "simple-post",
+      "match": {
+        "method": "POST",
+        "url": "/api/users"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "created": true,
+          "id": "123"
+        }
+      }
+    },
+    {
+      "id": "express-single-param",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/users/:id"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"id\": \"{{ captures.id }}\",\n  \"name\": \"{{ fake_name() }}\"\n}"
+      }
+    },
+    {
+      "id": "express-multiple-params",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/users/:user_id/files/:file_id"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"user_id\": \"{{ captures.user_id }}\",\n  \"file_id\": \"{{ captures.file_id }}\"\n}"
+      }
+    },
+    {
+      "id": "glob-pattern",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/**/*.json"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"path\": \"{{ path }}\",\n  \"matched\": \"glob\"\n}"
+      }
+    },
+    {
+      "id": "regex-pattern",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "^/api/v\\d+/users$"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"api_version\": \"detected\",\n  \"path\": \"{{ path }}\"\n}"
+      }
+    },
+    {
+      "id": "prefix-explicit",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "urls": [
+          "prefix:/api/v1/",
+          "prefix:/api/v2/"
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "message": "API endpoint matched"
+        }
+      }
+    },
+    {
+      "id": "header-exact",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/data",
+        "headers": {
+          "content-type": "application/json"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "received": "json"
+        }
+      }
+    },
+    {
+      "id": "header-regex-inline",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/secure",
+        "headers": {
+          "authorization": "~^Bearer\\s+.+"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": true
+        }
+      }
+    },
+    {
+      "id": "header-present-inline",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/tracking",
+        "headers": {
+          "x-request-id": "?"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "tracked": true
+        }
+      }
+    },
+    {
+      "id": "header-absent-inline",
+      "priority": 150,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/status",
+        "headers": {
+          "x-debug-mode": "!"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "mode": "production"
+        }
+      }
+    },
+    {
+      "id": "multiple-headers",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/premium",
+        "headers": {
+          "accept": "application/json",
+          "content-type": "application/json",
+          "x-api-key": "~^[a-f0-9]{32}$"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "premium": true
+        }
+      }
+    },
+    {
+      "id": "query-single",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/search",
+        "query": {
+          "filter": "active"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "filter": "active",
+          "results": []
+        }
+      }
+    },
+    {
+      "id": "query-multiple",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/items",
+        "query": {
+          "limit": "\\d+",
+          "page": "\\d+"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "limit": 10,
+          "page": 1
+        }
+      }
+    },
+    {
+      "id": "body-jsonpath-inline",
+      "priority": 250,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/users",
+        "body": {
+          "$.role": "admin"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"id\": \"{{ fake_uuid() }}\",\n  \"role\": \"admin\",\n  \"permissions\": [\n    \"all\"\n  ]\n}"
+      }
+    },
+    {
+      "id": "body-jsonpath-table",
+      "priority": 250,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/orders",
+        "body": {
+          "$.type": "purchase"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"order_id\": \"{{ fake_uuid() }}\",\n  \"status\": \"confirmed\"\n}"
+      }
+    },
+    {
+      "id": "body-contains-inline",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/search",
+        "body": {
+          "@search_term": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "found": true
+        }
+      }
+    },
+    {
+      "id": "body-regex-inline",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/validate",
+        "body": {
+          "~email.*@.*\\.com": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "valid": true
+        }
+      }
+    },
+    {
+      "id": "with-conditions",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/conditional"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "matched": "with conditions"
+        }
+      }
+    },
+    {
+      "id": "custom-status",
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/accepted"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "accepted": true
+        }
+      }
+    },
+    {
+      "id": "multiple-response-headers",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/cached"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "max-age=3600",
+          "content-type": "application/json",
+          "etag": "{{ fake_uuid() }}",
+          "x-custom": "value"
+        },
+        "body": {
+          "cached": true
+        }
+      }
+    },
+    {
+      "id": "body-inline",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/inline"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain"
+        },
+        "body": "This is plain text"
+      }
+    },
+    {
+      "id": "body-template-inline",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/template"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"id\": \"{{ fake_uuid() }}\",\n  \"name\": \"{{ fake_name() }}\"\n}"
+      }
+    },
+    {
+      "id": "body-template-file",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/template-file"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template_file": "responses/user-list.json"
+      }
+    },
+    {
+      "id": "body-file",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/file"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "file": "responses/static-response.json"
+      }
+    },
+    {
+      "id": "json-shorthand",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/json"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "json": {
+          "active": true,
+          "count": 42,
+          "id": "123",
+          "name": "Test"
+        }
+      }
+    },
+    {
+      "id": "json-template",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/json-template"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "json": {
+          "email": "{{ fake_email() }}",
+          "id": "{{ fake_uuid() }}",
+          "name": "{{ fake_name() }}"
+        }
+      }
+    },
+    {
+      "id": "delay-ms",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/slow"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "delayed": true
+        }
+      },
+      "delay": "500ms"
+    },
+    {
+      "id": "delay-seconds",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/very-slow"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "very_slow": true
+        }
+      },
+      "delay": "2s"
+    },
+    {
+      "id": "patches-json-patch",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/patch-json"
+      },
+      "patch": {
+        "operations": [
+          {
+            "op": "replace",
+            "path": "/status",
+            "value": "active"
+          },
+          {
+            "op": "add",
+            "path": "/verified",
+            "value": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "patches-jsonpath",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/patch-jsonpath"
+      },
+      "patch": {
+        "jsonpath": {
+          "$.count": 42,
+          "$.enabled": true,
+          "$.new_field": "added"
+        }
+      }
+    },
+    {
+      "id": "patches-regex",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/patch-regex"
+      },
+      "patch": {
+        "regex": [
+          {
+            "pattern": "Production",
+            "replacement": "Development"
+          },
+          {
+            "pattern": "Environment",
+            "replacement": "Current Environment"
+          }
+        ]
+      }
+    },
+    {
+      "id": "patches-headers",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/patch-headers"
+      },
+      "patch": {
+        "headers": {
+          "add": {
+            "x-environment": "test",
+            "x-mock": "true",
+            "x-version": "1.0"
+          },
+          "remove": [
+            "x-old-header",
+            "x-deprecated"
+          ]
+        }
+      }
+    },
+    {
+      "id": "patches-combined",
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/patch-all"
+      },
+      "patch": {
+        "jsonpath": {
+          "$.verified": true
+        },
+        "regex": [
+          {
+            "pattern": "pending",
+            "replacement": "completed"
+          }
+        ],
+        "headers": {
+          "add": {
+            "x-processed": "true"
+          }
+        },
+        "operations": [
+          {
+            "op": "replace",
+            "path": "/status",
+            "value": "active"
+          }
+        ]
+      }
+    },
+    {
+      "id": "oauth-complete",
+      "priority": 250,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/oauth/token",
+        "headers": {
+          "authorization": "~^Basic\\s+.+",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "$.grant_type": "client_credentials"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json",
+          "pragma": "no-cache"
+        },
+        "template": "{\n  \"access_token\": \"{{ fake_jwt() }}\",\n  \"token_type\": \"Bearer\",\n  \"expires_in\": 3600,\n  \"scope\": \"read write\",\n  \"issued_at\": \"{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}\"\n}"
+      }
+    },
+    {
+      "id": "user-get-detail",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/users/:id",
+        "headers": {
+          "authorization": "?"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"id\": \"{{ captures.id }}\",\n  \"name\": \"{{ fake_name() }}\",\n  \"email\": \"{{ fake_email() }}\",\n  \"role\": \"user\",\n  \"created_at\": \"{{ fake_iso_date() }}\",\n  \"profile\": {\n    \"avatar\": \"{{ fake_avatar_url() }}\",\n    \"bio\": \"{{ fake_sentence(words=10) }}\",\n    \"location\": {\n      \"city\": \"{{ fake_city() }}\",\n      \"country\": \"{{ fake_country() }}\"\n    }\n  },\n  \"stats\": {\n    \"login_count\": {{ fake_number(min=1, max=1000) }},\n    \"last_login\": \"{{ fake_iso_date() }}\"\n  }\n}"
+      }
+    },
+    {
+      "id": "pagination-example",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/items",
+        "query": {
+          "limit": "\\d+",
+          "page": "\\d+"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{%- set page = query.page | default(value=\"1\") | int -%}\n{%- set limit = query.limit | default(value=\"10\") | int -%}\n{%- set total = 100 -%}\n{\n  \"page\": {{ page }},\n  \"limit\": {{ limit }},\n  \"total\": {{ total }},\n  \"total_pages\": {{ (total / limit) | round(precision=0) }},\n  \"items\": [\n    {% for i in range(start=0, end=limit) %}\n      {\n        \"id\": \"{{ fake_uuid() }}\",\n        \"name\": \"{{ fake_sentence(words=3) | title }}\",\n        \"created_at\": \"{{ fake_iso_date() }}\"\n      }{% if not loop.last %},{% endif %}\n    {% endfor %}\n  ]\n}"
+      }
+    },
+    {
+      "id": "error-response",
+      "priority": 300,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/error",
+        "body": {
+          "$.trigger_error": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"Invalid request payload\",\n    \"details\": [\n      \"Field 'email' is required\",\n      \"Field 'password' must be at least 8 characters\"\n    ],\n    \"request_id\": \"{{ fake_uuid() }}\",\n    \"timestamp\": \"{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}\"\n  }\n}"
+      },
+      "delay": "100ms"
+    },
+    {
+      "id": "file-upload",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "POST"
+        ],
+        "url": "/api/files/upload",
+        "headers": {
+          "content-type": "~^multipart/form-data"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json",
+          "location": "/files/{{ fake_uuid() }}"
+        },
+        "template": "{\n  \"id\": \"{{ fake_uuid() }}\",\n  \"filename\": \"{{ fake_filename() }}\",\n  \"size\": {{ fake_file_size(min=1024, max=10485760) }},\n  \"mime_type\": \"{{ fake_mime_type() }}\",\n  \"uploaded_at\": \"{{ now() | date(format='%Y-%m-%dT%H:%M:%SZ') }}\",\n  \"url\": \"/files/{{ fake_uuid() }}/download\"\n}"
+      }
+    },
+    {
+      "id": "search-complex",
+      "priority": 200,
+      "match": {
+        "methods": [
+          "GET"
+        ],
+        "url": "/api/search",
+        "headers": {
+          "accept": "application/json"
+        },
+        "query": {
+          "q": ".+"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "template": "{%- set search_query = query.q | default(value=\"\") -%}\n{\n  \"query\": \"{{ search_query }}\",\n  \"result_count\": {{ fake_number(min=1, max=5) }},\n  \"took_ms\": {{ fake_number(min=10, max=500) }},\n  \"results\": [\n    {% for i in range(start=0, end=3) %}\n      {\n        \"id\": \"{{ fake_uuid() }}\",\n        \"title\": \"{{ fake_sentence(words=5) | title }}\",\n        \"description\": \"{{ fake_sentence(words=15) }}\",\n        \"score\": {{ fake_number(min=70, max=100) }},\n        \"url\": \"/items/{{ fake_uuid() }}\"\n      }{% if not loop.last %},{% endif %}\n    {% endfor %}\n  ],\n  \"facets\": {\n    \"categories\": [\n      {% for cat in [\"Documentation\", \"Code\", \"Issues\", \"Pull Requests\"] %}\n        {\n          \"name\": \"{{ cat }}\",\n          \"count\": {{ fake_number(min=0, max=20) }}\n        }{% if not loop.last %},{% endif %}\n      {% endfor %}\n    ]\n  }\n}"
+      }
+    }
+  ]
+}

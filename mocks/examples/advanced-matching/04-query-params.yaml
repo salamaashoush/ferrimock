@@ -1,0 +1,288 @@
+name: Query Parameter Matching
+description: Demonstrates query parameter matching and conditions
+enabled: true
+mocks:
+- id: search-with-exact-params
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: /api/search
+    query:
+      type: user
+      status: active
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "query": {
+          "type": "{{ query.type }}",
+          "status": "{{ query.status }}"
+        },
+        "results": [
+          {% for i in range(start=0, end=5) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "type": "user",
+            "name": "{{ fake_name() }}",
+            "status": "active",
+            "email": "{{ fake_email() }}"
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "total": {{ fake_number(min=5, max=50) }}
+      }
+- id: list-with-pagination
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/items
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set limit = query.limit | default(value="20") | int -%}
+      {%- set offset = query.offset | default(value="0") | int -%}
+      {%- set total = 156 -%}
+      {%- set current_page = offset / limit + 1 -%}
+      {
+        "pagination": {
+          "limit": {{ limit }},
+          "offset": {{ offset }},
+          "total": {{ total }},
+          "page": {{ current_page }},
+          "has_next": {{ offset + limit < total }},
+          "has_prev": {{ offset > 0 }}
+        },
+        "items": [
+          {% for i in range(start=0, end=limit) %}
+          {%- if offset + i < total -%}
+          {
+            "id": {{ offset + i + 1 }},
+            "name": "{{ fake_sentence(words=3) }}",
+            "created_at": "{{ fake_iso_date() }}"
+          }{% if not loop.last %},{% endif %}
+          {%- endif -%}
+          {% endfor %}
+        ]
+      }
+- id: filter-by-status-active
+  priority: 150
+  match:
+    methods: ["GET"]
+    url: /api/documents
+    query:
+      status: active
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "filter": {
+          "status": "active"
+        },
+        "documents": [
+          {% for i in range(start=0, end=10) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "name": "{{ fake_filename() }}",
+            "status": "active",
+            "size": {{ fake_file_size(min=1024, max=5242880) }},
+            "modified_at": "{{ fake_iso_date() }}"
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: filter-by-status-archived
+  priority: 150
+  match:
+    methods: ["GET"]
+    url: /api/documents
+    query:
+      status: archived
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "filter": {
+          "status": "archived"
+        },
+        "documents": [
+          {% for i in range(start=0, end=3) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "name": "{{ fake_filename() }}",
+            "status": "archived",
+            "size": {{ fake_file_size(min=1024, max=5242880) }},
+            "archived_at": "{{ fake_iso_date() }}"
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: sorted-list
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/users
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set sort_by = query.sort | default(value="name") -%}
+      {%- set order = query.order | default(value="asc") -%}
+      {
+        "sort": {
+          "field": "{{ sort_by }}",
+          "order": "{{ order }}"
+        },
+        "users": [
+          {% for i in range(start=0, end=10) %}
+          {
+            "id": {{ i + 1 }},
+            "name": "{{ fake_name() }}",
+            "email": "{{ fake_email() }}",
+            "created_at": "{{ fake_iso_date() }}"
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "note": "Results sorted by {{ sort_by }} ({{ order }})"
+      }
+- id: advanced-filter-combination
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/projects
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set limit = query.limit | default(value="10") | int -%}
+      {%- set status = query.status | default(value="all") -%}
+      {%- set sort = query.sort | default(value="created_at") -%}
+      {%- set search = query.q | default(value="") -%}
+      {
+        "filters": {
+          "status": "{{ status }}",
+          "sort": "{{ sort }}",
+          "limit": {{ limit }},
+          "search": "{{ search }}"
+        },
+        "projects": [
+          {% for i in range(start=0, end=limit) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "name": "{{ fake_sentence(words=4) }}",
+            "status": "{{ ["active", "completed", "on_hold"] | random_choice }}",
+            "owner": "{{ fake_name() }}",
+            "created_at": "{{ fake_iso_date() }}"
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: search-with-query
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/search/advanced
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set query_text = query.q | default(value="") -%}
+      {%- set type_filter = query.type | default(value="all") -%}
+      {%- set limit = query.limit | default(value="20") -%}
+      {
+        "query": "{{ query_text }}",
+        "filters": {
+          "type": "{{ type_filter }}"
+        },
+        "search_stats": {
+          "query_time_ms": {{ fake_number(min=10, max=500) }},
+          "total_results": {{ fake_number(min=10, max=10000) }}
+        },
+        "results": [
+          {% for i in range(start=0, end=limit) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "type": "{{ ["document", "file", "folder", "comment"] | random_choice }}",
+            "title": "{{ fake_sentence(words=6) }}",
+            "snippet": "{{ fake_paragraph(sentences=2) }}",
+            "score": {{ fake_float(min=0.5, max=1.0) | round(precision=2) }},
+            "highlights": [
+              "{{ fake_sentence(words=5) }}",
+              "{{ fake_sentence(words=4) }}"
+            ]
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: filter-by-date-range
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/reports
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set start_date = query.start_date | default(value="2024-01-01") -%}
+      {%- set end_date = query.end_date | default(value="2024-12-31") -%}
+      {
+        "date_range": {
+          "start": "{{ start_date }}",
+          "end": "{{ end_date }}"
+        },
+        "reports": [
+          {% for i in range(start=0, end=5) %}
+          {
+            "id": "{{ fake_uuid() }}",
+            "title": "{{ fake_sentence(words=5) }}",
+            "generated_at": "{{ fake_iso_date() }}",
+            "size_mb": {{ fake_float(min=0.5, max=50.0) | round(precision=2) }},
+            "format": "{{ ["pdf", "xlsx", "csv", "json"] | random_choice }}"
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "summary": {
+          "total_reports": {{ fake_number(min=5, max=100) }},
+          "period_days": {{ fake_number(min=1, max=365) }}
+        }
+      }
+- id: sparse-fieldsets
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/users/details
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set fields = query.fields | default(value="id,name,email") -%}
+      {%- set include_meta = query.include_meta | default(value="false") -%}
+      {
+        "requested_fields": "{{ fields }}",
+        "data": {
+          "id": "{{ fake_uuid() }}",
+          "name": "{{ fake_name() }}",
+          "email": "{{ fake_email() }}",
+          "created_at": "{{ fake_iso_date() }}"
+        }
+        {% if include_meta == "true" %}
+        ,
+        "meta": {
+          "version": "{{ fake_semver() }}",
+          "cache_hit": {{ fake_boolean() }},
+          "response_time_ms": {{ fake_number(min=5, max=200) }}
+        }
+        {% endif %}
+      }
