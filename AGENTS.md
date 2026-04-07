@@ -9,41 +9,40 @@ generation, HAR recording, smart consolidation, GraphQL mock generation, and fak
 
 ## Workspace Structure
 
-Cargo workspace with 15 crates.
+Cargo workspace with 2 crates (consolidated from 16).
 
-### Foundation Crates
+### mockpit (library)
 
-- **mockpit** - Root facade crate with feature-gated re-exports of all sub-crates
-- **mockpit-core** - Shared utilities: PersistenceStore (thread-safe KV store), levenshtein_distance
-- **mockpit-types** - Core types: RequestContext, URL patterns, request/response matchers, body sources
+All core mock engine logic in one publishable crate. Modules:
 
-### Mock System Crates
+- `core` - Shared utilities: PersistenceStore (thread-safe KV store), levenshtein_distance
+- `types` - Core types: RequestContext, URL patterns, request/response matchers, body sources
+- `config` - Mock configuration parsing (YAML/JSON), HAR file loading
+- `recorder` - HTTP request/response recording for mock generation
+- `codegen` - Template code generation from detected field types
+- `template` - Tera template rendering with 115+ fake data functions
+- `consolidator` - Smart mock consolidation with pattern detection (90%+ size reduction)
+- `engine` - Core engine: MockRegistry, MockMatcher, validation, scopes, call tracking
+- `type_detector` - Semantic type detection from field names and JSON values (40+ types)
+- `fake_data` - Fake data generators: names, emails, UUIDs, images, PDFs, etc.
+- `graphql` - GraphQL introspection parsing, SDL generation, and mock generation
+- `server` - HTTP server utilities: hot reload, graceful shutdown, file watcher, state management
+- `api` - Mock management HTTP API (axum router): CRUD, bulk ops, inspector, recording
 
-- **mockpit-config** - Mock configuration parsing (YAML/JSON), HAR file loading
-- **mockpit-recorder** - HTTP request/response recording for mock generation
-- **mockpit-codegen** - Template code generation from detected field types
-- **mockpit-template** - Tera template rendering with 115+ fake data functions
-- **mockpit-consolidator** - Smart mock consolidation with pattern detection (90%+ size reduction)
-- **mockpit-engine** - Core engine: MockRegistry, MockMatcher, validation, scopes, call tracking
+### mockpit-cli (lib + binary)
 
-### Utility Crates
+CLI binary and command implementations. Has both `[[bin]]` and `[lib]` sections.
 
-- **mockpit-type-detector** - Semantic type detection from field names and JSON values (40+ types)
-- **mockpit-fake-data** - Fake data generators: names, emails, UUIDs, images, PDFs, etc.
-- **mockpit-graphql** - GraphQL introspection parsing, SDL generation, and mock generation
-
-### Integration Crates
-
-- **mockpit-server** - HTTP server utilities: hot reload, graceful shutdown, file watcher, state management
-- **mockpit-api** - Mock management HTTP API (axum router): CRUD, bulk ops, inspector, recording
-- **mockpit-cli** - CLI commands for mock management and fake data generation
+- `commands/` - Mock management and fake data CLI commands
+- `main.rs` - Binary entry point
+- lib exports: `MockCommand`, `FakeCommand`, `execute`, `fake`
 
 ## Essential Commands
 
 ```bash
 cargo build                              # Debug build
 cargo nextest run                        # Run all tests (1153 tests)
-cargo nextest run --package mockpit-engine  # Test specific crate
+cargo nextest run --package mockpit      # Test mockpit library
 cargo check --workspace                  # Fast compile check
 ```
 
@@ -71,18 +70,17 @@ mocks:
     template: '{"id": "{{ captures.id }}", "name": "{{ fake_name() }}"}'
 ```
 
-### Feature Flags (root mockpit crate)
+### Feature Flags (mockpit crate)
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `engine` | yes | Core mock engine |
+| `engine` | yes | Core mock engine (includes fake-data, type-detector, codegen) |
 | `fake-data` | yes | Fake data generators |
 | `type-detector` | no | Semantic type detection |
 | `codegen` | no | Template code generation |
 | `graphql` | no | GraphQL introspection + mock generation |
 | `server` | no | HTTP server with hot reload |
 | `api` | no | Mock management HTTP API |
-| `cli` | no | CLI commands |
 | `schema` | no | JSON schema generation |
 | `full` | no | Everything |
 
@@ -101,11 +99,11 @@ The HTTP API uses `/__mockpit/` prefix by default. Consumers can customize via
 
 ## Testing
 
-1153 tests across all crates. Uses cargo-nextest for parallel execution.
+1153 tests. Uses cargo-nextest for parallel execution.
 
 ```bash
 cargo nextest run                        # All tests
-cargo nextest run -p mockpit-engine      # Specific crate
+cargo nextest run --package mockpit      # Library tests
 cargo nextest run test_name              # Specific test
 ```
 
