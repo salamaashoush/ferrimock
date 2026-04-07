@@ -1,27 +1,13 @@
 [workspace]
 members = [
-  "crates/mockpit-core",
-  "crates/mockpit-types",
-  "crates/mockpit-config",
-  "crates/mockpit-recorder",
-  "crates/mockpit-codegen",
-  "crates/mockpit-template",
-  "crates/mockpit-consolidator",
-  "crates/mockpit-engine",
-  "crates/mockpit-graphql",
-  "crates/mockpit-type-detector",
-  "crates/mockpit-fake-data",
-  "crates/mockpit-server",
-  "crates/mockpit-api",
-  "crates/mockpit-commands",
-  "crates/mockpit-cli",
   "crates/mockpit",
+  "crates/mockpit-cli",
 ]
 
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"

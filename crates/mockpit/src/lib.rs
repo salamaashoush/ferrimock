@@ -30,7 +30,6 @@
 //! | `graphql` | no | GraphQL schema introspection and mock generation |
 //! | `server` | no | HTTP server with hot reload and graceful shutdown |
 //! | `api` | no | Mock management HTTP API (axum router) |
-//! | `cli` | no | Mock management CLI commands |
 //! | `schema` | no | JSON schema generation for config validation |
 //! | `full` | no | Enable everything |
 
@@ -40,45 +39,31 @@
 
 /// Thread-safe persistence store for stateful mocking
 #[cfg(feature = "engine")]
-pub mod core {
-    pub use mockpit_core::*;
-}
+pub mod core;
 
 /// HTTP mock types: request matching, URL patterns, response generation
 #[cfg(feature = "engine")]
-pub mod types {
-    pub use mockpit_types::*;
-}
+pub mod types;
 
 /// Mock configuration parsing (YAML/JSON) and HAR file loading
 #[cfg(feature = "engine")]
-pub mod config {
-    pub use mockpit_config::*;
-}
+pub mod config;
 
 /// HTTP request/response recording for mock generation
 #[cfg(feature = "engine")]
-pub mod recorder {
-    pub use mockpit_recorder::*;
-}
+pub mod recorder;
 
 /// Template rendering engine with fake data integration
 #[cfg(feature = "engine")]
-pub mod template {
-    pub use mockpit_template::*;
-}
+pub mod template;
 
 /// Smart mock consolidation with pattern detection (90%+ reduction)
 #[cfg(feature = "engine")]
-pub mod consolidator {
-    pub use mockpit_consolidator::*;
-}
+pub mod consolidator;
 
 /// Core mock engine: registry, matcher, validation, scopes
 #[cfg(feature = "engine")]
-pub mod engine {
-    pub use mockpit_engine::*;
-}
+pub mod engine;
 
 // ---------------------------------------------------------------------------
 // Optional features
@@ -86,45 +71,27 @@ pub mod engine {
 
 /// Fake data generators for realistic mock responses
 #[cfg(feature = "fake-data")]
-pub mod fake_data {
-    pub use mockpit_fake_data::*;
-}
+pub mod fake_data;
 
 /// Semantic type detection from field names and JSON values
 #[cfg(feature = "type-detector")]
-pub mod type_detector {
-    pub use mockpit_type_detector::*;
-}
+pub mod type_detector;
 
 /// Template code generation from detected types
 #[cfg(feature = "codegen")]
-pub mod codegen {
-    pub use mockpit_codegen::*;
-}
+pub mod codegen;
 
 /// GraphQL schema introspection and mock generation
 #[cfg(feature = "graphql")]
-pub mod graphql {
-    pub use mockpit_graphql::*;
-}
+pub mod graphql;
 
 /// HTTP server utilities: hot reload, graceful shutdown, state management
 #[cfg(feature = "server")]
-pub mod server {
-    pub use mockpit_server::*;
-}
+pub mod server;
 
 /// Mock management HTTP API (axum router)
 #[cfg(feature = "api")]
-pub mod api {
-    pub use mockpit_api::*;
-}
-
-/// Mock and fake data command implementations
-#[cfg(feature = "commands")]
-pub mod commands {
-    pub use mockpit_commands::*;
-}
+pub mod api;
 
 // ---------------------------------------------------------------------------
 // Prelude - the most commonly used types for quick imports
@@ -138,20 +105,20 @@ pub mod commands {
 #[cfg(feature = "engine")]
 pub mod prelude {
     // Engine essentials
-    pub use mockpit_engine::{MockMatcher, MockRegistry};
+    pub use crate::engine::{MockMatcher, MockRegistry};
 
     // Config types
-    pub use mockpit_config::{MockCollectionConfig, MockConfig};
+    pub use crate::config::{MockCollectionConfig, MockConfig};
 
     // Request types
-    pub use mockpit_types::RequestContext;
+    pub use crate::types::RequestContext;
 
     // Template rendering
-    pub use mockpit_template::render_template;
+    pub use crate::template::render_template;
 
     // Recording
-    pub use mockpit_recorder::MockRecorder;
+    pub use crate::recorder::MockRecorder;
 
     // Persistence
-    pub use mockpit_core::PersistenceStore;
+    pub use crate::core::PersistenceStore;
 }
