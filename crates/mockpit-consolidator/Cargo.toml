@@ -10,10 +10,10 @@ categories = ["development-tools", "testing"]
 keywords = ["mock", "http", "testing", "consolidation"]
 
 [dependencies]
-mockpit-codegen = { path = "../mockpit-codegen" }
-mockpit-config = { path = "../mockpit-config" }
-mockpit-template = { path = "../mockpit-template" }
-mockpit-type-detector = { path = "../mockpit-type-detector" }
+mockpit-codegen = { version = "0.1.0", path = "../mockpit-codegen" }
+mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
+mockpit-template = { version = "0.1.0", path = "../mockpit-template" }
+mockpit-type-detector = { version = "0.1.0", path = "../mockpit-type-detector" }
 anyhow = { workspace = true }
 lazy_static = { workspace = true }
 regex = { workspace = true }
@@ -22,8 +22,8 @@ serde_json = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-mockpit-config = { path = "../mockpit-config" }
-mockpit-types = { path = "../mockpit-types" }
+mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
+mockpit-types = { version = "0.1.0", path = "../mockpit-types" }
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

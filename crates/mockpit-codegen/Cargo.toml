@@ -8,13 +8,13 @@ repository.workspace = true
 description = "Template code generation utilities for converting field types to template expressions"
 
 [dependencies]
-mockpit-type-detector = { path = "../mockpit-type-detector" }
+mockpit-type-detector = { version = "0.1.0", path = "../mockpit-type-detector" }
 serde_json = { workspace = true }
 rustc-hash = { workspace = true }
 urlencoding = { workspace = true }
 
 [dev-dependencies]
-mockpit-template = { path = "../mockpit-template" }
+mockpit-template = { version = "0.1.0", path = "../mockpit-template" }
 
 [lints]
 workspace = true

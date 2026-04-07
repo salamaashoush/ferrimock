@@ -8,11 +8,11 @@ repository.workspace = true
 description = "Mock management HTTP API: CRUD, bulk operations, inspection, recording, and persistence store endpoints"
 
 [dependencies]
-mockpit-config = { path = "../mockpit-config" }
-mockpit-consolidator = { path = "../mockpit-consolidator" }
-mockpit-engine = { path = "../mockpit-engine" }
-mockpit-recorder = { path = "../mockpit-recorder" }
-mockpit-server = { path = "../mockpit-server" }
+mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
+mockpit-consolidator = { version = "0.1.0", path = "../mockpit-consolidator" }
+mockpit-engine = { version = "0.1.0", path = "../mockpit-engine" }
+mockpit-recorder = { version = "0.1.0", path = "../mockpit-recorder" }
+mockpit-server = { version = "0.1.0", path = "../mockpit-server" }
 
 axum = { workspace = true }
 chrono = { workspace = true }

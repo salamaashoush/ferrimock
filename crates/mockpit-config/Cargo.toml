@@ -12,7 +12,7 @@ schema = ["schemars"]
 
 [dependencies]
 schemars = { version = "1", optional = true }
-mockpit-types = { path = "../mockpit-types" }
+mockpit-types = { version = "0.1.0", path = "../mockpit-types" }
 tokio = { workspace = true }
 http = { workspace = true }
 serde = { workspace = true }
