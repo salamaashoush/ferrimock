@@ -129,7 +129,9 @@ jobs:
 
       # Uses cargo-workspaces to automatically resolve dependency order,
       # handle retries, and skip already-published versions.
-      - uses: taiki-e/install-action@cargo-workspaces
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-workspaces
       - name: Publish all crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
