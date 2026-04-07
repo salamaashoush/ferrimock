@@ -127,62 +127,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
 
-      # Publish all crates in dependency order (leaves first, root last).
-      # Internal crates must be published for crates.io dependency resolution.
-      # Users only interact with `mockpit` (library) and `mockpit-cli` (binary).
-      - name: Publish crates
+      # Uses cargo-workspaces to automatically resolve dependency order,
+      # handle retries, and skip already-published versions.
+      - name: Install cargo-workspaces
+        run: cargo install cargo-workspaces --locked
+      - name: Publish all crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          publish() {
-            echo "Publishing $1..."
-            local output
-            if output=$(cargo publish -p "$1" --allow-dirty 2>&1); then
-              echo "Published $1"
-              echo "Waiting for crates.io index..."
-              sleep 30
-            elif echo "$output" | grep -q "already exists"; then
-              echo "Skipping $1 (already published)"
-            else
-              echo "$output"
-              echo "Failed to publish $1"
-              exit 1
-            fi
-          }
-
-          # Layer 1: no workspace deps
-          publish mockpit-core
-
-          # Layer 2: depends on core only
-          publish mockpit-types
-          publish mockpit-type-detector
-          publish mockpit-fake-data
-
-          # Layer 3
-          publish mockpit-config
-          publish mockpit-codegen
-          publish mockpit-recorder
-
-          # Layer 4
-          publish mockpit-template
-          publish mockpit-consolidator
-          publish mockpit-graphql
-
-          # Layer 5
-          publish mockpit-engine
-
-          # Layer 6
-          publish mockpit-server
-
-          # Layer 7
-          publish mockpit-api
-          publish mockpit-commands
-
-          # Layer 8: root facade (what users depend on)
-          publish mockpit
-
-          # Layer 9: binary (what cargo install uses)
-          publish mockpit-cli
+        run: cargo workspaces publish --from-git --allow-dirty --token "$CARGO_REGISTRY_TOKEN" --yes
 
   # ---------------------------------------------------------------------------
   # Publish the release (un-draft after all builds succeed)
