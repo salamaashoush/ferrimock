@@ -17,7 +17,47 @@ consolidation, and GraphQL support.
 - **HTTP API** - Axum-based management API for CRUD, bulk operations, and runtime control
 - **CLI Tools** - Commands for creating, testing, validating, serving, and converting mocks
 
+## Installation
+
+### One-line install (macOS / Linux)
+
+```sh
+curl -sSf https://raw.githubusercontent.com/salamaashoush/mockpit/main/scripts/install.sh | sh
+```
+
+### Cargo install
+
+```sh
+cargo install mockpit-cli
+```
+
+### From source
+
+```sh
+git clone https://github.com/salamaashoush/mockpit
+cd mockpit
+cargo install --path crates/mockpit-cli
+```
+
 ## Quick Start
+
+### CLI
+
+```sh
+# Create a mock
+mockpit mock create "/api/users/:id" -m GET -s 200 --template
+
+# Serve mocks with hot reload
+mockpit mock serve mocks/
+
+# Generate fake data
+mockpit fake data email --count 10
+
+# Test mock matching
+mockpit mock test -m GET /api/users/123 --render
+```
+
+### As a library
 
 Add to your `Cargo.toml`:
 

@@ -1,0 +1,190 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Create a draft GitHub release with changelog
+  # ---------------------------------------------------------------------------
+  create-release:
+    name: Create release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Generate changelog
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes "${{ steps.changelog.outputs.content }}"
+
+  # ---------------------------------------------------------------------------
+  # Build binaries for all platforms
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [create-release]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Build binary
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p mockpit-cli
+          else
+            cargo build --release --target ${{ matrix.target }} -p mockpit-cli
+          fi
+        shell: bash
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          ARCHIVE="mockpit-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz"
+          cd target/${{ matrix.target }}/release
+          tar czf "../../../${ARCHIVE}" mockpit
+          cd ../../..
+          shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ARCHIVE="mockpit-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip"
+          cd target/${{ matrix.target }}/release
+          7z a "../../../${ARCHIVE}" mockpit.exe
+          cd ../../..
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" ${{ env.ARCHIVE }} ${{ env.ARCHIVE }}.sha256
+        shell: bash
+
+  # ---------------------------------------------------------------------------
+  # Publish to crates.io
+  # ---------------------------------------------------------------------------
+  publish-crates:
+    name: Publish to crates.io
+    needs: [create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+
+      # Publish in dependency order (leaves first, root last)
+      # Sleep between publishes for crates.io index propagation
+      - name: Publish crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -e
+          publish() {
+            echo "Publishing $1..."
+            cargo publish -p "$1" --allow-dirty
+            echo "Waiting for crates.io index..."
+            sleep 30
+          }
+
+          # Layer 1: no workspace deps
+          publish mockpit-core
+
+          # Layer 2: depends on core only
+          publish mockpit-types
+          publish mockpit-type-detector
+          publish mockpit-fake-data
+
+          # Layer 3
+          publish mockpit-config
+          publish mockpit-codegen
+          publish mockpit-recorder
+
+          # Layer 4
+          publish mockpit-template
+          publish mockpit-consolidator
+          publish mockpit-graphql
+
+          # Layer 5
+          publish mockpit-engine
+
+          # Layer 6
+          publish mockpit-server
+
+          # Layer 7
+          publish mockpit-api
+          publish mockpit-commands
+
+          # Layer 8: root facade
+          publish mockpit
+
+          # Layer 9: binary (optional, people usually install via cargo install)
+          publish mockpit-cli
+
+  # ---------------------------------------------------------------------------
+  # Publish the release (un-draft after all builds succeed)
+  # ---------------------------------------------------------------------------
+  publish-release:
+    name: Publish release
+    needs: [build, publish-crates]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Un-draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
