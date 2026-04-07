@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "mockpit-api",
  "mockpit-codegen",
@@ -2497,7 +2497,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-api"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "chrono",
@@ -2517,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2537,7 +2537,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-codegen"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "mockpit-template",
  "mockpit-type-detector",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-commands"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2580,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-config"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2602,7 +2602,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-consolidator"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dashmap",
  "serde_json",
@@ -2628,7 +2628,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-fake-data"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ab_glyph",
  "base64",
@@ -2684,7 +2684,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-graphql"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "graphql-parser",
@@ -2700,7 +2700,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-recorder"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2723,7 +2723,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2743,7 +2743,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-template"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "chrono",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-type-detector"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "regex",
@@ -2778,7 +2778,7 @@ dependencies = [
 
 [[package]]
 name = "mockpit-types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytes",

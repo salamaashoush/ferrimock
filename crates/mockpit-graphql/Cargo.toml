@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "GraphQL schema introspection, parsing, and mock generation"
-categories = ["development-tools", "graphql"]
+categories = ["development-tools"]
 keywords = ["graphql", "mock", "introspection", "testing"]
 
 [dependencies]
@@ -14,9 +14,9 @@ keywords = ["graphql", "mock", "introspection", "testing"]
 graphql-parser = { workspace = true }
 
 # Mock system
-mockpit-codegen = { version = "0.1.0", path = "../mockpit-codegen" }
-mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
-mockpit-type-detector = { version = "0.1.0", path = "../mockpit-type-detector" }
+mockpit-codegen = { version = "0.1.1", path = "../mockpit-codegen" }
+mockpit-config = { version = "0.1.1", path = "../mockpit-config" }
+mockpit-type-detector = { version = "0.1.1", path = "../mockpit-type-detector" }
 
 # Error handling
 anyhow = { workspace = true }
