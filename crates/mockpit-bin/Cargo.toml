@@ -1,18 +1,18 @@
 [package]
-name = "mockpit-cli"
+name = "mockpit-bin"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Mockpit CLI - HTTP mocking tool with templates, recording, consolidation, and GraphQL support"
+description = "Mockpit CLI - HTTP mocking tool with templates, recording, and GraphQL support"
 
 [[bin]]
 name = "mockpit"
 path = "src/main.rs"
 
 [dependencies]
-mockpit-commands = { path = "../mockpit-commands" }
+mockpit-cli = { path = "../mockpit-cli" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
