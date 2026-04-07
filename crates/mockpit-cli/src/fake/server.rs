@@ -1,8 +1,8 @@
 //! Fake data HTTP server
 
+use crate::ui;
 use base64::Engine;
 use mockpit_types::RequestContext;
-use crate::ui;
 
 use super::data::generate_single_value;
 
@@ -10,227 +10,287 @@ use super::data::generate_single_value;
 #[allow(clippy::disallowed_types)] // axum Query extractor requires std HashMap
 #[allow(clippy::items_after_statements)] // Inner functions/structs are the standard axum handler pattern
 pub async fn serve_fake_data(
-  port: u16,
-  host: &str,
-  cors: bool,
-  open_browser: bool,
-  verbose: bool,
+    port: u16,
+    host: &str,
+    cors: bool,
+    open_browser: bool,
+    verbose: bool,
 ) -> anyhow::Result<()> {
-  use axum::{
-    Router,
-    extract::{Path, Query},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Response},
-    routing::{get, post},
-  };
-  use std::collections::HashMap;
-
-  println!("{}", ui::header("Fake Data Server"));
-  println!();
-  println!("{}", ui::kv("Address", &format!("http://{host}:{port}")));
-  println!();
-
-  println!("{}", ui::emphasis("Endpoints:"));
-  println!("{}", ui::list_item("GET  /                     - API documentation"));
-  println!("{}", ui::list_item("GET  /fake/:type           - Generate fake data"));
-  println!("{}", ui::list_item("GET  /fake/image/:type     - Generate image"));
-  println!("{}", ui::list_item("GET  /fake/pdf             - Generate PDF"));
-  println!("{}", ui::list_item("POST /render               - Render template"));
-  println!();
-
-  // Index page handler
-  async fn index_handler() -> Html<String> {
-    Html(INDEX_HTML.to_string())
-  }
-
-  // Fake data handler
-  async fn fake_data_handler(Path(generator): Path<String>, Query(params): Query<HashMap<String, String>>) -> Response {
-    let count: usize = params.get("count").and_then(|v| v.parse().ok()).unwrap_or(1);
-    let min: Option<f64> = params.get("min").and_then(|v| v.parse().ok());
-    let max: Option<f64> = params.get("max").and_then(|v| v.parse().ok());
-    let words: Option<usize> = params.get("words").and_then(|v| v.parse().ok());
-    let length: Option<usize> = params.get("length").and_then(|v| v.parse().ok());
-
-    let mut results = Vec::new();
-    for _ in 0..count {
-      match generate_single_value(&generator, min, max, words, length) {
-        Ok(v) => results.push(v),
-        Err(e) => {
-          return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
-        },
-      }
-    }
-
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-    let json_values: Vec<serde_json::Value> = results
-      .iter()
-      .map(|s| serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.clone())))
-      .collect();
-    let body = serde_json::to_string(&json_values).unwrap_or_default();
-
-    (headers, body).into_response()
-  }
-
-  // Image handler
-  async fn fake_image_handler(
-    Path(image_type): Path<String>,
-    Query(params): Query<HashMap<String, String>>,
-  ) -> Response {
-    use mockpit_fake_data::*;
-
-    let width: u32 = params.get("width").and_then(|v| v.parse().ok()).unwrap_or(200);
-    let height: u32 = params.get("height").and_then(|v| v.parse().ok()).unwrap_or(200);
-    let bg_color = params.get("bg_color").or(params.get("bg")).map(String::as_str);
-    let text_color = params.get("text_color").or(params.get("color")).map(String::as_str);
-    let text = params.get("text").map(String::as_str);
-    let initials = params.get("initials").map(String::as_str);
-
-    let base64_data = match image_type.as_str() {
-      "placeholder" => {
-        let display_text = text.map_or_else(|| format!("{width}x{height}"), String::from);
-        fake_placeholder(Some(width), Some(height), Some(&display_text), bg_color, text_color)
-      },
-      "avatar" => fake_avatar(initials, Some(width), bg_color, text_color),
-      "gradient" => fake_image_gradient(Some(width), Some(height), bg_color, text_color, None),
-      "checkerboard" => fake_image_checkerboard(Some(width), Some(height), bg_color, text_color, Some(20)),
-      "noise" => fake_image_noise(Some(width), Some(height), Some(false)),
-      _ => fake_placeholder(
-        Some(width),
-        Some(height),
-        Some(&format!("{width}x{height}")),
-        bg_color,
-        text_color,
-      ),
+    use axum::{
+        Router,
+        extract::{Path, Query},
+        http::{HeaderMap, HeaderValue, StatusCode, header},
+        response::{Html, IntoResponse, Response},
+        routing::{get, post},
     };
+    use std::collections::HashMap;
 
-    let bytes = match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
-      Ok(b) => b,
-      Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
+    println!("{}", ui::header("Fake Data Server"));
+    println!();
+    println!("{}", ui::kv("Address", &format!("http://{host}:{port}")));
+    println!();
 
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
-    (headers, bytes).into_response()
-  }
-
-  // PDF handler
-  async fn fake_pdf_handler(Query(params): Query<HashMap<String, String>>) -> Response {
-    let pages: u32 = params.get("pages").and_then(|v| v.parse().ok()).unwrap_or(1);
-    let text = params.get("text").map(String::as_str);
-
-    let base64_data = mockpit_fake_data::fake_pdf(text, Some(pages));
-    let bytes = match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
-      Ok(b) => b,
-      Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
-
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/pdf"));
-    headers.insert(
-      header::CONTENT_DISPOSITION,
-      HeaderValue::from_static("inline; filename=\"document.pdf\""),
+    println!("{}", ui::emphasis("Endpoints:"));
+    println!(
+        "{}",
+        ui::list_item("GET  /                     - API documentation")
     );
-    (headers, bytes).into_response()
-  }
+    println!(
+        "{}",
+        ui::list_item("GET  /fake/:type           - Generate fake data")
+    );
+    println!(
+        "{}",
+        ui::list_item("GET  /fake/image/:type     - Generate image")
+    );
+    println!(
+        "{}",
+        ui::list_item("GET  /fake/pdf             - Generate PDF")
+    );
+    println!(
+        "{}",
+        ui::list_item("POST /render               - Render template")
+    );
+    println!();
 
-  // Template render handler
-  #[derive(serde::Deserialize)]
-  struct RenderRequest {
-    template: String,
-    #[serde(default)]
-    context: serde_json::Value,
-  }
-
-  async fn render_handler(axum::Json(req): axum::Json<RenderRequest>) -> Response {
-    // Build RequestContext from the provided context
-    let mut req_ctx = RequestContext::new();
-    if !req.context.is_null() {
-      if let Some(captures) = req.context.get("captures").and_then(|v| v.as_object()) {
-        for (k, v) in captures {
-          if let Some(s) = v.as_str() {
-            req_ctx.captures.insert(k.clone(), s.to_string());
-          }
-        }
-      }
-      if let Some(headers) = req.context.get("headers").and_then(|v| v.as_object()) {
-        for (k, v) in headers {
-          if let Some(s) = v.as_str() {
-            req_ctx.headers.insert(k.clone(), s.to_string());
-          }
-        }
-      }
-      if let Some(query) = req.context.get("query").and_then(|v| v.as_object()) {
-        for (k, v) in query {
-          if let Some(s) = v.as_str() {
-            req_ctx.query.insert(k.clone(), s.to_string());
-          }
-        }
-      }
-      if let Some(body) = req.context.get("body") {
-        req_ctx.body = Some(body.to_string());
-        req_ctx.body_json = Some(body.clone());
-      }
+    // Index page handler
+    async fn index_handler() -> Html<String> {
+        Html(INDEX_HTML.to_string())
     }
 
-    match mockpit_template::render_template(&req.template, &req_ctx) {
-      Ok(result) => {
+    // Fake data handler
+    async fn fake_data_handler(
+        Path(generator): Path<String>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> Response {
+        let count: usize = params
+            .get("count")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let min: Option<f64> = params.get("min").and_then(|v| v.parse().ok());
+        let max: Option<f64> = params.get("max").and_then(|v| v.parse().ok());
+        let words: Option<usize> = params.get("words").and_then(|v| v.parse().ok());
+        let length: Option<usize> = params.get("length").and_then(|v| v.parse().ok());
+
+        let mut results = Vec::new();
+        for _ in 0..count {
+            match generate_single_value(&generator, min, max, words, length) {
+                Ok(v) => results.push(v),
+                Err(e) => {
+                    return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
+                }
+            }
+        }
+
         let mut headers = HeaderMap::new();
-        // Check if result is JSON
-        if result.trim().starts_with('{') || result.trim().starts_with('[') {
-          headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        } else {
-          headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain"));
-        }
-        (headers, result).into_response()
-      },
-      Err(e) => (StatusCode::BAD_REQUEST, format!("Template error: {e}")).into_response(),
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+
+        let json_values: Vec<serde_json::Value> = results
+            .iter()
+            .map(|s| serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.clone())))
+            .collect();
+        let body = serde_json::to_string(&json_values).unwrap_or_default();
+
+        (headers, body).into_response()
     }
-  }
 
-  // Build router
-  let mut app = Router::new()
-    .route("/", get(index_handler))
-    .route("/fake/{generator}", get(fake_data_handler))
-    .route("/fake/image/{image_type}", get(fake_image_handler))
-    .route("/fake/pdf", get(fake_pdf_handler))
-    .route("/render", post(render_handler));
+    // Image handler
+    async fn fake_image_handler(
+        Path(image_type): Path<String>,
+        Query(params): Query<HashMap<String, String>>,
+    ) -> Response {
+        use mockpit_fake_data::*;
 
-  // Add CORS if enabled
-  if cors {
-    use tower_http::cors::{Any, CorsLayer};
-    app = app.layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any));
-    println!("{}", ui::info("CORS enabled"));
-  }
+        let width: u32 = params
+            .get("width")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200);
+        let height: u32 = params
+            .get("height")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200);
+        let bg_color = params
+            .get("bg_color")
+            .or(params.get("bg"))
+            .map(String::as_str);
+        let text_color = params
+            .get("text_color")
+            .or(params.get("color"))
+            .map(String::as_str);
+        let text = params.get("text").map(String::as_str);
+        let initials = params.get("initials").map(String::as_str);
 
-  // Add logging if verbose
-  if verbose {
-    use tower_http::trace::TraceLayer;
-    app = app.layer(TraceLayer::new_for_http());
-    println!("{}", ui::info("Verbose logging enabled"));
-  }
+        let base64_data = match image_type.as_str() {
+            "placeholder" => {
+                let display_text = text.map_or_else(|| format!("{width}x{height}"), String::from);
+                fake_placeholder(
+                    Some(width),
+                    Some(height),
+                    Some(&display_text),
+                    bg_color,
+                    text_color,
+                )
+            }
+            "avatar" => fake_avatar(initials, Some(width), bg_color, text_color),
+            "gradient" => {
+                fake_image_gradient(Some(width), Some(height), bg_color, text_color, None)
+            }
+            "checkerboard" => {
+                fake_image_checkerboard(Some(width), Some(height), bg_color, text_color, Some(20))
+            }
+            "noise" => fake_image_noise(Some(width), Some(height), Some(false)),
+            _ => fake_placeholder(
+                Some(width),
+                Some(height),
+                Some(&format!("{width}x{height}")),
+                bg_color,
+                text_color,
+            ),
+        };
 
-  println!();
-  println!("{}", ui::success("Server starting..."));
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
+            Ok(b) => b,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
 
-  // Open browser if requested
-  if open_browser {
-    let url = format!("http://{host}:{port}");
-    let _ = open::that(&url);
-  }
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+        (headers, bytes).into_response()
+    }
 
-  // Start server
-  let addr: std::net::SocketAddr = format!("{host}:{port}")
-    .parse()
-    .map_err(|e| anyhow::anyhow!("Invalid address: {e}"))?;
+    // PDF handler
+    async fn fake_pdf_handler(Query(params): Query<HashMap<String, String>>) -> Response {
+        let pages: u32 = params
+            .get("pages")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let text = params.get("text").map(String::as_str);
 
-  let listener = tokio::net::TcpListener::bind(addr).await?;
-  axum::serve(listener, app)
-    .await
-    .map_err(|e| anyhow::anyhow!("Server error: {e}"))?;
+        let base64_data = mockpit_fake_data::fake_pdf(text, Some(pages));
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
+            Ok(b) => b,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
 
-  Ok(())
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/pdf"),
+        );
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("inline; filename=\"document.pdf\""),
+        );
+        (headers, bytes).into_response()
+    }
+
+    // Template render handler
+    #[derive(serde::Deserialize)]
+    struct RenderRequest {
+        template: String,
+        #[serde(default)]
+        context: serde_json::Value,
+    }
+
+    async fn render_handler(axum::Json(req): axum::Json<RenderRequest>) -> Response {
+        // Build RequestContext from the provided context
+        let mut req_ctx = RequestContext::new();
+        if !req.context.is_null() {
+            if let Some(captures) = req.context.get("captures").and_then(|v| v.as_object()) {
+                for (k, v) in captures {
+                    if let Some(s) = v.as_str() {
+                        req_ctx.captures.insert(k.clone(), s.to_string());
+                    }
+                }
+            }
+            if let Some(headers) = req.context.get("headers").and_then(|v| v.as_object()) {
+                for (k, v) in headers {
+                    if let Some(s) = v.as_str() {
+                        req_ctx.headers.insert(k.clone(), s.to_string());
+                    }
+                }
+            }
+            if let Some(query) = req.context.get("query").and_then(|v| v.as_object()) {
+                for (k, v) in query {
+                    if let Some(s) = v.as_str() {
+                        req_ctx.query.insert(k.clone(), s.to_string());
+                    }
+                }
+            }
+            if let Some(body) = req.context.get("body") {
+                req_ctx.body = Some(body.to_string());
+                req_ctx.body_json = Some(body.clone());
+            }
+        }
+
+        match mockpit_template::render_template(&req.template, &req_ctx) {
+            Ok(result) => {
+                let mut headers = HeaderMap::new();
+                // Check if result is JSON
+                if result.trim().starts_with('{') || result.trim().starts_with('[') {
+                    headers.insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/json"),
+                    );
+                } else {
+                    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain"));
+                }
+                (headers, result).into_response()
+            }
+            Err(e) => (StatusCode::BAD_REQUEST, format!("Template error: {e}")).into_response(),
+        }
+    }
+
+    // Build router
+    let mut app = Router::new()
+        .route("/", get(index_handler))
+        .route("/fake/{generator}", get(fake_data_handler))
+        .route("/fake/image/{image_type}", get(fake_image_handler))
+        .route("/fake/pdf", get(fake_pdf_handler))
+        .route("/render", post(render_handler));
+
+    // Add CORS if enabled
+    if cors {
+        use tower_http::cors::{Any, CorsLayer};
+        app = app.layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
+        println!("{}", ui::info("CORS enabled"));
+    }
+
+    // Add logging if verbose
+    if verbose {
+        use tower_http::trace::TraceLayer;
+        app = app.layer(TraceLayer::new_for_http());
+        println!("{}", ui::info("Verbose logging enabled"));
+    }
+
+    println!();
+    println!("{}", ui::success("Server starting..."));
+
+    // Open browser if requested
+    if open_browser {
+        let url = format!("http://{host}:{port}");
+        let _ = open::that(&url);
+    }
+
+    // Start server
+    let addr: std::net::SocketAddr = format!("{host}:{port}")
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid address: {e}"))?;
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| anyhow::anyhow!("Server error: {e}"))?;
+
+    Ok(())
 }
 
 const INDEX_HTML: &str = r#"<!DOCTYPE html>

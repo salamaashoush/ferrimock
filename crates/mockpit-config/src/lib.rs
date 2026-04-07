@@ -23,12 +23,16 @@ pub mod template_formatter;
 
 // Re-export commonly used types
 pub use har::{HarLoadOptions, HarLoader};
-pub use matcher::{BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig};
+pub use matcher::{
+    BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig,
+};
 pub use parser::{MockCollectionConfig, MockConfig};
 pub use patches::{HeaderPatchesConfig, JsonPatchConfig, RegexReplaceConfig};
 pub use patterns::{convert_express_to_regex, is_valid_http_method, parse_url_pattern};
 pub use request_transform::{BodyPatchesConfig, QueryPatchesConfig, RequestTransformConfig};
-pub use response::{BodyConfig, ResolvedResponse, ResponseConfig, ResponsePatchesConfig, parse_patches_config};
+pub use response::{
+    BodyConfig, ResolvedResponse, ResponseConfig, ResponsePatchesConfig, parse_patches_config,
+};
 
 /// Backward-compatibility alias: `ReturnConfig` was renamed to `ResponseConfig`
 pub type ReturnConfig = ResponseConfig;
@@ -39,11 +43,11 @@ pub use template_formatter::format_body;
 
 #[cfg(test)]
 mod patch_tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn test_parse_json_patch() {
-    let yaml = r#"
+    #[test]
+    fn test_parse_json_patch() {
+        let yaml = r#"
 mocks:
   - id: test
     match:
@@ -56,20 +60,21 @@ mocks:
           value: test
     "#;
 
-    let collection = MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
-    assert_eq!(collection.mocks.len(), 1);
+        let collection =
+            MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
+        assert_eq!(collection.mocks.len(), 1);
 
-    let mock = &collection.mocks[0];
-    let patch = mock.patch.as_ref().expect("patch should exist");
+        let mock = &collection.mocks[0];
+        let patch = mock.patch.as_ref().expect("patch should exist");
 
-    assert_eq!(patch.operations.len(), 1);
-    assert_eq!(patch.operations[0].op, "add");
-    assert_eq!(patch.operations[0].path, "/name");
-  }
+        assert_eq!(patch.operations.len(), 1);
+        assert_eq!(patch.operations[0].op, "add");
+        assert_eq!(patch.operations[0].path, "/name");
+    }
 
-  #[test]
-  fn test_parse_jsonpath_patches() {
-    let yaml = r#"
+    #[test]
+    fn test_parse_jsonpath_patches() {
+        let yaml = r#"
 mocks:
   - id: test
     match:
@@ -81,23 +86,33 @@ mocks:
         "$.enabled": true
     "#;
 
-    let collection = MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
-    let patch = collection.mocks[0].patch.as_ref().expect("patch should exist");
+        let collection =
+            MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
+        let patch = collection.mocks[0]
+            .patch
+            .as_ref()
+            .expect("patch should exist");
 
-    assert_eq!(patch.jsonpath.len(), 2);
-    assert_eq!(
-      patch.jsonpath.get("$.count").expect("count field should exist"),
-      &serde_json::Value::Number(42.into())
-    );
-    assert_eq!(
-      patch.jsonpath.get("$.enabled").expect("enabled field should exist"),
-      &serde_json::Value::Bool(true)
-    );
-  }
+        assert_eq!(patch.jsonpath.len(), 2);
+        assert_eq!(
+            patch
+                .jsonpath
+                .get("$.count")
+                .expect("count field should exist"),
+            &serde_json::Value::Number(42.into())
+        );
+        assert_eq!(
+            patch
+                .jsonpath
+                .get("$.enabled")
+                .expect("enabled field should exist"),
+            &serde_json::Value::Bool(true)
+        );
+    }
 
-  #[test]
-  fn test_parse_regex_patches() {
-    let yaml = r#"
+    #[test]
+    fn test_parse_regex_patches() {
+        let yaml = r#"
 mocks:
   - id: test
     match:
@@ -109,17 +124,21 @@ mocks:
           replacement: Development
     "#;
 
-    let collection = MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
-    let patch = collection.mocks[0].patch.as_ref().expect("patch should exist");
+        let collection =
+            MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
+        let patch = collection.mocks[0]
+            .patch
+            .as_ref()
+            .expect("patch should exist");
 
-    assert_eq!(patch.regex.len(), 1);
-    assert_eq!(patch.regex[0].pattern, "Production");
-    assert_eq!(patch.regex[0].replacement, "Development");
-  }
+        assert_eq!(patch.regex.len(), 1);
+        assert_eq!(patch.regex[0].pattern, "Production");
+        assert_eq!(patch.regex[0].replacement, "Development");
+    }
 
-  #[test]
-  fn test_parse_header_patches() {
-    let yaml = r#"
+    #[test]
+    fn test_parse_header_patches() {
+        let yaml = r#"
 mocks:
   - id: test
     match:
@@ -134,21 +153,29 @@ mocks:
           - x-old-header
     "#;
 
-    let collection = MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
-    let patch = collection.mocks[0].patch.as_ref().expect("patch should exist");
+        let collection =
+            MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
+        let patch = collection.mocks[0]
+            .patch
+            .as_ref()
+            .expect("patch should exist");
 
-    assert_eq!(patch.headers.add.len(), 2);
-    assert_eq!(
-      patch.headers.add.get("x-mock").expect("x-mock header should exist"),
-      "true"
-    );
-    assert_eq!(patch.headers.remove.len(), 1);
-    assert_eq!(patch.headers.remove[0], "x-old-header");
-  }
+        assert_eq!(patch.headers.add.len(), 2);
+        assert_eq!(
+            patch
+                .headers
+                .add
+                .get("x-mock")
+                .expect("x-mock header should exist"),
+            "true"
+        );
+        assert_eq!(patch.headers.remove.len(), 1);
+        assert_eq!(patch.headers.remove[0], "x-old-header");
+    }
 
-  #[test]
-  fn test_parse_combined_patches() {
-    let yaml = r#"
+    #[test]
+    fn test_parse_combined_patches() {
+        let yaml = r#"
 mocks:
   - id: test
     match:
@@ -169,12 +196,16 @@ mocks:
           location: /resource/1
     "#;
 
-    let collection = MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
-    let patch = collection.mocks[0].patch.as_ref().expect("patch should exist");
+        let collection =
+            MockCollectionConfig::from_yaml(yaml).expect("Failed to parse YAML config");
+        let patch = collection.mocks[0]
+            .patch
+            .as_ref()
+            .expect("patch should exist");
 
-    assert_eq!(patch.operations.len(), 1);
-    assert_eq!(patch.jsonpath.len(), 1);
-    assert_eq!(patch.regex.len(), 1);
-    assert_eq!(patch.headers.add.len(), 1);
-  }
+        assert_eq!(patch.operations.len(), 1);
+        assert_eq!(patch.jsonpath.len(), 1);
+        assert_eq!(patch.regex.len(), 1);
+        assert_eq!(patch.headers.add.len(), 1);
+    }
 }

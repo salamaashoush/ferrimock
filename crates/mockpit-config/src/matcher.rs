@@ -1,9 +1,11 @@
 //! Request matching configuration
 
 use super::patterns::{is_valid_http_method, parse_url_pattern};
-use mockpit_types::{BodyMatcher, HeaderMatcher, QueryMatcher, RequestMatcher, SmallVec, UrlPattern};
 use http::Method;
 use http::header::HeaderName;
+use mockpit_types::{
+    BodyMatcher, HeaderMatcher, QueryMatcher, RequestMatcher, SmallVec, UrlPattern,
+};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -15,39 +17,39 @@ use std::str::FromStr;
 /// - `match.GET = "/url"` - HTTP method as key
 #[derive(Debug, Clone, Default)]
 pub struct MatchConfig {
-  /// Single HTTP method (e.g., "GET")
-  pub method: Option<String>,
+    /// Single HTTP method (e.g., "GET")
+    pub method: Option<String>,
 
-  /// Multiple HTTP methods
-  pub methods: Vec<String>,
+    /// Multiple HTTP methods
+    pub methods: Vec<String>,
 
-  /// Single URL pattern
-  pub url: Option<String>,
+    /// Single URL pattern
+    pub url: Option<String>,
 
-  /// Multiple URL patterns
-  pub urls: Vec<String>,
+    /// Multiple URL patterns
+    pub urls: Vec<String>,
 
-  /// Header matching conditions
-  pub headers: FxHashMap<String, HeaderMatchConfig>,
+    /// Header matching conditions
+    pub headers: FxHashMap<String, HeaderMatchConfig>,
 
-  /// Query parameter matching (inline syntax)
-  pub query: FxHashMap<String, String>,
+    /// Query parameter matching (inline syntax)
+    pub query: FxHashMap<String, String>,
 
-  /// Body matcher configuration (inline syntax with auto-detection)
-  pub body: FxHashMap<String, serde_json::Value>,
+    /// Body matcher configuration (inline syntax with auto-detection)
+    pub body: FxHashMap<String, serde_json::Value>,
 
-  /// GraphQL matcher configuration
-  pub graphql: Option<GraphQLMatchConfig>,
+    /// GraphQL matcher configuration
+    pub graphql: Option<GraphQLMatchConfig>,
 }
 
 #[cfg(feature = "schema")]
 impl schemars::JsonSchema for MatchConfig {
-  fn schema_name() -> std::borrow::Cow<'static, str> {
-    "MatchConfig".into()
-  }
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MatchConfig".into()
+    }
 
-  fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    serde_json::json!({
+    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        serde_json::json!({
       "description": "Request matching configuration. Supports string shorthand ('GET /url') or structured object.",
       "oneOf": [
         {
@@ -79,283 +81,291 @@ impl schemars::JsonSchema for MatchConfig {
     .unwrap()
     .clone()
     .into()
-  }
+    }
 }
 
 // Custom serialization for MatchConfig
 impl serde::Serialize for MatchConfig {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: serde::Serializer,
-  {
-    use serde::ser::SerializeMap;
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
 
-    let mut map = serializer.serialize_map(None)?;
+        let mut map = serializer.serialize_map(None)?;
 
-    if let Some(m) = &self.method {
-      map.serialize_entry("method", m)?;
-    }
-    if !self.methods.is_empty() {
-      map.serialize_entry("methods", &self.methods)?;
-    }
-    if let Some(u) = &self.url {
-      map.serialize_entry("url", u)?;
-    }
-    if !self.urls.is_empty() {
-      map.serialize_entry("urls", &self.urls)?;
-    }
-    if !self.headers.is_empty() {
-      map.serialize_entry("headers", &self.headers)?;
-    }
-    if !self.query.is_empty() {
-      map.serialize_entry("query", &self.query)?;
-    }
-    if !self.body.is_empty() {
-      map.serialize_entry("body", &self.body)?;
-    }
-    if let Some(g) = &self.graphql {
-      map.serialize_entry("graphql", g)?;
-    }
+        if let Some(m) = &self.method {
+            map.serialize_entry("method", m)?;
+        }
+        if !self.methods.is_empty() {
+            map.serialize_entry("methods", &self.methods)?;
+        }
+        if let Some(u) = &self.url {
+            map.serialize_entry("url", u)?;
+        }
+        if !self.urls.is_empty() {
+            map.serialize_entry("urls", &self.urls)?;
+        }
+        if !self.headers.is_empty() {
+            map.serialize_entry("headers", &self.headers)?;
+        }
+        if !self.query.is_empty() {
+            map.serialize_entry("query", &self.query)?;
+        }
+        if !self.body.is_empty() {
+            map.serialize_entry("body", &self.body)?;
+        }
+        if let Some(g) = &self.graphql {
+            map.serialize_entry("graphql", g)?;
+        }
 
-    map.end()
-  }
+        map.end()
+    }
 }
 
 // Custom deserialization for MatchConfig
 impl<'de> serde::Deserialize<'de> for MatchConfig {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-  where
-    D: serde::Deserializer<'de>,
-  {
-    use serde::de::Error;
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
 
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    #[allow(clippy::large_enum_variant)]
-    enum Helper {
-      /// Ultra-flat string syntax: "GET /url"
-      String(String),
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        #[allow(clippy::large_enum_variant)]
+        enum Helper {
+            /// Ultra-flat string syntax: "GET /url"
+            String(String),
 
-      /// Structured form with potential method shortcuts
-      Structured {
-        #[serde(default)]
-        method: Option<String>,
-        #[serde(default)]
-        methods: Vec<String>,
-        #[serde(default)]
-        url: Option<String>,
-        #[serde(default)]
-        urls: Vec<String>,
-        #[serde(default)]
-        headers: FxHashMap<String, HeaderMatchConfig>,
-        #[serde(default)]
-        query: FxHashMap<String, String>,
-        #[serde(default)]
-        body: FxHashMap<String, serde_json::Value>,
-        #[serde(default)]
-        graphql: Option<GraphQLMatchConfig>,
+            /// Structured form with potential method shortcuts
+            Structured {
+                #[serde(default)]
+                method: Option<String>,
+                #[serde(default)]
+                methods: Vec<String>,
+                #[serde(default)]
+                url: Option<String>,
+                #[serde(default)]
+                urls: Vec<String>,
+                #[serde(default)]
+                headers: FxHashMap<String, HeaderMatchConfig>,
+                #[serde(default)]
+                query: FxHashMap<String, String>,
+                #[serde(default)]
+                body: FxHashMap<String, serde_json::Value>,
+                #[serde(default)]
+                graphql: Option<GraphQLMatchConfig>,
 
-        /// Capture any unknown fields for HTTP method shortcuts
-        #[serde(flatten)]
-        extra: FxHashMap<String, serde_json::Value>,
-      },
-    }
-
-    let helper = Helper::deserialize(deserializer)?;
-
-    match helper {
-      // Parse "GET /url" or "POST /api/users"
-      Helper::String(s) => {
-        let parts: Vec<&str> = s.splitn(2, ' ').collect();
-        if parts.len() != 2 {
-          return Err(D::Error::custom(format!(
-            "Invalid match string '{}'. Expected format: 'METHOD /url'",
-            s
-          )));
+                /// Capture any unknown fields for HTTP method shortcuts
+                #[serde(flatten)]
+                extra: FxHashMap<String, serde_json::Value>,
+            },
         }
 
-        let method = parts[0].trim().to_string();
-        let url = parts[1].trim().to_string();
+        let helper = Helper::deserialize(deserializer)?;
 
-        // Validate HTTP method
-        if !is_valid_http_method(&method) {
-          return Err(D::Error::custom(format!("Invalid HTTP method: {}", method)));
-        }
+        match helper {
+            // Parse "GET /url" or "POST /api/users"
+            Helper::String(s) => {
+                let parts: Vec<&str> = s.splitn(2, ' ').collect();
+                if parts.len() != 2 {
+                    return Err(D::Error::custom(format!(
+                        "Invalid match string '{}'. Expected format: 'METHOD /url'",
+                        s
+                    )));
+                }
 
-        Ok(MatchConfig {
-          method: Some(method),
-          url: Some(url),
-          ..Default::default()
-        })
-      },
+                let method = parts[0].trim().to_string();
+                let url = parts[1].trim().to_string();
 
-      // Structured form with potential method shortcuts
-      Helper::Structured {
-        method,
-        mut methods,
-        url,
-        mut urls,
-        headers,
-        query,
-        body,
-        graphql,
-        extra,
-      } => {
-        // Check for HTTP method shortcuts (e.g., match.GET = "/url")
-        for (key, value) in extra.iter() {
-          if is_valid_http_method(key) {
-            // This is a method shortcut: match.GET = "/url"
-            methods.push(key.clone());
+                // Validate HTTP method
+                if !is_valid_http_method(&method) {
+                    return Err(D::Error::custom(format!("Invalid HTTP method: {}", method)));
+                }
 
-            // Value should be a URL pattern (string)
-            if let Some(url_str) = value.as_str() {
-              urls.push(url_str.to_string());
-            } else {
-              return Err(D::Error::custom(format!(
-                "Method shortcut value must be a string URL pattern, got: {:?}",
-                value
-              )));
+                Ok(MatchConfig {
+                    method: Some(method),
+                    url: Some(url),
+                    ..Default::default()
+                })
             }
-          }
-        }
 
-        Ok(MatchConfig {
-          method,
-          methods,
-          url,
-          urls,
-          headers,
-          query,
-          body,
-          graphql,
-        })
-      },
+            // Structured form with potential method shortcuts
+            Helper::Structured {
+                method,
+                mut methods,
+                url,
+                mut urls,
+                headers,
+                query,
+                body,
+                graphql,
+                extra,
+            } => {
+                // Check for HTTP method shortcuts (e.g., match.GET = "/url")
+                for (key, value) in extra.iter() {
+                    if is_valid_http_method(key) {
+                        // This is a method shortcut: match.GET = "/url"
+                        methods.push(key.clone());
+
+                        // Value should be a URL pattern (string)
+                        if let Some(url_str) = value.as_str() {
+                            urls.push(url_str.to_string());
+                        } else {
+                            return Err(D::Error::custom(format!(
+                                "Method shortcut value must be a string URL pattern, got: {:?}",
+                                value
+                            )));
+                        }
+                    }
+                }
+
+                Ok(MatchConfig {
+                    method,
+                    methods,
+                    url,
+                    urls,
+                    headers,
+                    query,
+                    body,
+                    graphql,
+                })
+            }
+        }
     }
-  }
 }
 
 impl MatchConfig {
-  /// Convert to RequestConfig for backward compatibility
-  pub fn into_request_config(self) -> RequestConfig {
-    let mut methods = self.methods;
-    if let Some(method) = self.method {
-      methods.push(method);
-    }
+    /// Convert to RequestConfig for backward compatibility
+    pub fn into_request_config(self) -> RequestConfig {
+        let mut methods = self.methods;
+        if let Some(method) = self.method {
+            methods.push(method);
+        }
 
-    let mut url_patterns = self.urls;
-    if let Some(url) = self.url {
-      url_patterns.push(url);
-    }
+        let mut url_patterns = self.urls;
+        if let Some(url) = self.url {
+            url_patterns.push(url);
+        }
 
-    // Convert body map to BodyMatcherConfig if present
-    let body_matcher = if !self.body.is_empty() {
-      Some(BodyMatcherConfig::Inline(self.body))
-    } else {
-      None
-    };
+        // Convert body map to BodyMatcherConfig if present
+        let body_matcher = if !self.body.is_empty() {
+            Some(BodyMatcherConfig::Inline(self.body))
+        } else {
+            None
+        };
 
-    RequestConfig {
-      methods,
-      url_patterns,
-      headers: self.headers,
-      query: self.query,
-      body_matcher,
-      graphql_matcher: self.graphql,
+        RequestConfig {
+            methods,
+            url_patterns,
+            headers: self.headers,
+            query: self.query,
+            body_matcher,
+            graphql_matcher: self.graphql,
+        }
     }
-  }
 }
 
 /// Request matching configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RequestConfig {
-  /// HTTP methods to match (empty = match all)
-  #[serde(default)]
-  pub methods: Vec<String>,
+    /// HTTP methods to match (empty = match all)
+    #[serde(default)]
+    pub methods: Vec<String>,
 
-  /// URL patterns to match
-  #[serde(default)]
-  pub url_patterns: Vec<String>,
+    /// URL patterns to match
+    #[serde(default)]
+    pub url_patterns: Vec<String>,
 
-  /// Header matching conditions
-  #[serde(default)]
-  pub headers: FxHashMap<String, HeaderMatchConfig>,
+    /// Header matching conditions
+    #[serde(default)]
+    pub headers: FxHashMap<String, HeaderMatchConfig>,
 
-  /// Query parameter matching (inline syntax)
-  #[serde(default)]
-  pub query: FxHashMap<String, String>,
+    /// Query parameter matching (inline syntax)
+    #[serde(default)]
+    pub query: FxHashMap<String, String>,
 
-  /// Body matcher configuration
-  #[serde(default)]
-  pub body_matcher: Option<BodyMatcherConfig>,
+    /// Body matcher configuration
+    #[serde(default)]
+    pub body_matcher: Option<BodyMatcherConfig>,
 
-  /// GraphQL matcher configuration
-  #[serde(default)]
-  pub graphql_matcher: Option<GraphQLMatchConfig>,
+    /// GraphQL matcher configuration
+    #[serde(default)]
+    pub graphql_matcher: Option<GraphQLMatchConfig>,
 }
 
 impl RequestConfig {
-  /// Convert to a RequestMatcher
-  pub fn into_request_matcher(self) -> Result<RequestMatcher, String> {
-    // Parse methods
-    let methods: Result<SmallVec<[Method; 2]>, _> = self
-      .methods
-      .iter()
-      .map(|m| Method::from_str(m).map_err(|e| format!("Invalid method '{}': {}", m, e)))
-      .collect();
-    let methods = methods?;
+    /// Convert to a RequestMatcher
+    pub fn into_request_matcher(self) -> Result<RequestMatcher, String> {
+        // Parse methods
+        let methods: Result<SmallVec<[Method; 2]>, _> = self
+            .methods
+            .iter()
+            .map(|m| Method::from_str(m).map_err(|e| format!("Invalid method '{}': {}", m, e)))
+            .collect();
+        let methods = methods?;
 
-    // Parse URL patterns
-    let url_patterns: Result<SmallVec<[UrlPattern; 1]>, _> =
-      self.url_patterns.iter().map(|p| parse_url_pattern(p)).collect();
-    let url_patterns = url_patterns?;
+        // Parse URL patterns
+        let url_patterns: Result<SmallVec<[UrlPattern; 1]>, _> = self
+            .url_patterns
+            .iter()
+            .map(|p| parse_url_pattern(p))
+            .collect();
+        let url_patterns = url_patterns?;
 
-    // Parse header matchers
-    let header_matchers: Result<SmallVec<[HeaderMatcher; 2]>, _> = self
-      .headers
-      .into_iter()
-      .map(|(name, config)| {
-        let header_name = HeaderName::from_str(&name).map_err(|e| format!("Invalid header name '{}': {}", name, e))?;
-        config.into_header_matcher(header_name)
-      })
-      .collect();
-    let header_matchers = header_matchers?;
+        // Parse header matchers
+        let header_matchers: Result<SmallVec<[HeaderMatcher; 2]>, _> = self
+            .headers
+            .into_iter()
+            .map(|(name, config)| {
+                let header_name = HeaderName::from_str(&name)
+                    .map_err(|e| format!("Invalid header name '{}': {}", name, e))?;
+                config.into_header_matcher(header_name)
+            })
+            .collect();
+        let header_matchers = header_matchers?;
 
-    // Parse query parameter matchers from the query map with inline syntax support
-    let query_matchers: Result<SmallVec<[QueryMatcher; 2]>, String> = self
-      .query
-      .into_iter()
-      .map(|(name, value)| {
-        if let Some(regex_pattern) = value.strip_prefix('~') {
-          QueryMatcher::regex(name, regex_pattern).map_err(|e| format!("Invalid query regex: {}", e))
-        } else if value == "?" {
-          Ok(QueryMatcher::present(name))
-        } else if value == "!" {
-          Ok(QueryMatcher::absent(name))
-        } else {
-          Ok(QueryMatcher::exact(name, value))
-        }
-      })
-      .collect();
-    let query_matchers = query_matchers?;
+        // Parse query parameter matchers from the query map with inline syntax support
+        let query_matchers: Result<SmallVec<[QueryMatcher; 2]>, String> = self
+            .query
+            .into_iter()
+            .map(|(name, value)| {
+                if let Some(regex_pattern) = value.strip_prefix('~') {
+                    QueryMatcher::regex(name, regex_pattern)
+                        .map_err(|e| format!("Invalid query regex: {}", e))
+                } else if value == "?" {
+                    Ok(QueryMatcher::present(name))
+                } else if value == "!" {
+                    Ok(QueryMatcher::absent(name))
+                } else {
+                    Ok(QueryMatcher::exact(name, value))
+                }
+            })
+            .collect();
+        let query_matchers = query_matchers?;
 
-    // Parse body matcher
-    let body_matcher = self.body_matcher.map(|config| config.into_body_matcher()).transpose()?;
+        // Parse body matcher
+        let body_matcher = self
+            .body_matcher
+            .map(|config| config.into_body_matcher())
+            .transpose()?;
 
-    // Parse GraphQL matcher
-    let graphql_matcher = self
-      .graphql_matcher
-      .map(|config| config.into_graphql_matcher())
-      .transpose()?;
+        // Parse GraphQL matcher
+        let graphql_matcher = self
+            .graphql_matcher
+            .map(|config| config.into_graphql_matcher())
+            .transpose()?;
 
-    Ok(RequestMatcher {
-      methods,
-      url_patterns,
-      header_matchers,
-      query_matchers,
-      body_matcher,
-      graphql_matcher,
-    })
-  }
+        Ok(RequestMatcher {
+            methods,
+            url_patterns,
+            header_matchers,
+            query_matchers,
+            body_matcher,
+            graphql_matcher,
+        })
+    }
 }
 
 /// Header matching configuration - inline syntax only
@@ -363,35 +373,36 @@ impl RequestConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum HeaderMatchConfig {
-  /// String value with inline syntax support:
-  /// - Plain string: exact match
-  /// - ~pattern: regex match
-  /// - ?: header must be present
-  /// - !: header must be absent
-  Exact(String),
+    /// String value with inline syntax support:
+    /// - Plain string: exact match
+    /// - ~pattern: regex match
+    /// - ?: header must be present
+    /// - !: header must be absent
+    Exact(String),
 }
 
 impl HeaderMatchConfig {
-  pub fn into_header_matcher(self, name: HeaderName) -> Result<HeaderMatcher, String> {
-    match self {
-      HeaderMatchConfig::Exact(value) => {
-        // Check for inline matcher syntax prefixes
-        if let Some(regex_pattern) = value.strip_prefix('~') {
-          // ~pattern = regex match
-          HeaderMatcher::regex(name, regex_pattern).map_err(|e| format!("Invalid header regex: {}", e))
-        } else if value == "?" {
-          // ? = header must be present
-          Ok(HeaderMatcher::present(name))
-        } else if value == "!" {
-          // ! = header must be absent
-          Ok(HeaderMatcher::absent(name))
-        } else {
-          // Plain string = exact match
-          Ok(HeaderMatcher::exact(name, value))
+    pub fn into_header_matcher(self, name: HeaderName) -> Result<HeaderMatcher, String> {
+        match self {
+            HeaderMatchConfig::Exact(value) => {
+                // Check for inline matcher syntax prefixes
+                if let Some(regex_pattern) = value.strip_prefix('~') {
+                    // ~pattern = regex match
+                    HeaderMatcher::regex(name, regex_pattern)
+                        .map_err(|e| format!("Invalid header regex: {}", e))
+                } else if value == "?" {
+                    // ? = header must be present
+                    Ok(HeaderMatcher::present(name))
+                } else if value == "!" {
+                    // ! = header must be absent
+                    Ok(HeaderMatcher::absent(name))
+                } else {
+                    // Plain string = exact match
+                    Ok(HeaderMatcher::exact(name, value))
+                }
+            }
         }
-      },
     }
-  }
 }
 
 /// Body matcher configuration - inline syntax only with auto-detection
@@ -404,206 +415,220 @@ impl HeaderMatchConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum BodyMatcherConfig {
-  /// Inline syntax - HashMap with auto-detection based on key prefixes
-  Inline(
-    #[allow(clippy::disallowed_types)]
-    #[cfg_attr(
-      feature = "schema",
-      schemars(with = "std::collections::HashMap<String, serde_json::Value>")
-    )]
-    FxHashMap<String, serde_json::Value>,
-  ),
+    /// Inline syntax - HashMap with auto-detection based on key prefixes
+    Inline(
+        #[allow(clippy::disallowed_types)]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(with = "std::collections::HashMap<String, serde_json::Value>")
+        )]
+        FxHashMap<String, serde_json::Value>,
+    ),
 }
 
 impl BodyMatcherConfig {
-  pub fn into_body_matcher(self) -> Result<BodyMatcher, String> {
-    match self {
-      BodyMatcherConfig::Inline(map) => {
-        // Parse inline syntax from the map
-        // We expect exactly one entry for inline syntax
-        if map.len() != 1 {
-          return Err("Body matcher requires exactly one key-value pair".to_string());
-        }
+    pub fn into_body_matcher(self) -> Result<BodyMatcher, String> {
+        match self {
+            BodyMatcherConfig::Inline(map) => {
+                // Parse inline syntax from the map
+                // We expect exactly one entry for inline syntax
+                if map.len() != 1 {
+                    return Err("Body matcher requires exactly one key-value pair".to_string());
+                }
 
-        let (key, value) = map
-          .iter()
-          .next()
-          .expect("Body matcher map should have exactly one entry after length check");
+                let (key, value) = map
+                    .iter()
+                    .next()
+                    .expect("Body matcher map should have exactly one entry after length check");
 
-        // Check for legacy syntax (backward compatibility)
-        if key == "contains" {
-          // Legacy syntax: contains = ["text1", "text2"] or contains = "text"
-          if let Some(arr) = value.as_array() {
-            // Array of strings - create an AND matcher for all of them
-            let text_list: Result<Vec<String>, _> = arr
-              .iter()
-              .map(|v| {
-                v.as_str()
-                  .ok_or_else(|| "contains array must contain strings".to_string())
-                  .map(|s| s.to_string())
-              })
-              .collect();
-            let text_list = text_list?;
+                // Check for legacy syntax (backward compatibility)
+                if key == "contains" {
+                    // Legacy syntax: contains = ["text1", "text2"] or contains = "text"
+                    if let Some(arr) = value.as_array() {
+                        // Array of strings - create an AND matcher for all of them
+                        let text_list: Result<Vec<String>, _> = arr
+                            .iter()
+                            .map(|v| {
+                                v.as_str()
+                                    .ok_or_else(|| {
+                                        "contains array must contain strings".to_string()
+                                    })
+                                    .map(|s| s.to_string())
+                            })
+                            .collect();
+                        let text_list = text_list?;
 
-            if text_list.is_empty() {
-              return Err("contains array cannot be empty".to_string());
+                        if text_list.is_empty() {
+                            return Err("contains array cannot be empty".to_string());
+                        }
+
+                        // For multiple contains, we need to check all of them
+                        // Create a combined matcher using the first one and verify others in matching
+                        // For now, just use the first one as a simple contains check
+                        // (Full AND logic would require changes to BodyMatcher type)
+                        return Ok(BodyMatcher::contains(&text_list[0]));
+                    } else if let Some(text) = value.as_str() {
+                        // Single string
+                        return Ok(BodyMatcher::contains(text));
+                    } else {
+                        return Err(
+                            "contains value must be a string or array of strings".to_string()
+                        );
+                    }
+                } else if key == "regex" {
+                    // Legacy syntax: regex = "pattern"
+                    if let Some(pattern) = value.as_str() {
+                        return BodyMatcher::regex(pattern)
+                            .map_err(|e| format!("Invalid regex pattern: {}", e));
+                    } else {
+                        return Err("regex value must be a string".to_string());
+                    }
+                } else if key == "json_path" {
+                    // Legacy syntax: json_path = { "$.path" = "value" }
+                    if let Some(obj) = value.as_object() {
+                        // Should have exactly one entry
+                        if obj.len() != 1 {
+                            return Err(
+                                "json_path object must have exactly one key-value pair".to_string()
+                            );
+                        }
+                        let (path, expected_value) = obj.iter().next().expect(
+                            "json_path object should have exactly one entry after length check",
+                        );
+                        return Ok(BodyMatcher::json_path(path.clone(), expected_value.clone()));
+                    } else {
+                        return Err("json_path value must be an object".to_string());
+                    }
+                }
+
+                // Auto-detect based on key prefix
+                if let Some(regex_pattern) = key.strip_prefix('~') {
+                    // ~pattern = regex match
+                    BodyMatcher::regex(regex_pattern)
+                        .map_err(|e| format!("Invalid regex pattern: {}", e))
+                } else if let Some(contains_text) = key.strip_prefix('@') {
+                    // @text = contains match
+                    Ok(BodyMatcher::contains(contains_text))
+                } else if key.starts_with('$') {
+                    // $ prefix = JSONPath match
+                    Ok(BodyMatcher::json_path(key.clone(), value.clone()))
+                } else {
+                    // No prefix: error - must use explicit prefix
+                    Err(format!(
+                        "Body matcher key '{}' must start with $, ~, or @ for JSONPath, regex, or contains matching",
+                        key
+                    ))
+                }
             }
-
-            // For multiple contains, we need to check all of them
-            // Create a combined matcher using the first one and verify others in matching
-            // For now, just use the first one as a simple contains check
-            // (Full AND logic would require changes to BodyMatcher type)
-            return Ok(BodyMatcher::contains(&text_list[0]));
-          } else if let Some(text) = value.as_str() {
-            // Single string
-            return Ok(BodyMatcher::contains(text));
-          } else {
-            return Err("contains value must be a string or array of strings".to_string());
-          }
-        } else if key == "regex" {
-          // Legacy syntax: regex = "pattern"
-          if let Some(pattern) = value.as_str() {
-            return BodyMatcher::regex(pattern).map_err(|e| format!("Invalid regex pattern: {}", e));
-          } else {
-            return Err("regex value must be a string".to_string());
-          }
-        } else if key == "json_path" {
-          // Legacy syntax: json_path = { "$.path" = "value" }
-          if let Some(obj) = value.as_object() {
-            // Should have exactly one entry
-            if obj.len() != 1 {
-              return Err("json_path object must have exactly one key-value pair".to_string());
-            }
-            let (path, expected_value) = obj
-              .iter()
-              .next()
-              .expect("json_path object should have exactly one entry after length check");
-            return Ok(BodyMatcher::json_path(path.clone(), expected_value.clone()));
-          } else {
-            return Err("json_path value must be an object".to_string());
-          }
         }
-
-        // Auto-detect based on key prefix
-        if let Some(regex_pattern) = key.strip_prefix('~') {
-          // ~pattern = regex match
-          BodyMatcher::regex(regex_pattern).map_err(|e| format!("Invalid regex pattern: {}", e))
-        } else if let Some(contains_text) = key.strip_prefix('@') {
-          // @text = contains match
-          Ok(BodyMatcher::contains(contains_text))
-        } else if key.starts_with('$') {
-          // $ prefix = JSONPath match
-          Ok(BodyMatcher::json_path(key.clone(), value.clone()))
-        } else {
-          // No prefix: error - must use explicit prefix
-          Err(format!(
-            "Body matcher key '{}' must start with $, ~, or @ for JSONPath, regex, or contains matching",
-            key
-          ))
-        }
-      },
     }
-  }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn test_header_match_simple() {
-    let yaml = r#"
+    #[test]
+    fn test_header_match_simple() {
+        let yaml = r#"
 url_patterns:
   - "/test"
 headers:
   content-type: "application/json"
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
-    let matcher = config
-      .into_request_matcher()
-      .expect("Failed to convert to request matcher");
+        let config: RequestConfig =
+            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
 
-    assert_eq!(matcher.header_matchers.len(), 1);
-  }
+        assert_eq!(matcher.header_matchers.len(), 1);
+    }
 
-  #[test]
-  fn test_body_matcher_contains() {
-    let mut body_map = FxHashMap::default();
-    body_map.insert("@test".to_string(), serde_json::Value::Bool(true));
+    #[test]
+    fn test_body_matcher_contains() {
+        let mut body_map = FxHashMap::default();
+        body_map.insert("@test".to_string(), serde_json::Value::Bool(true));
 
-    let config = RequestConfig {
-      methods: vec![],
-      url_patterns: vec![],
-      headers: FxHashMap::default(),
-      body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
-      query: FxHashMap::default(),
-      graphql_matcher: None,
-    };
+        let config = RequestConfig {
+            methods: vec![],
+            url_patterns: vec![],
+            headers: FxHashMap::default(),
+            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
+            query: FxHashMap::default(),
+            graphql_matcher: None,
+        };
 
-    let matcher = config
-      .into_request_matcher()
-      .expect("Failed to convert to request matcher");
-    assert!(matcher.body_matcher.is_some());
-    assert!(
-      matcher
-        .body_matcher
-        .expect("body_matcher should exist")
-        .matches(b"this is a test")
-    );
-  }
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
+        assert!(matcher.body_matcher.is_some());
+        assert!(
+            matcher
+                .body_matcher
+                .expect("body_matcher should exist")
+                .matches(b"this is a test")
+        );
+    }
 
-  #[test]
-  fn test_body_matcher_regex() {
-    let mut body_map = FxHashMap::default();
-    body_map.insert(r"~\d{3}-\d{3}-\d{4}".to_string(), serde_json::Value::Bool(true));
+    #[test]
+    fn test_body_matcher_regex() {
+        let mut body_map = FxHashMap::default();
+        body_map.insert(
+            r"~\d{3}-\d{3}-\d{4}".to_string(),
+            serde_json::Value::Bool(true),
+        );
 
-    let config = RequestConfig {
-      methods: vec![],
-      url_patterns: vec![],
-      headers: FxHashMap::default(),
-      body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
-      query: FxHashMap::default(),
-      graphql_matcher: None,
-    };
+        let config = RequestConfig {
+            methods: vec![],
+            url_patterns: vec![],
+            headers: FxHashMap::default(),
+            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
+            query: FxHashMap::default(),
+            graphql_matcher: None,
+        };
 
-    let matcher = config
-      .into_request_matcher()
-      .expect("Failed to convert to request matcher");
-    assert!(matcher.body_matcher.is_some());
-    assert!(
-      matcher
-        .body_matcher
-        .expect("body_matcher should exist")
-        .matches(b"Phone: 123-456-7890")
-    );
-  }
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
+        assert!(matcher.body_matcher.is_some());
+        assert!(
+            matcher
+                .body_matcher
+                .expect("body_matcher should exist")
+                .matches(b"Phone: 123-456-7890")
+        );
+    }
 
-  #[test]
-  fn test_body_matcher_json_path() {
-    let mut body_map = FxHashMap::default();
-    body_map.insert("$.user.name".to_string(), serde_json::Value::String("John".to_string()));
+    #[test]
+    fn test_body_matcher_json_path() {
+        let mut body_map = FxHashMap::default();
+        body_map.insert(
+            "$.user.name".to_string(),
+            serde_json::Value::String("John".to_string()),
+        );
 
-    let config = RequestConfig {
-      methods: vec![],
-      url_patterns: vec![],
-      headers: FxHashMap::default(),
-      body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
-      query: FxHashMap::default(),
-      graphql_matcher: None,
-    };
+        let config = RequestConfig {
+            methods: vec![],
+            url_patterns: vec![],
+            headers: FxHashMap::default(),
+            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
+            query: FxHashMap::default(),
+            graphql_matcher: None,
+        };
 
-    let matcher = config
-      .into_request_matcher()
-      .expect("Failed to convert to request matcher");
-    assert!(matcher.body_matcher.is_some());
-    assert!(
-      matcher
-        .body_matcher
-        .expect("body_matcher should exist")
-        .matches(br#"{"user":{"name":"John"}}"#)
-    );
-  }
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
+        assert!(matcher.body_matcher.is_some());
+        assert!(
+            matcher
+                .body_matcher
+                .expect("body_matcher should exist")
+                .matches(br#"{"user":{"name":"John"}}"#)
+        );
+    }
 }
 
 /// GraphQL matcher configuration
@@ -611,54 +636,54 @@ headers:
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum GraphQLMatchConfig {
-  /// Simple string: operation name or type shorthand
-  /// - "GetUser" → matches operation name
-  /// - "query" → matches any query
-  /// - "mutation" → matches any mutation
-  /// - "*" → matches any GraphQL operation
-  Simple(String),
+    /// Simple string: operation name or type shorthand
+    /// - "GetUser" → matches operation name
+    /// - "query" → matches any query
+    /// - "mutation" → matches any mutation
+    /// - "*" → matches any GraphQL operation
+    Simple(String),
 
-  /// Boolean value for introspection matching
-  /// - true → matches any introspection query
-  Boolean(bool),
+    /// Boolean value for introspection matching
+    /// - true → matches any introspection query
+    Boolean(bool),
 
-  /// Structured object with operation details
-  Structured {
-    /// Operation name
-    #[serde(skip_serializing_if = "Option::is_none")]
-    operation: Option<String>,
+    /// Structured object with operation details
+    Structured {
+        /// Operation name
+        #[serde(skip_serializing_if = "Option::is_none")]
+        operation: Option<String>,
 
-    /// Specific query operation name
-    #[serde(skip_serializing_if = "Option::is_none")]
-    query: Option<String>,
+        /// Specific query operation name
+        #[serde(skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
 
-    /// Specific mutation operation name
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mutation: Option<String>,
+        /// Specific mutation operation name
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mutation: Option<String>,
 
-    /// Specific subscription operation name
-    #[serde(skip_serializing_if = "Option::is_none")]
-    subscription: Option<String>,
+        /// Specific subscription operation name
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subscription: Option<String>,
 
-    /// Introspection matcher
-    /// - true or "true" → match any introspection
-    /// - "schema" → match __schema queries
-    /// - "type" → match __type queries
-    /// - "typename" → match __typename queries
-    /// - "*" → match any introspection (same as true)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    introspection: Option<IntrospectionMatchConfig>,
+        /// Introspection matcher
+        /// - true or "true" → match any introspection
+        /// - "schema" → match __schema queries
+        /// - "type" → match __type queries
+        /// - "typename" → match __typename queries
+        /// - "*" → match any introspection (same as true)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        introspection: Option<IntrospectionMatchConfig>,
 
-    /// Variable matchers (flat map for nested paths)
-    /// Example: { "id": "123", "input.role": "admin" }
-    #[serde(default, skip_serializing_if = "FxHashMap::is_empty")]
-    #[allow(clippy::disallowed_types)]
-    #[cfg_attr(
-      feature = "schema",
-      schemars(with = "std::collections::HashMap<String, serde_json::Value>")
-    )]
-    variables: FxHashMap<String, serde_json::Value>,
-  },
+        /// Variable matchers (flat map for nested paths)
+        /// Example: { "id": "123", "input.role": "admin" }
+        #[serde(default, skip_serializing_if = "FxHashMap::is_empty")]
+        #[allow(clippy::disallowed_types)]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(with = "std::collections::HashMap<String, serde_json::Value>")
+        )]
+        variables: FxHashMap<String, serde_json::Value>,
+    },
 }
 
 /// Introspection match configuration
@@ -666,157 +691,163 @@ pub enum GraphQLMatchConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum IntrospectionMatchConfig {
-  /// Boolean: true = match any introspection
-  Bool(bool),
-  /// String: "schema", "type", "typename", "*"
-  String(String),
+    /// Boolean: true = match any introspection
+    Bool(bool),
+    /// String: "schema", "type", "typename", "*"
+    String(String),
 }
 
 impl IntrospectionMatchConfig {
-  pub fn into_introspection_matcher(self) -> Option<mockpit_types::IntrospectionMatcher> {
-    match self {
-      IntrospectionMatchConfig::Bool(true) => Some(mockpit_types::IntrospectionMatcher::Any),
-      IntrospectionMatchConfig::Bool(false) => None,
-      IntrospectionMatchConfig::String(s) => match s.as_str() {
-        "true" | "*" => Some(mockpit_types::IntrospectionMatcher::Any),
-        "schema" => Some(mockpit_types::IntrospectionMatcher::Schema),
-        "type" => Some(mockpit_types::IntrospectionMatcher::Type),
-        "typename" => Some(mockpit_types::IntrospectionMatcher::TypeName),
-        _ => None,
-      },
+    pub fn into_introspection_matcher(self) -> Option<mockpit_types::IntrospectionMatcher> {
+        match self {
+            IntrospectionMatchConfig::Bool(true) => Some(mockpit_types::IntrospectionMatcher::Any),
+            IntrospectionMatchConfig::Bool(false) => None,
+            IntrospectionMatchConfig::String(s) => match s.as_str() {
+                "true" | "*" => Some(mockpit_types::IntrospectionMatcher::Any),
+                "schema" => Some(mockpit_types::IntrospectionMatcher::Schema),
+                "type" => Some(mockpit_types::IntrospectionMatcher::Type),
+                "typename" => Some(mockpit_types::IntrospectionMatcher::TypeName),
+                _ => None,
+            },
+        }
     }
-  }
 }
 
 impl GraphQLMatchConfig {
-  pub fn into_graphql_matcher(self) -> Result<mockpit_types::GraphQLMatcher, String> {
-    use mockpit_types::{GraphQLMatcher, GraphQLOperationType};
+    pub fn into_graphql_matcher(self) -> Result<mockpit_types::GraphQLMatcher, String> {
+        use mockpit_types::{GraphQLMatcher, GraphQLOperationType};
 
-    match self {
-      // Boolean syntax (for introspection)
-      GraphQLMatchConfig::Boolean(true) => {
-        // match.graphql = true → match any introspection
-        Ok(GraphQLMatcher {
-          operation_name: None,
-          operation_type: None,
-          match_any: false,
-          variable_matchers: FxHashMap::default(),
-          introspection_matcher: Some(mockpit_types::IntrospectionMatcher::Any),
-        })
-      },
-      GraphQLMatchConfig::Boolean(false) => Err("match.graphql = false is invalid".to_string()),
+        match self {
+            // Boolean syntax (for introspection)
+            GraphQLMatchConfig::Boolean(true) => {
+                // match.graphql = true → match any introspection
+                Ok(GraphQLMatcher {
+                    operation_name: None,
+                    operation_type: None,
+                    match_any: false,
+                    variable_matchers: FxHashMap::default(),
+                    introspection_matcher: Some(mockpit_types::IntrospectionMatcher::Any),
+                })
+            }
+            GraphQLMatchConfig::Boolean(false) => {
+                Err("match.graphql = false is invalid".to_string())
+            }
 
-      // Simple string syntax
-      GraphQLMatchConfig::Simple(s) => match s.as_str() {
-        "*" => {
-          // Match any GraphQL operation
-          Ok(GraphQLMatcher {
-            operation_name: None,
-            operation_type: None,
-            match_any: true,
-            variable_matchers: FxHashMap::default(),
-            introspection_matcher: None,
-          })
-        },
-        "query" => {
-          // Match any query
-          Ok(GraphQLMatcher {
-            operation_name: None,
-            operation_type: Some(GraphQLOperationType::Query),
-            match_any: false,
-            variable_matchers: FxHashMap::default(),
-            introspection_matcher: None,
-          })
-        },
-        "mutation" => {
-          // Match any mutation
-          Ok(GraphQLMatcher {
-            operation_name: None,
-            operation_type: Some(GraphQLOperationType::Mutation),
-            match_any: false,
-            variable_matchers: FxHashMap::default(),
-            introspection_matcher: None,
-          })
-        },
-        "subscription" => {
-          // Match any subscription
-          Ok(GraphQLMatcher {
-            operation_name: None,
-            operation_type: Some(GraphQLOperationType::Subscription),
-            match_any: false,
-            variable_matchers: FxHashMap::default(),
-            introspection_matcher: None,
-          })
-        },
-        operation_name => {
-          // Match specific operation name (any type)
-          Ok(GraphQLMatcher {
-            operation_name: Some(operation_name.to_string()),
-            operation_type: None,
-            match_any: false,
-            variable_matchers: FxHashMap::default(),
-            introspection_matcher: None,
-          })
-        },
-      },
+            // Simple string syntax
+            GraphQLMatchConfig::Simple(s) => match s.as_str() {
+                "*" => {
+                    // Match any GraphQL operation
+                    Ok(GraphQLMatcher {
+                        operation_name: None,
+                        operation_type: None,
+                        match_any: true,
+                        variable_matchers: FxHashMap::default(),
+                        introspection_matcher: None,
+                    })
+                }
+                "query" => {
+                    // Match any query
+                    Ok(GraphQLMatcher {
+                        operation_name: None,
+                        operation_type: Some(GraphQLOperationType::Query),
+                        match_any: false,
+                        variable_matchers: FxHashMap::default(),
+                        introspection_matcher: None,
+                    })
+                }
+                "mutation" => {
+                    // Match any mutation
+                    Ok(GraphQLMatcher {
+                        operation_name: None,
+                        operation_type: Some(GraphQLOperationType::Mutation),
+                        match_any: false,
+                        variable_matchers: FxHashMap::default(),
+                        introspection_matcher: None,
+                    })
+                }
+                "subscription" => {
+                    // Match any subscription
+                    Ok(GraphQLMatcher {
+                        operation_name: None,
+                        operation_type: Some(GraphQLOperationType::Subscription),
+                        match_any: false,
+                        variable_matchers: FxHashMap::default(),
+                        introspection_matcher: None,
+                    })
+                }
+                operation_name => {
+                    // Match specific operation name (any type)
+                    Ok(GraphQLMatcher {
+                        operation_name: Some(operation_name.to_string()),
+                        operation_type: None,
+                        match_any: false,
+                        variable_matchers: FxHashMap::default(),
+                        introspection_matcher: None,
+                    })
+                }
+            },
 
-      // Structured syntax
-      GraphQLMatchConfig::Structured {
-        operation,
-        query,
-        mutation,
-        subscription,
-        introspection,
-        variables,
-      } => {
-        // Parse introspection matcher if present
-        let introspection_matcher = introspection.and_then(|i| i.into_introspection_matcher());
+            // Structured syntax
+            GraphQLMatchConfig::Structured {
+                operation,
+                query,
+                mutation,
+                subscription,
+                introspection,
+                variables,
+            } => {
+                // Parse introspection matcher if present
+                let introspection_matcher =
+                    introspection.and_then(|i| i.into_introspection_matcher());
 
-        // Priority: specific type fields > operation field
-        // Handle wildcard "*" specially - it means match any operation of that type
-        let (operation_name, operation_type) = if let Some(query_name) = query {
-          if query_name == "*" {
-            (None, Some(GraphQLOperationType::Query))
-          } else {
-            (Some(query_name), Some(GraphQLOperationType::Query))
-          }
-        } else if let Some(mutation_name) = mutation {
-          if mutation_name == "*" {
-            (None, Some(GraphQLOperationType::Mutation))
-          } else {
-            (Some(mutation_name), Some(GraphQLOperationType::Mutation))
-          }
-        } else if let Some(subscription_name) = subscription {
-          if subscription_name == "*" {
-            (None, Some(GraphQLOperationType::Subscription))
-          } else {
-            (Some(subscription_name), Some(GraphQLOperationType::Subscription))
-          }
-        } else if let Some(operation_name) = operation {
-          (Some(operation_name), None)
-        } else {
-          (None, None)
-        };
+                // Priority: specific type fields > operation field
+                // Handle wildcard "*" specially - it means match any operation of that type
+                let (operation_name, operation_type) = if let Some(query_name) = query {
+                    if query_name == "*" {
+                        (None, Some(GraphQLOperationType::Query))
+                    } else {
+                        (Some(query_name), Some(GraphQLOperationType::Query))
+                    }
+                } else if let Some(mutation_name) = mutation {
+                    if mutation_name == "*" {
+                        (None, Some(GraphQLOperationType::Mutation))
+                    } else {
+                        (Some(mutation_name), Some(GraphQLOperationType::Mutation))
+                    }
+                } else if let Some(subscription_name) = subscription {
+                    if subscription_name == "*" {
+                        (None, Some(GraphQLOperationType::Subscription))
+                    } else {
+                        (
+                            Some(subscription_name),
+                            Some(GraphQLOperationType::Subscription),
+                        )
+                    }
+                } else if let Some(operation_name) = operation {
+                    (Some(operation_name), None)
+                } else {
+                    (None, None)
+                };
 
-        // Require at least operation name/type, variables, or introspection
-        if operation_name.is_none()
-          && operation_type.is_none()
-          && variables.is_empty()
-          && introspection_matcher.is_none()
-        {
-          return Err(
+                // Require at least operation name/type, variables, or introspection
+                if operation_name.is_none()
+                    && operation_type.is_none()
+                    && variables.is_empty()
+                    && introspection_matcher.is_none()
+                {
+                    return Err(
             "GraphQL matcher requires at least operation name, type, variables, or introspection".to_string(),
           );
-        }
+                }
 
-        Ok(GraphQLMatcher {
-          operation_name,
-          operation_type,
-          match_any: false,
-          variable_matchers: variables,
-          introspection_matcher,
-        })
-      },
+                Ok(GraphQLMatcher {
+                    operation_name,
+                    operation_type,
+                    match_any: false,
+                    variable_matchers: variables,
+                    introspection_matcher,
+                })
+            }
+        }
     }
-  }
 }

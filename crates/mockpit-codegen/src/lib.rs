@@ -20,8 +20,8 @@ pub mod pagination;
 pub mod types;
 
 pub use field_converter::{
-  field_type_to_tera_expr, field_type_to_tera_expr_with_context, generate_data_uri_template,
-  generate_download_url_template,
+    field_type_to_tera_expr, field_type_to_tera_expr_with_context, generate_data_uri_template,
+    generate_download_url_template,
 };
 pub use generator::TemplateGenerator;
 pub use types::{GraphQLVariableInfo, PaginationInfo, PaginationType, ResponseStructure};

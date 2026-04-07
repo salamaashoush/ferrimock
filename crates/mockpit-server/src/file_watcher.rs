@@ -106,38 +106,36 @@ impl FileWatcher {
         let filter_clone = filter.clone();
 
         let watcher = RecommendedWatcher::new(
-            move |res: Result<Event, notify::Error>| {
-                match res {
-                    Ok(event) => match event.kind {
-                        EventKind::Create(_) => {
-                            for path in event.paths {
-                                if filter_clone.should_process(&path) {
-                                    debug!("File created: {}", path.display());
-                                    let _ = tx.send(FileEvent::Created(path));
-                                }
+            move |res: Result<Event, notify::Error>| match res {
+                Ok(event) => match event.kind {
+                    EventKind::Create(_) => {
+                        for path in event.paths {
+                            if filter_clone.should_process(&path) {
+                                debug!("File created: {}", path.display());
+                                let _ = tx.send(FileEvent::Created(path));
                             }
                         }
-                        EventKind::Modify(_) => {
-                            for path in event.paths {
-                                if filter_clone.should_process(&path) {
-                                    debug!("File modified: {}", path.display());
-                                    let _ = tx.send(FileEvent::Modified(path));
-                                }
-                            }
-                        }
-                        EventKind::Remove(_) => {
-                            for path in event.paths {
-                                if filter_clone.should_process(&path) {
-                                    debug!("File removed: {}", path.display());
-                                    let _ = tx.send(FileEvent::Removed(path));
-                                }
-                            }
-                        }
-                        _ => {}
-                    },
-                    Err(e) => {
-                        error!("File watcher error: {}", e);
                     }
+                    EventKind::Modify(_) => {
+                        for path in event.paths {
+                            if filter_clone.should_process(&path) {
+                                debug!("File modified: {}", path.display());
+                                let _ = tx.send(FileEvent::Modified(path));
+                            }
+                        }
+                    }
+                    EventKind::Remove(_) => {
+                        for path in event.paths {
+                            if filter_clone.should_process(&path) {
+                                debug!("File removed: {}", path.display());
+                                let _ = tx.send(FileEvent::Removed(path));
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                Err(e) => {
+                    error!("File watcher error: {}", e);
                 }
             },
             notify::Config::default(),

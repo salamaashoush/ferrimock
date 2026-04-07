@@ -5,8 +5,8 @@
 //! - `HotReloadManager` - Automatic mock reloading on file changes
 //! - `serve_with_graceful_shutdown` - HTTP server with graceful shutdown
 
-pub mod file_watcher;
 pub mod debouncer;
+pub mod file_watcher;
 pub mod hot_reload;
 pub mod server;
 pub mod state;

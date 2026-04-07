@@ -33,6 +33,7 @@ pub mod store;
 pub use engine::hash_template;
 pub use error::TemplateError;
 pub use renderer::{
-  render_patch_template, render_template, render_template_with_hash, render_template_with_id, validate_template,
+    render_patch_template, render_template, render_template_with_hash, render_template_with_id,
+    validate_template,
 };
 pub use store::{get_global_persistence_store, set_global_persistence_store};

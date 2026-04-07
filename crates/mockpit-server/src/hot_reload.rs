@@ -1,7 +1,7 @@
 //! Hot reload manager for automatic mock reloading
 
-use crate::file_watcher::{FileEvent, FileEventFilter, FileWatcher};
 use crate::debouncer::{DebouncedEvent, EventDebouncer};
+use crate::file_watcher::{FileEvent, FileEventFilter, FileWatcher};
 use mockpit_engine::MockRegistry;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -121,7 +121,10 @@ impl HotReloadManager {
                     let count = self.mock_registry.remove_file_mocks(&path_str);
                     stats.files_processed += 1;
                     stats.mocks_removed += count;
-                    debug!("Hot reload: removed {count} mock(s) from {}", path.display());
+                    debug!(
+                        "Hot reload: removed {count} mock(s) from {}",
+                        path.display()
+                    );
                 }
             }
         }
@@ -129,7 +132,10 @@ impl HotReloadManager {
         if stats.files_processed > 0 {
             debug!(
                 "Hot reload: processed {} file(s), added {} mock(s), removed {} mock(s), {} error(s)",
-                stats.files_processed, stats.mocks_added, stats.mocks_removed, stats.errors.len()
+                stats.files_processed,
+                stats.mocks_added,
+                stats.mocks_removed,
+                stats.errors.len()
             );
         }
     }

@@ -49,6 +49,6 @@ mod tests {
         assert_eq!(levenshtein_distance("", "abc"), 3);
         assert_eq!(levenshtein_distance("abc", ""), 3);
         assert_eq!(levenshtein_distance("abc", "abc"), 0);
-        assert_eq!(levenshtein_distance("abc", "abd"), 1);
+        assert_eq!(levenshtein_distance("abc", "abx"), 1);
     }
 }
