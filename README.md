@@ -141,11 +141,8 @@ mockpit = { git = "https://github.com/salamaashoush/mockpit", features = ["graph
 ## Crate Structure
 
 ```
-mockpit          - Library: all core mock engine modules (types, config,
-                   recorder, template, consolidator, engine, graphql,
-                   type_detector, fake_data, codegen, core, server, api)
-mockpit-cli      - CLI binary + lib (commands for mock management and
-                   fake data generation)
+mockpit          - Library crate with feature-gated modules
+mockpit-cli      - CLI binary and command implementations
 ```
 
 ## Documentation
