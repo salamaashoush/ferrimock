@@ -11,7 +11,9 @@ description = "Mock management CLI commands: create, list, test, serve, validate
 mockpit-config = { path = "../mockpit-config" }
 mockpit-consolidator = { path = "../mockpit-consolidator" }
 mockpit-engine = { path = "../mockpit-engine" }
+mockpit-fake-data = { path = "../mockpit-fake-data" }
 mockpit-template = { path = "../mockpit-template" }
+mockpit-types = { path = "../mockpit-types" }
 mockpit-server = { path = "../mockpit-server" }
 
 anyhow = { workspace = true }
