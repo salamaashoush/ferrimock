@@ -120,10 +120,10 @@ pub mod api {
     pub use mockpit_api::*;
 }
 
-/// Mock management CLI commands
-#[cfg(feature = "cli")]
-pub mod cli {
-    pub use mockpit_cli::*;
+/// Mock and fake data command implementations
+#[cfg(feature = "commands")]
+pub mod commands {
+    pub use mockpit_commands::*;
 }
 
 // ---------------------------------------------------------------------------

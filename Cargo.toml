@@ -13,6 +13,7 @@ members = [
   "crates/mockpit-fake-data",
   "crates/mockpit-server",
   "crates/mockpit-api",
+  "crates/mockpit-commands",
   "crates/mockpit-cli",
   "crates/mockpit",
 ]
