@@ -34,7 +34,7 @@ pub fn create_mock_router() -> Router<MockApiState> {
 
 /// Create the mock management API router with a custom route prefix.
 ///
-/// This allows embedders to use their own prefix (e.g., `/__box_dev_gate_mock`).
+/// This allows embedders to use their own prefix (e.g., `/__my_app_mock`).
 pub fn create_mock_router_with_prefix(prefix: &str) -> Router<MockApiState> {
     let p = prefix.to_string();
     Router::new()

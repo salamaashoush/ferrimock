@@ -14,7 +14,7 @@
       "request": {
         "headers": {
           "add": {
-            "x-forwarded-by": "box-dev-gate",
+            "x-forwarded-by": "mockpit",
             "x-internal-auth": "dev-proxy-token",
             "x-trace-id": "{{ fake_uuid() }}"
           }
@@ -145,7 +145,7 @@
         "url": "/api/2.0/sign_requests/:request_id"
       },
       "request": {
-        "forward_to": "https://staging-api.box.com"
+        "forward_to": "https://staging-api.example.com"
       }
     },
     {
@@ -200,12 +200,12 @@
       "request": {
         "delay": "200ms",
         "timeout": "60s",
-        "forward_to": "https://workflow-staging.box.com",
+        "forward_to": "https://workflow-staging.example.com",
         "rewrite_path": "/v2/workflows/{{ captures.workflow_id }}/run",
         "headers": {
           "add": {
             "x-forwarded-proto": "https",
-            "x-proxy-source": "box-dev-gate",
+            "x-proxy-source": "mockpit",
             "x-trace-id": "{{ fake_uuid() }}"
           },
           "remove": [
@@ -255,7 +255,7 @@
         },
         "body": {
           "jsonpath": {
-            "$.client": "box-dev-gate"
+            "$.client": "mockpit"
           }
         }
       },
@@ -267,7 +267,7 @@
         "headers": {
           "add": {
             "x-proxy-cache": "miss",
-            "x-served-by": "box-dev-gate"
+            "x-served-by": "mockpit"
           },
           "remove": [
             "x-internal-debug",
@@ -290,7 +290,7 @@
       },
       "request": {
         "timeout": "30s",
-        "forward_to": "https://api-v3.box.com",
+        "forward_to": "https://api-v3.example.com",
         "rewrite_path": "/api/3.0/collaborations/{{ captures.collab_id }}",
         "headers": {
           "add": {

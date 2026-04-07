@@ -114,7 +114,7 @@ fn test_detect_etag_not_confused_with_numeric_id() {
     let (field_type, _) = detector.detect_type_from_values(&as_refs(&id_values_long));
     assert!(matches!(field_type, FieldType::NumericStringId));
 
-    // But with "etag" field name, numeric strings should be ETags (Box API pattern)
+    // But with "etag" field name, numeric strings should be ETags
     let etag_values = vec![json!("123"), json!("456"), json!("789")];
     let (field_type, _) = detector.detect_type("etag", &as_refs(&etag_values));
     assert!(matches!(field_type, FieldType::ETag));

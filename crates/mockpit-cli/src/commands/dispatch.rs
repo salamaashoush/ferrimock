@@ -97,13 +97,12 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             redirects,
             browser_headers,
             absolute_urls,
-            all_domains,
+            domains,
             static_assets,
             keep_sensitive_headers,
             keep_infra_headers,
             extract_bodies,
             body_threshold_kb,
-            extra_domains,
         } => {
             convert::convert_har(convert::ConvertHarOptions {
                 input,
@@ -114,13 +113,12 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                 exclude_redirects: !redirects,
                 strip_browser_headers: !browser_headers,
                 normalize_urls: !absolute_urls,
-                filter_non_box_domains: !all_domains,
+                allowed_domains: domains,
                 exclude_static_assets: !static_assets,
                 strip_sensitive_headers: !keep_sensitive_headers,
                 strip_infrastructure_headers: !keep_infra_headers,
                 extract_bodies,
                 body_threshold_kb,
-                extra_domains,
             })
             .await
         }
@@ -151,9 +149,11 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             port,
             host,
             mocks,
+            mock_file,
             watch,
             cors,
             enable_render_endpoint,
+            log_matches,
             verbose,
             open,
         } => {
@@ -161,9 +161,11 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                 port,
                 host,
                 mocks_dir: mocks,
+                mock_file,
                 watch,
                 cors,
                 enable_render_endpoint,
+                log_matches,
                 verbose,
                 open_browser: open,
             })

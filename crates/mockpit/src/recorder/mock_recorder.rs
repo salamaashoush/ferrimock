@@ -156,7 +156,7 @@ impl MockRecorder {
                 let har = Har {
                     log: Spec::V1_2(v1_2::Log {
                         creator: v1_2::Creator {
-                            name: "box-dev-gate".to_string(),
+                            name: crate::core::app_name().to_string(),
                             version: env!("CARGO_PKG_VERSION").to_string(),
                             comment: None,
                         },
@@ -977,7 +977,7 @@ impl MockRecorder {
         Har {
             log: Spec::V1_2(v1_2::Log {
                 creator: v1_2::Creator {
-                    name: "box-dev-gate".to_string(),
+                    name: crate::core::app_name().to_string(),
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     comment: None,
                 },
@@ -1400,7 +1400,7 @@ mod tests {
             _ => panic!("Expected V1_2 spec"),
         };
 
-        assert_eq!(log.creator.name, "box-dev-gate");
+        assert_eq!(log.creator.name, crate::core::app_name());
         assert_eq!(log.entries.len(), 2);
 
         // Find entries by URL (order might not be preserved due to DashMap)

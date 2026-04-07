@@ -27,9 +27,9 @@ async fn test_exclude_redirects() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/old", 301), // Redirect
-                create_test_entry("GET", "https://api.box.com/temp", 302), // Redirect
-                create_test_entry("GET", "https://api.box.com/final", 200), // OK
+                create_test_entry("GET", "https://api.example.com/old", 301), // Redirect
+                create_test_entry("GET", "https://api.example.com/temp", 302), // Redirect
+                create_test_entry("GET", "https://api.example.com/final", 200), // OK
             ],
             comment: None,
         }),
@@ -59,8 +59,8 @@ async fn test_include_redirects() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/old", 301),
-                create_test_entry("GET", "https://api.box.com/final", 200),
+                create_test_entry("GET", "https://api.example.com/old", 301),
+                create_test_entry("GET", "https://api.example.com/final", 200),
             ],
             comment: None,
         }),
@@ -88,7 +88,7 @@ async fn test_strip_browser_headers() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.response.headers = vec![
                     v1_2::Headers {
                         name: "content-type".to_string(),
@@ -143,7 +143,7 @@ async fn test_keep_all_headers() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.response.headers = vec![
                     v1_2::Headers {
                         name: "content-type".to_string(),
@@ -192,7 +192,7 @@ async fn test_delay_extraction() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/slow", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/slow", 200);
                 entry.timings.wait = 250.0;
                 entry
             }],
@@ -219,7 +219,7 @@ async fn test_zero_delay() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/fast", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/fast", 200);
                 entry.timings.wait = 0.0;
                 entry
             }],
@@ -246,9 +246,9 @@ async fn test_priority_assignment() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/first", 200),
-                create_test_entry("GET", "https://api.box.com/second", 200),
-                create_test_entry("GET", "https://api.box.com/third", 200),
+                create_test_entry("GET", "https://api.example.com/first", 200),
+                create_test_entry("GET", "https://api.example.com/second", 200),
+                create_test_entry("GET", "https://api.example.com/third", 200),
             ],
             comment: None,
         }),
@@ -275,8 +275,8 @@ async fn test_mock_id_generation() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/one", 200),
-                create_test_entry("POST", "https://api.box.com/two", 201),
+                create_test_entry("GET", "https://api.example.com/one", 200),
+                create_test_entry("POST", "https://api.example.com/two", 201),
             ],
             comment: None,
         }),
@@ -360,9 +360,9 @@ async fn test_multiple_methods() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/test", 200),
-                create_test_entry("POST", "https://api.box.com/test", 201),
-                create_test_entry("DELETE", "https://api.box.com/test", 204),
+                create_test_entry("GET", "https://api.example.com/test", 200),
+                create_test_entry("POST", "https://api.example.com/test", 201),
+                create_test_entry("DELETE", "https://api.example.com/test", 204),
             ],
             comment: None,
         }),
@@ -445,7 +445,7 @@ async fn test_missing_response_body_text() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.response.content.text = None; // Missing body text
                 entry
             }],
@@ -478,7 +478,7 @@ async fn test_negative_wait_time() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.timings.wait = -10.0; // Negative delay
                 entry
             }],
@@ -505,7 +505,7 @@ async fn test_very_large_delay() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/slow", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/slow", 200);
                 entry.timings.wait = 5000.0; // 5 seconds
                 entry
             }],
@@ -532,7 +532,7 @@ async fn test_fractional_delay() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.timings.wait = 123.7; // Fractional ms
                 entry
             }],
@@ -563,7 +563,7 @@ async fn test_empty_response_headers() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.response.headers = vec![]; // No headers
                 entry
             }],
@@ -595,7 +595,7 @@ async fn test_multiple_headers() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.response.headers = vec![
                     v1_2::Headers {
                         name: "content-type".to_string(),
@@ -646,7 +646,7 @@ async fn test_strip_all_browser_headers() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.response.headers = vec![
                     v1_2::Headers {
                         name: "user-agent".to_string(),
@@ -737,7 +737,7 @@ async fn test_strip_case_insensitive_headers() {
             browser: None,
             pages: None,
             entries: vec![{
-                let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                 entry.response.headers = vec![
                     v1_2::Headers {
                         name: "User-Agent".to_string(),
@@ -799,7 +799,7 @@ async fn test_url_with_query_string() {
             pages: None,
             entries: vec![create_test_entry(
                 "GET",
-                "https://api.box.com/users?page=1&limit=10",
+                "https://api.example.com/users?page=1&limit=10",
                 200,
             )],
             comment: None,
@@ -826,7 +826,7 @@ async fn test_url_with_fragment() {
             pages: None,
             entries: vec![create_test_entry(
                 "GET",
-                "https://api.box.com/page#section",
+                "https://api.example.com/page#section",
                 200,
             )],
             comment: None,
@@ -852,12 +852,12 @@ async fn test_various_http_methods() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/test", 200),
-                create_test_entry("POST", "https://api.box.com/test", 201),
-                create_test_entry("PUT", "https://api.box.com/test", 200),
-                create_test_entry("PATCH", "https://api.box.com/test", 200),
-                create_test_entry("DELETE", "https://api.box.com/test", 204),
-                create_test_entry("HEAD", "https://api.box.com/test", 200),
+                create_test_entry("GET", "https://api.example.com/test", 200),
+                create_test_entry("POST", "https://api.example.com/test", 201),
+                create_test_entry("PUT", "https://api.example.com/test", 200),
+                create_test_entry("PATCH", "https://api.example.com/test", 200),
+                create_test_entry("DELETE", "https://api.example.com/test", 204),
+                create_test_entry("HEAD", "https://api.example.com/test", 200),
             ],
             comment: None,
         }),
@@ -891,10 +891,10 @@ async fn test_various_2xx_status_codes() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/test1", 200),
-                create_test_entry("POST", "https://api.box.com/test2", 201),
-                create_test_entry("PUT", "https://api.box.com/test3", 202),
-                create_test_entry("DELETE", "https://api.box.com/test4", 204),
+                create_test_entry("GET", "https://api.example.com/test1", 200),
+                create_test_entry("POST", "https://api.example.com/test2", 201),
+                create_test_entry("PUT", "https://api.example.com/test3", 202),
+                create_test_entry("DELETE", "https://api.example.com/test4", 204),
             ],
             comment: None,
         }),
@@ -934,10 +934,10 @@ async fn test_3xx_redirect_codes() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/301", 301),
-                create_test_entry("GET", "https://api.box.com/302", 302),
-                create_test_entry("GET", "https://api.box.com/304", 304),
-                create_test_entry("GET", "https://api.box.com/307", 307),
+                create_test_entry("GET", "https://api.example.com/301", 301),
+                create_test_entry("GET", "https://api.example.com/302", 302),
+                create_test_entry("GET", "https://api.example.com/304", 304),
+                create_test_entry("GET", "https://api.example.com/307", 307),
             ],
             comment: None,
         }),
@@ -980,11 +980,11 @@ async fn test_4xx_client_error_codes() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/400", 400),
-                create_test_entry("GET", "https://api.box.com/401", 401),
-                create_test_entry("GET", "https://api.box.com/403", 403),
-                create_test_entry("GET", "https://api.box.com/404", 404),
-                create_test_entry("GET", "https://api.box.com/429", 429),
+                create_test_entry("GET", "https://api.example.com/400", 400),
+                create_test_entry("GET", "https://api.example.com/401", 401),
+                create_test_entry("GET", "https://api.example.com/403", 403),
+                create_test_entry("GET", "https://api.example.com/404", 404),
+                create_test_entry("GET", "https://api.example.com/429", 429),
             ],
             comment: None,
         }),
@@ -1028,10 +1028,10 @@ async fn test_5xx_server_error_codes() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/500", 500),
-                create_test_entry("GET", "https://api.box.com/502", 502),
-                create_test_entry("GET", "https://api.box.com/503", 503),
-                create_test_entry("GET", "https://api.box.com/504", 504),
+                create_test_entry("GET", "https://api.example.com/500", 500),
+                create_test_entry("GET", "https://api.example.com/502", 502),
+                create_test_entry("GET", "https://api.example.com/503", 503),
+                create_test_entry("GET", "https://api.example.com/504", 504),
             ],
             comment: None,
         }),
@@ -1070,7 +1070,7 @@ async fn test_redirect_boundary_299() {
             },
             browser: None,
             pages: None,
-            entries: vec![create_test_entry("GET", "https://api.box.com/299", 299)],
+            entries: vec![create_test_entry("GET", "https://api.example.com/299", 299)],
             comment: None,
         }),
     };
@@ -1095,7 +1095,7 @@ async fn test_redirect_boundary_400() {
             },
             browser: None,
             pages: None,
-            entries: vec![create_test_entry("GET", "https://api.box.com/400", 400)],
+            entries: vec![create_test_entry("GET", "https://api.example.com/400", 400)],
             comment: None,
         }),
     };
@@ -1125,7 +1125,7 @@ async fn test_export_single_mock_to_har() {
 
         request: RequestMatcher {
             methods: smallvec![Method::GET],
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/users/123")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/users/123")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1144,9 +1144,12 @@ async fn test_export_single_mock_to_har() {
         Spec::V1_2(log) => {
             assert_eq!(log.entries.len(), 1);
             assert_eq!(log.entries[0].request.method, "GET");
-            assert_eq!(log.entries[0].request.url, "https://api.box.com/users/123");
+            assert_eq!(
+                log.entries[0].request.url,
+                "https://api.example.com/users/123"
+            );
             assert_eq!(log.entries[0].response.status, 200);
-            assert_eq!(log.creator.name, "box-dev-gate");
+            assert_eq!(log.creator.name, mockpit::core::app_name());
         }
         Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
@@ -1165,7 +1168,7 @@ async fn test_export_multiple_mocks_to_har() {
 
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
-                url_patterns: smallvec![UrlPattern::exact("https://api.box.com/users")],
+                url_patterns: smallvec![UrlPattern::exact("https://api.example.com/users")],
                 header_matchers: smallvec![],
                 query_matchers: smallvec![],
                 body_matcher: None,
@@ -1183,7 +1186,7 @@ async fn test_export_multiple_mocks_to_har() {
             request_transforms: None,
             request: RequestMatcher {
                 methods: smallvec![Method::POST],
-                url_patterns: smallvec![UrlPattern::prefix("https://api.box.com/files")],
+                url_patterns: smallvec![UrlPattern::prefix("https://api.example.com/files")],
                 header_matchers: smallvec![],
                 query_matchers: smallvec![],
                 body_matcher: None,
@@ -1221,7 +1224,7 @@ async fn test_export_mock_with_delay() {
 
         request: RequestMatcher {
             methods: smallvec![Method::GET],
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/slow")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/slow")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1255,7 +1258,7 @@ async fn test_export_mock_with_headers() {
 
         request: RequestMatcher {
             methods: smallvec![Method::GET],
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/test")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/test")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1334,7 +1337,7 @@ async fn test_export_mock_with_prefix_pattern() {
 
         request: RequestMatcher {
             methods: smallvec![Method::GET],
-            url_patterns: smallvec![UrlPattern::prefix("https://api.box.com/v2/")],
+            url_patterns: smallvec![UrlPattern::prefix("https://api.example.com/v2/")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1349,7 +1352,7 @@ async fn test_export_mock_with_prefix_pattern() {
     match &har.log {
         Spec::V1_2(log) => {
             assert_eq!(log.entries.len(), 1);
-            assert_eq!(log.entries[0].request.url, "https://api.box.com/v2/");
+            assert_eq!(log.entries[0].request.url, "https://api.example.com/v2/");
         }
         Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
@@ -1367,7 +1370,7 @@ async fn test_export_mock_with_file_body() {
 
         request: RequestMatcher {
             methods: smallvec![Method::GET],
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/data")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/data")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1401,7 +1404,7 @@ async fn test_export_mock_with_template_body() {
 
         request: RequestMatcher {
             methods: smallvec![Method::GET],
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/test")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/test")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1435,7 +1438,7 @@ async fn test_export_mock_with_no_methods() {
 
         request: RequestMatcher {
             methods: smallvec![], // No methods specified
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/test")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/test")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1468,7 +1471,7 @@ async fn test_export_mock_with_multiple_methods() {
 
         request: RequestMatcher {
             methods: smallvec![Method::GET, Method::POST],
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/test")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/test")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1496,7 +1499,7 @@ async fn test_export_empty_mocks_list() {
     match &har.log {
         Spec::V1_2(log) => {
             assert_eq!(log.entries.len(), 0);
-            assert_eq!(log.creator.name, "box-dev-gate");
+            assert_eq!(log.creator.name, mockpit::core::app_name());
         }
         Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
@@ -1513,7 +1516,7 @@ async fn test_export_mock_includes_metadata() {
         request_transforms: None,
         request: RequestMatcher {
             methods: smallvec![Method::GET],
-            url_patterns: smallvec![UrlPattern::exact("https://api.box.com/test")],
+            url_patterns: smallvec![UrlPattern::exact("https://api.example.com/test")],
             header_matchers: smallvec![],
             query_matchers: smallvec![],
             body_matcher: None,
@@ -1556,8 +1559,8 @@ async fn test_include_preflight_option() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("OPTIONS", "https://api.box.com/test", 204),
-                create_test_entry("GET", "https://api.box.com/test", 200),
+                create_test_entry("OPTIONS", "https://api.example.com/test", 204),
+                create_test_entry("GET", "https://api.example.com/test", 200),
             ],
             comment: None,
         }),
@@ -1584,10 +1587,10 @@ async fn test_all_options_disabled() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("OPTIONS", "https://api.box.com/test", 204),
-                create_test_entry("GET", "https://api.box.com/old", 301),
+                create_test_entry("OPTIONS", "https://api.example.com/test", 204),
+                create_test_entry("GET", "https://api.example.com/old", 301),
                 {
-                    let mut entry = create_test_entry("GET", "https://api.box.com/test", 200);
+                    let mut entry = create_test_entry("GET", "https://api.example.com/test", 200);
                     entry.response.headers = vec![v1_2::Headers {
                         name: "user-agent".to_string(),
                         value: "Mozilla".to_string(),
@@ -1627,7 +1630,7 @@ async fn test_all_options_disabled() {
 #[tokio::test]
 async fn test_priority_large_number_of_entries() {
     let entries: Vec<_> = (0..150)
-        .map(|i| create_test_entry("GET", &format!("https://api.box.com/test{i}"), 200))
+        .map(|i| create_test_entry("GET", &format!("https://api.example.com/test{i}"), 200))
         .collect();
 
     let har = Har {
@@ -1671,9 +1674,9 @@ async fn test_mock_id_sequential() {
             browser: None,
             pages: None,
             entries: vec![
-                create_test_entry("GET", "https://api.box.com/a", 200),
-                create_test_entry("GET", "https://api.box.com/b", 200),
-                create_test_entry("GET", "https://api.box.com/c", 200),
+                create_test_entry("GET", "https://api.example.com/a", 200),
+                create_test_entry("GET", "https://api.example.com/b", 200),
+                create_test_entry("GET", "https://api.example.com/c", 200),
             ],
             comment: None,
         }),
@@ -1702,7 +1705,11 @@ async fn test_mocks_enabled_by_default() {
             },
             browser: None,
             pages: None,
-            entries: vec![create_test_entry("GET", "https://api.box.com/test", 200)],
+            entries: vec![create_test_entry(
+                "GET",
+                "https://api.example.com/test",
+                200,
+            )],
             comment: None,
         }),
     };
@@ -1724,7 +1731,11 @@ async fn test_mocks_no_scope_by_default() {
             },
             browser: None,
             pages: None,
-            entries: vec![create_test_entry("GET", "https://api.box.com/test", 200)],
+            entries: vec![create_test_entry(
+                "GET",
+                "https://api.example.com/test",
+                200,
+            )],
             comment: None,
         }),
     };

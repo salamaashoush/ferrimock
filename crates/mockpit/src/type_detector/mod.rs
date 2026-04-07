@@ -192,6 +192,61 @@ impl Default for TypeDetector {
     }
 }
 
+// ---------------------------------------------------------------------------
+// URL Classifier extension point
+// ---------------------------------------------------------------------------
+
+use std::sync::{Arc, Mutex};
+
+/// Classifies URLs for type detection (e.g., identifying download URLs).
+///
+/// Embedders can register custom classifiers to recognize domain-specific
+/// download URL patterns that the built-in heuristics don't cover.
+///
+/// Closures with signature `Fn(&str) -> bool` automatically implement this trait.
+pub trait UrlClassifier: Send + Sync + 'static {
+    /// Returns true if the given URL is a download URL.
+    fn is_download_url(&self, url: &str) -> bool;
+}
+
+impl<F> UrlClassifier for F
+where
+    F: Fn(&str) -> bool + Send + Sync + 'static,
+{
+    fn is_download_url(&self, url: &str) -> bool {
+        self(url)
+    }
+}
+
+static URL_CLASSIFIERS: Mutex<Vec<Arc<dyn UrlClassifier>>> = Mutex::new(Vec::new());
+
+/// Register a custom URL classifier for type detection.
+///
+/// The classifier will be consulted when detecting download URL fields.
+/// Must be called before consolidation or type detection runs.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// mockpit::type_detector::register_url_classifier(|url| {
+///     url.contains("dl.mycdn.com") || url.contains("files.myservice.com")
+/// });
+/// ```
+pub fn register_url_classifier(classifier: impl UrlClassifier) {
+    if let Ok(mut classifiers) = URL_CLASSIFIERS.lock() {
+        classifiers.push(Arc::new(classifier));
+    }
+}
+
+/// Check if any registered custom classifier recognizes this as a download URL.
+/// Called by checkers and semantic modules.
+pub(crate) fn is_custom_download_url(url: &str) -> bool {
+    let Ok(classifiers) = URL_CLASSIFIERS.lock() else {
+        return false;
+    };
+    classifiers.iter().any(|c| c.is_download_url(url))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,

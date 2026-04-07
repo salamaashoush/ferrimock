@@ -1,9 +1,9 @@
 //! HAR (HTTP Archive) file loading and conversion to mock configurations
 //!
 //! Produces clean, replay-ready mock collections from HAR files.
-//! By default, normalizes absolute URLs to relative paths, filters non-Box
-//! domains and static assets, strips sensitive and infrastructure headers,
-//! and optionally extracts large response bodies to separate files.
+//! By default, normalizes absolute URLs to relative paths, strips sensitive
+//! and infrastructure headers, and optionally extracts large response bodies
+//! to separate files.
 //!
 //! Use the consolidator for further smart pattern detection and optimization.
 
@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use har::{Har, Spec, v1_2};
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use url::Url;
 
 use super::{MatchConfig, MockConfig, ResponseConfig};
@@ -18,32 +19,24 @@ use super::{MatchConfig, MockConfig, ResponseConfig};
 /// Default body size threshold for extraction (100 KB)
 const DEFAULT_BODY_SIZE_THRESHOLD: usize = 100 * 1024;
 
-/// Check if a hostname belongs to a Box domain
-pub fn is_box_domain(host: &str, extra_domains: &[String]) -> bool {
-    let lower = host.to_lowercase();
+/// Determines whether a hostname should be included when loading HAR files.
+///
+/// Embedders provide their own domain filtering logic (e.g., only allow
+/// their API domains). When no filter is set, all domains are included.
+///
+/// Closures with signature `Fn(&str) -> bool` automatically implement this trait.
+pub trait DomainFilter: Send + Sync {
+    /// Returns true if the given hostname should be included.
+    fn is_allowed(&self, host: &str) -> bool;
+}
 
-    // Standard Box domains
-    if lower.ends_with(".box.com")
-        || lower == "box.com"
-        || lower.ends_with(".box.net")
-        || lower == "box.net"
-        || lower.ends_with(".boxcloud.com")
-        || lower == "boxcloud.com"
-        || lower.ends_with(".boxcdn.net")
-        || lower == "boxcdn.net"
-    {
-        return true;
+impl<F> DomainFilter for F
+where
+    F: Fn(&str) -> bool + Send + Sync,
+{
+    fn is_allowed(&self, host: &str) -> bool {
+        self(host)
     }
-
-    // User-provided extra domains
-    for domain in extra_domains {
-        let d = domain.to_lowercase();
-        if lower == d || lower.ends_with(&format!(".{d}")) {
-            return true;
-        }
-    }
-
-    false
 }
 
 /// Check if a URL points to a static asset based on file extension
@@ -113,7 +106,7 @@ fn should_use_file_body(body: &str, content_type: Option<&str>, threshold: usize
 }
 
 /// Options for loading HAR files
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HarLoadOptions {
     /// Exclude OPTIONS preflight requests
     pub exclude_preflight: bool,
@@ -123,8 +116,9 @@ pub struct HarLoadOptions {
     pub strip_browser_headers: bool,
     /// Convert absolute URLs to relative paths (default: true)
     pub normalize_urls: bool,
-    /// Skip entries from non-Box domains (default: true)
-    pub filter_non_box_domains: bool,
+    /// Domain filter: only include entries from allowed domains.
+    /// When None, all domains are included.
+    pub domain_filter: Option<Arc<dyn DomainFilter>>,
     /// Skip static asset entries like .js, .css, .png (default: true)
     pub exclude_static_assets: bool,
     /// Remove Authorization, Cookie, Set-Cookie headers (default: true)
@@ -137,8 +131,6 @@ pub struct HarLoadOptions {
     pub body_output_dir: Option<PathBuf>,
     /// Size threshold for body extraction (default: 100KB)
     pub body_size_threshold: usize,
-    /// Additional domains to treat as Box domains
-    pub extra_box_domains: Vec<String>,
 }
 
 impl Default for HarLoadOptions {
@@ -148,15 +140,38 @@ impl Default for HarLoadOptions {
             exclude_redirects: true,
             strip_browser_headers: true,
             normalize_urls: true,
-            filter_non_box_domains: true,
+            domain_filter: None,
             exclude_static_assets: true,
             strip_sensitive_headers: true,
             strip_infrastructure_headers: true,
             strip_sensitive_query_params: true,
             body_output_dir: None,
             body_size_threshold: DEFAULT_BODY_SIZE_THRESHOLD,
-            extra_box_domains: Vec::new(),
         }
+    }
+}
+
+impl std::fmt::Debug for HarLoadOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HarLoadOptions")
+            .field("exclude_preflight", &self.exclude_preflight)
+            .field("exclude_redirects", &self.exclude_redirects)
+            .field("strip_browser_headers", &self.strip_browser_headers)
+            .field("normalize_urls", &self.normalize_urls)
+            .field("domain_filter", &self.domain_filter.is_some())
+            .field("exclude_static_assets", &self.exclude_static_assets)
+            .field("strip_sensitive_headers", &self.strip_sensitive_headers)
+            .field(
+                "strip_infrastructure_headers",
+                &self.strip_infrastructure_headers,
+            )
+            .field(
+                "strip_sensitive_query_params",
+                &self.strip_sensitive_query_params,
+            )
+            .field("body_output_dir", &self.body_output_dir)
+            .field("body_size_threshold", &self.body_size_threshold)
+            .finish()
     }
 }
 
@@ -245,9 +260,9 @@ impl HarLoader {
         // Try parsing as an absolute URL
         if let Ok(parsed) = Url::parse(raw_url) {
             if let Some(host) = parsed.host_str() {
-                // Filter non-Box domains
-                if self.options.filter_non_box_domains
-                    && !is_box_domain(host, &self.options.extra_box_domains)
+                // Filter by domain if a filter is configured
+                if let Some(ref filter) = self.options.domain_filter
+                    && !filter.is_allowed(host)
                 {
                     return None;
                 }
@@ -592,47 +607,6 @@ mod tests {
         }
     }
 
-    // -- is_box_domain --
-
-    #[test]
-    fn test_is_box_domain_standard() {
-        assert!(is_box_domain("api.box.com", &[]));
-        assert!(is_box_domain("app.box.com", &[]));
-        assert!(is_box_domain("upload.box.com", &[]));
-        assert!(is_box_domain("dl.boxcloud.com", &[]));
-        assert!(is_box_domain("cdn01.boxcdn.net", &[]));
-        assert!(is_box_domain("realtime.services.box.net", &[]));
-        assert!(is_box_domain("box.com", &[]));
-    }
-
-    #[test]
-    fn test_is_box_domain_enterprise() {
-        assert!(is_box_domain("myorg.app.box.com", &[]));
-        assert!(is_box_domain("myorg.ent.box.com", &[]));
-        assert!(is_box_domain("fupload-us1.app.box.com", &[]));
-    }
-
-    #[test]
-    fn test_is_box_domain_regional() {
-        assert!(is_box_domain("us-east-1.boxcloud.com", &[]));
-    }
-
-    #[test]
-    fn test_is_box_domain_negative() {
-        assert!(!is_box_domain("google.com", &[]));
-        assert!(!is_box_domain("api.github.com", &[]));
-        assert!(!is_box_domain("cdn.jsdelivr.net", &[]));
-        assert!(!is_box_domain("analytics.google.com", &[]));
-    }
-
-    #[test]
-    fn test_is_box_domain_extra() {
-        let extra = vec!["internal.mycompany.com".to_string()];
-        assert!(is_box_domain("internal.mycompany.com", &extra));
-        assert!(is_box_domain("api.internal.mycompany.com", &extra));
-        assert!(!is_box_domain("google.com", &extra));
-    }
-
     // -- is_static_asset --
 
     #[test]
@@ -647,9 +621,11 @@ mod tests {
 
     #[test]
     fn test_is_not_static_asset() {
-        assert!(!is_static_asset("https://api.box.com/2.0/users/me"));
-        assert!(!is_static_asset("/2.0/files/123"));
-        assert!(!is_static_asset("https://api.box.com/2.0/folders/0/items"));
+        assert!(!is_static_asset("https://api.example.com/v2/users/me"));
+        assert!(!is_static_asset("/v2/files/123"));
+        assert!(!is_static_asset(
+            "https://api.example.com/v2/folders/0/items"
+        ));
     }
 
     // -- is_sensitive_query_param --
@@ -708,11 +684,11 @@ mod tests {
     // -- URL normalization --
 
     #[test]
-    fn test_normalize_url_absolute_box() {
+    fn test_normalize_url_absolute() {
         let loader = HarLoader::new();
         assert_eq!(
-            loader.normalize_url("https://api.box.com/2.0/users/me"),
-            Some("/2.0/users/me".to_string())
+            loader.normalize_url("https://api.example.com/v2/users/me"),
+            Some("/v2/users/me".to_string())
         );
     }
 
@@ -720,9 +696,8 @@ mod tests {
     fn test_normalize_url_preserves_query() {
         let loader = HarLoader::new();
         assert_eq!(
-            loader
-                .normalize_url("https://api.box.com/2.0/folders/0/items?fields=name,id&limit=100"),
-            Some("/2.0/folders/0/items?fields=name,id&limit=100".to_string())
+            loader.normalize_url("https://api.example.com/v2/items?fields=name,id&limit=100"),
+            Some("/v2/items?fields=name,id&limit=100".to_string())
         );
     }
 
@@ -730,15 +705,23 @@ mod tests {
     fn test_normalize_url_strips_access_token() {
         let loader = HarLoader::new();
         assert_eq!(
-            loader
-                .normalize_url("https://api.box.com/2.0/users/me?access_token=SECRET&fields=name"),
-            Some("/2.0/users/me?fields=name".to_string())
+            loader.normalize_url(
+                "https://api.example.com/v2/users/me?access_token=SECRET&fields=name"
+            ),
+            Some("/v2/users/me?fields=name".to_string())
         );
     }
 
     #[test]
-    fn test_normalize_url_filters_non_box_domain() {
-        let loader = HarLoader::new();
+    fn test_normalize_url_domain_filter() {
+        let loader = HarLoader::with_options(HarLoadOptions {
+            domain_filter: Some(Arc::new(|host: &str| host.ends_with(".example.com"))),
+            ..Default::default()
+        });
+        assert_eq!(
+            loader.normalize_url("https://api.example.com/v2/users"),
+            Some("/v2/users".to_string())
+        );
         assert_eq!(
             loader.normalize_url("https://www.google.com/analytics"),
             None
@@ -749,17 +732,8 @@ mod tests {
     fn test_normalize_url_already_relative() {
         let loader = HarLoader::new();
         assert_eq!(
-            loader.normalize_url("/2.0/users/me"),
-            Some("/2.0/users/me".to_string())
-        );
-    }
-
-    #[test]
-    fn test_normalize_url_enterprise_domain() {
-        let loader = HarLoader::new();
-        assert_eq!(
-            loader.normalize_url("https://myorg.app.box.com/api/oauth2/token"),
-            Some("/api/oauth2/token".to_string())
+            loader.normalize_url("/v2/users/me"),
+            Some("/v2/users/me".to_string())
         );
     }
 
@@ -767,12 +741,14 @@ mod tests {
     fn test_normalize_url_disabled() {
         let loader = HarLoader::with_options(HarLoadOptions {
             normalize_urls: false,
-            filter_non_box_domains: false,
             ..Default::default()
         });
-        // Should keep the absolute URL but still strip sensitive params
-        let result = loader.normalize_url("https://api.box.com/2.0/users/me?access_token=SECRET");
-        assert_eq!(result, Some("https://api.box.com/2.0/users/me".to_string()));
+        let result =
+            loader.normalize_url("https://api.example.com/v2/users/me?access_token=SECRET");
+        assert_eq!(
+            result,
+            Some("https://api.example.com/v2/users/me".to_string())
+        );
     }
 
     // -- should_skip_entry --
@@ -780,14 +756,14 @@ mod tests {
     #[test]
     fn test_skip_static_assets() {
         let loader = HarLoader::new();
-        let entry = create_test_entry("GET", "https://cdn.box.com/app.js", 200);
+        let entry = create_test_entry("GET", "https://cdn.example.com/app.js", 200);
         assert!(loader.should_skip_entry(&entry));
     }
 
     #[test]
     fn test_keep_api_calls() {
         let loader = HarLoader::new();
-        let entry = create_test_entry("GET", "https://api.box.com/2.0/users/me", 200);
+        let entry = create_test_entry("GET", "https://api.example.com/v2/users/me", 200);
         assert!(!loader.should_skip_entry(&entry));
     }
 
@@ -835,45 +811,36 @@ mod tests {
     // -- Domain filtering integration --
 
     #[tokio::test]
-    async fn test_filter_non_box_domains() {
+    async fn test_filter_domains_with_filter() {
         let har = make_har(vec![
-            create_test_entry("GET", "https://api.box.com/2.0/users/me", 200),
+            create_test_entry("GET", "https://api.example.com/v2/users/me", 200),
             create_test_entry("GET", "https://www.google.com/analytics", 200),
-            create_test_entry("POST", "https://upload.box.com/api/2.0/files/content", 201),
+            create_test_entry("POST", "https://upload.example.com/v2/files/content", 201),
             create_test_entry("GET", "https://cdn.jsdelivr.net/npm/react", 200),
         ]);
 
-        let loader = HarLoader::new();
+        let loader = HarLoader::with_options(HarLoadOptions {
+            domain_filter: Some(Arc::new(|host: &str| host.ends_with(".example.com"))),
+            ..Default::default()
+        });
         let mocks = loader
             .convert_har_to_mocks(har)
             .await
             .expect("conversion failed");
 
-        // Only the 2 Box domain entries should remain
+        // Only the 2 example.com entries should remain
         assert_eq!(mocks.len(), 2);
-        let urls: Vec<&str> = mocks
-            .iter()
-            .filter_map(|m| m.match_config.as_ref())
-            .flat_map(|mc| mc.urls.iter())
-            .map(std::string::String::as_str)
-            .collect();
-        assert!(
-            urls.iter()
-                .all(|u| u.contains("/2.0/") || u.contains("/api/"))
-        );
     }
 
     #[tokio::test]
-    async fn test_all_domains_disabled() {
+    async fn test_no_domain_filter() {
         let har = make_har(vec![
-            create_test_entry("GET", "https://api.box.com/2.0/users/me", 200),
+            create_test_entry("GET", "https://api.example.com/v2/users/me", 200),
             create_test_entry("GET", "https://www.google.com/analytics", 200),
         ]);
 
-        let loader = HarLoader::with_options(HarLoadOptions {
-            filter_non_box_domains: false,
-            ..Default::default()
-        });
+        // Default: no domain filter, all domains included
+        let loader = HarLoader::new();
         let mocks = loader
             .convert_har_to_mocks(har)
             .await
@@ -888,7 +855,7 @@ mod tests {
     async fn test_urls_normalized_to_relative() {
         let har = make_har(vec![create_test_entry(
             "GET",
-            "https://api.box.com/2.0/users/me",
+            "https://api.example.com/v2/users/me",
             200,
         )]);
 
@@ -900,14 +867,14 @@ mod tests {
 
         assert_eq!(mocks.len(), 1);
         let mc = mocks[0].match_config.as_ref().unwrap();
-        assert_eq!(mc.urls[0], "exact:/2.0/users/me");
+        assert_eq!(mc.urls[0], "exact:/v2/users/me");
     }
 
     #[tokio::test]
     async fn test_absolute_urls_preserved_when_disabled() {
         let har = make_har(vec![create_test_entry(
             "GET",
-            "https://api.box.com/2.0/users/me",
+            "https://api.example.com/v2/users/me",
             200,
         )]);
 
@@ -922,7 +889,7 @@ mod tests {
 
         assert_eq!(mocks.len(), 1);
         let mc = mocks[0].match_config.as_ref().unwrap();
-        assert_eq!(mc.urls[0], "exact:https://api.box.com/2.0/users/me");
+        assert_eq!(mc.urls[0], "exact:https://api.example.com/v2/users/me");
     }
 
     // -- Body extraction --
@@ -932,7 +899,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let large_body = "x".repeat(200 * 1024);
 
-        let mut entry = create_test_entry("GET", "https://api.box.com/2.0/files/123", 200);
+        let mut entry = create_test_entry("GET", "https://api.example.com/v2/files/123", 200);
         entry.response.content.text = Some(large_body.clone());
 
         let har = make_har(vec![entry]);
@@ -966,7 +933,7 @@ mod tests {
 
         let har = make_har(vec![create_test_entry(
             "GET",
-            "https://api.box.com/2.0/users/me",
+            "https://api.example.com/v2/users/me",
             200,
         )]);
 
@@ -991,10 +958,10 @@ mod tests {
     #[tokio::test]
     async fn test_end_to_end_clean_conversion() {
         let har = make_har(vec![
-            // Box API call - should be kept with relative URL
+            // API call - should be kept with relative URL
             create_test_entry_with_headers(
                 "GET",
-                "https://api.box.com/2.0/users/me?access_token=SECRET_TOKEN&fields=name",
+                "https://api.example.com/v2/users/me?access_token=SECRET_TOKEN&fields=name",
                 200,
                 vec![
                     ("content-type", "application/json"),
@@ -1006,14 +973,17 @@ mod tests {
                 Some(r#"{"id":"123","name":"Test"}"#),
             ),
             // Static asset - should be filtered
-            create_test_entry("GET", "https://cdn.box.com/static/app.js", 200),
-            // Non-Box domain - should be filtered
+            create_test_entry("GET", "https://cdn.example.com/static/app.js", 200),
+            // Non-allowed domain - should be filtered
             create_test_entry("GET", "https://www.google-analytics.com/collect", 200),
             // OPTIONS preflight - should be filtered
-            create_test_entry("OPTIONS", "https://api.box.com/2.0/files", 204),
+            create_test_entry("OPTIONS", "https://api.example.com/v2/files", 204),
         ]);
 
-        let loader = HarLoader::new();
+        let loader = HarLoader::with_options(HarLoadOptions {
+            domain_filter: Some(Arc::new(|host: &str| host.ends_with(".example.com"))),
+            ..Default::default()
+        });
         let mocks = loader
             .convert_har_to_mocks(har)
             .await
@@ -1025,7 +995,7 @@ mod tests {
 
         // URL should be relative and access_token stripped
         let mc = mock.match_config.as_ref().unwrap();
-        assert_eq!(mc.urls[0], "exact:/2.0/users/me?fields=name");
+        assert_eq!(mc.urls[0], "exact:/v2/users/me?fields=name");
 
         // Sensitive and infrastructure headers should be stripped
         let rc = mock.response_config.as_ref().unwrap();
@@ -1057,7 +1027,7 @@ mod tests {
             "time": 50,
             "request": {
               "method": "GET",
-              "url": "https://api.box.com/2.0/users/me",
+              "url": "https://api.example.com/v2/users/me",
               "httpVersion": "HTTP/1.1",
               "headers": [],
               "queryString": [],
@@ -1118,14 +1088,14 @@ mod tests {
         assert_eq!(match_config.methods[0], "GET");
         assert_eq!(response_config.status().expect("status should exist"), 200);
         // Should now be a relative path
-        assert_eq!(match_config.urls[0], "exact:/2.0/users/me");
+        assert_eq!(match_config.urls[0], "exact:/v2/users/me");
     }
 
     #[tokio::test]
     async fn test_exclude_preflight() {
         let har = make_har(vec![
-            create_test_entry("OPTIONS", "https://api.box.com/test", 204),
-            create_test_entry("GET", "https://api.box.com/test", 200),
+            create_test_entry("OPTIONS", "https://api.example.com/test", 204),
+            create_test_entry("GET", "https://api.example.com/test", 200),
         ]);
 
         let loader = HarLoader::new();
@@ -1143,14 +1113,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extra_box_domains() {
+    async fn test_domain_filter() {
         let har = make_har(vec![
-            create_test_entry("GET", "https://api.box.com/2.0/users/me", 200),
+            create_test_entry("GET", "https://api.example.com/v2/users/me", 200),
             create_test_entry("GET", "https://internal.mycompany.com/api/data", 200),
+            create_test_entry("GET", "https://www.google.com/analytics", 200),
         ]);
 
         let loader = HarLoader::with_options(HarLoadOptions {
-            extra_box_domains: vec!["internal.mycompany.com".to_string()],
+            domain_filter: Some(Arc::new(|host: &str| {
+                host.ends_with(".example.com") || host.ends_with(".mycompany.com")
+            })),
             ..Default::default()
         });
         let mocks = loader
@@ -1158,6 +1131,7 @@ mod tests {
             .await
             .expect("conversion failed");
 
+        // google.com filtered out
         assert_eq!(mocks.len(), 2);
     }
 }

@@ -731,7 +731,7 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
     println!(
         "{}",
         ui::dim(&format!(
-            "Tip: Test with: box-dev-gate mock test -m {} {}",
+            "Tip: Test with: mockpit mock test -m {} {}",
             state.methods.first().unwrap_or(&"GET".to_string()),
             state
                 .url_pattern
@@ -887,7 +887,7 @@ fn generate_error_template(status: u16) -> String {
   "code": "{error_type}",
   "message": "{message}",
   "request_id": "{{{{ fake_uuid() }}}}",
-  "help_url": "https://developer.box.com/guides/api-calls/errors/"
+  "help_url": "https://developer.example.com/guides/api-calls/errors/"
 }}"#
     )
 }

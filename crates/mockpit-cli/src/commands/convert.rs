@@ -15,13 +15,12 @@ pub struct ConvertHarOptions {
     pub exclude_redirects: bool,
     pub strip_browser_headers: bool,
     pub normalize_urls: bool,
-    pub filter_non_box_domains: bool,
+    pub allowed_domains: Vec<String>,
     pub exclude_static_assets: bool,
     pub strip_sensitive_headers: bool,
     pub strip_infrastructure_headers: bool,
     pub extract_bodies: bool,
     pub body_threshold_kb: usize,
-    pub extra_domains: Vec<String>,
 }
 
 pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
@@ -44,19 +43,33 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
     };
 
     // Create HAR loader with all options
+    // Build domain filter from --domains flag
+    let domain_filter: Option<std::sync::Arc<dyn mockpit::config::DomainFilter>> =
+        if opts.allowed_domains.is_empty() {
+            None
+        } else {
+            let domains = opts.allowed_domains.clone();
+            Some(std::sync::Arc::new(move |host: &str| {
+                let lower = host.to_lowercase();
+                domains.iter().any(|d| {
+                    let d = d.to_lowercase();
+                    lower == d || lower.ends_with(&format!(".{d}"))
+                })
+            }))
+        };
+
     let options = HarLoadOptions {
         exclude_preflight: opts.exclude_preflight,
         exclude_redirects: opts.exclude_redirects,
         strip_browser_headers: opts.strip_browser_headers,
         normalize_urls: opts.normalize_urls,
-        filter_non_box_domains: opts.filter_non_box_domains,
+        domain_filter,
         exclude_static_assets: opts.exclude_static_assets,
         strip_sensitive_headers: opts.strip_sensitive_headers,
         strip_infrastructure_headers: opts.strip_infrastructure_headers,
-        strip_sensitive_query_params: opts.strip_sensitive_headers, // tied to sensitive headers flag
+        strip_sensitive_query_params: opts.strip_sensitive_headers,
         body_output_dir,
         body_size_threshold: opts.body_threshold_kb * 1024,
-        extra_box_domains: opts.extra_domains,
     };
 
     let loader = HarLoader::with_options(options);

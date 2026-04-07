@@ -3,8 +3,91 @@
 use crate::config::MockConfig;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 use url::Url;
+
+// ---------------------------------------------------------------------------
+// Path Normalizer extension point
+// ---------------------------------------------------------------------------
+
+/// Custom path segment normalizer for consolidation grouping.
+///
+/// Returns `Some(placeholder)` if the segment should be normalized (e.g., a
+/// domain-specific ID format), or `None` to let built-in normalizers handle it.
+///
+/// Closures with signature `Fn(&str) -> Option<String>` implement this trait.
+pub trait PathNormalizer: Send + Sync + 'static {
+    fn normalize_segment(&self, segment: &str) -> Option<String>;
+}
+
+impl<F> PathNormalizer for F
+where
+    F: Fn(&str) -> Option<String> + Send + Sync + 'static,
+{
+    fn normalize_segment(&self, segment: &str) -> Option<String> {
+        self(segment)
+    }
+}
+
+static CUSTOM_NORMALIZERS: Mutex<Vec<Arc<dyn PathNormalizer>>> = Mutex::new(Vec::new());
+
+/// Register a custom path normalizer for consolidation grouping.
+///
+/// Custom normalizers run after built-in normalizers (UUID, ISO date, numeric ID).
+/// They are applied to each remaining path segment that wasn't matched by built-ins.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// mockpit::consolidator::register_path_normalizer(|segment| {
+///     // Recognize 8-digit enterprise IDs
+///     if segment.len() == 8 && segment.chars().all(|c| c.is_ascii_digit()) {
+///         Some("{enterprise_id}".to_string())
+///     } else {
+///         None
+///     }
+/// });
+/// ```
+pub fn register_path_normalizer(normalizer: impl PathNormalizer) {
+    if let Ok(mut normalizers) = CUSTOM_NORMALIZERS.lock() {
+        normalizers.push(Arc::new(normalizer));
+    }
+}
+
+/// Apply custom normalizers to remaining path segments after built-in patterns.
+fn apply_custom_normalizers(path: &str) -> String {
+    let Ok(normalizers) = CUSTOM_NORMALIZERS.lock() else {
+        return path.to_string();
+    };
+    if normalizers.is_empty() {
+        return path.to_string();
+    }
+
+    let segments: Vec<&str> = path.split('/').collect();
+    let mut result = Vec::with_capacity(segments.len());
+
+    for segment in &segments {
+        if segment.is_empty() || segment.starts_with('{') {
+            // Empty segment or already normalized by built-in
+            result.push((*segment).to_string());
+            continue;
+        }
+
+        let mut matched = false;
+        for normalizer in normalizers.iter() {
+            if let Some(placeholder) = normalizer.normalize_segment(segment) {
+                result.push(placeholder);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            result.push((*segment).to_string());
+        }
+    }
+
+    result.join("/")
+}
 
 #[allow(clippy::expect_used)] // Static regex literals -- panic on invalid pattern is correct
 static UUID_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -229,6 +312,9 @@ impl PatternDetector {
             })
             .to_string();
 
+        // Apply custom normalizers for domain-specific patterns
+        normalized = apply_custom_normalizers(&normalized);
+
         normalized
     }
 
@@ -373,7 +459,7 @@ impl PatternDetector {
     }
 
     /// Extract base path from URL (without query params).
-    /// Handles both absolute URLs (`https://api.box.com/2.0/users/me`)
+    /// Handles both absolute URLs (`https://api.example.com/v2/users/me`)
     /// and relative paths (`/2.0/users/me`).
     pub fn extract_base_path(mock: &MockConfig) -> String {
         let url = mock
@@ -715,8 +801,8 @@ mod tests {
 
     #[test]
     fn test_extract_base_path_absolute_url() {
-        let mock = create_rest_mock("abs-1", "GET", "exact:https://api.box.com/2.0/users/me");
-        assert_eq!(PatternDetector::extract_base_path(&mock), "/2.0/users/me");
+        let mock = create_rest_mock("abs-1", "GET", "exact:https://api.example.com/v2/users/me");
+        assert_eq!(PatternDetector::extract_base_path(&mock), "/v2/users/me");
     }
 
     #[test]
@@ -724,25 +810,25 @@ mod tests {
         let mock = create_rest_mock(
             "abs-2",
             "GET",
-            "exact:https://api.box.com/2.0/folders/0/items?fields=name&limit=100",
+            "exact:https://api.example.com/v2/folders/0/items?fields=name&limit=100",
         );
         assert_eq!(
             PatternDetector::extract_base_path(&mock),
-            "/2.0/folders/0/items"
+            "/v2/folders/0/items"
         );
     }
 
     #[test]
     fn test_extract_base_path_relative_url() {
-        let mock = create_rest_mock("rel-1", "GET", "exact:/2.0/users/me");
-        assert_eq!(PatternDetector::extract_base_path(&mock), "/2.0/users/me");
+        let mock = create_rest_mock("rel-1", "GET", "exact:/v2/users/me");
+        assert_eq!(PatternDetector::extract_base_path(&mock), "/v2/users/me");
     }
 
     #[test]
     fn test_grouping_mixed_absolute_and_relative() {
         // An absolute URL and relative URL for the same path should group together
-        let mock_abs = create_rest_mock("abs", "GET", "exact:https://api.box.com/2.0/users/123");
-        let mock_rel = create_rest_mock("rel", "GET", "exact:/2.0/users/456");
+        let mock_abs = create_rest_mock("abs", "GET", "exact:https://api.example.com/v2/users/123");
+        let mock_rel = create_rest_mock("rel", "GET", "exact:/v2/users/456");
 
         let key_abs = PatternDetector::extract_pattern_key(&mock_abs);
         let key_rel = PatternDetector::extract_pattern_key(&mock_rel);
@@ -757,12 +843,12 @@ mod tests {
             create_rest_mock(
                 "q1",
                 "GET",
-                "exact:https://api.box.com/2.0/folders/0/items?fields=name&offset=0",
+                "exact:https://api.example.com/v2/folders/0/items?fields=name&offset=0",
             ),
             create_rest_mock(
                 "q2",
                 "GET",
-                "exact:https://api.box.com/2.0/folders/0/items?fields=name&offset=100",
+                "exact:https://api.example.com/v2/folders/0/items?fields=name&offset=100",
             ),
         ];
 

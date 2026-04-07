@@ -16,7 +16,7 @@ use mockpit::engine::{MockMatcher, MockRegistry, RequestContext, ResponseGenerat
 use rustc_hash::FxHashMap;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use anyhow::Context;
 
@@ -25,9 +25,11 @@ pub struct MockServerConfig {
     pub port: u16,
     pub host: String,
     pub mocks_dir: Option<String>,
+    pub mock_file: Option<String>,
     pub watch: bool,
     pub cors: bool,
     pub enable_render_endpoint: bool,
+    pub log_matches: bool,
     pub verbose: bool,
     pub open_browser: bool,
 }
@@ -38,6 +40,7 @@ struct MockServerState {
     matcher: MockMatcher,
     registry: Arc<MockRegistry>,
     verbose: bool,
+    log_matches: bool,
     enable_render_endpoint: bool,
 }
 
@@ -47,36 +50,93 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         port,
         host,
         mocks_dir,
+        mock_file,
         watch,
         cors,
         enable_render_endpoint,
+        log_matches,
         verbose,
         open_browser,
     } = config;
-    let collections_dir = mocks_dir.unwrap_or_else(|| {
-        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string())
-    });
 
     println!("{}", ui::header("Mock Server"));
     println!();
 
-    // Load mocks
-    let spinner = ui::spinner(&format!(
-        "Loading mocks from {}...",
-        ui::path(&collections_dir)
-    ));
     let registry = Arc::new(MockRegistry::new());
-    let count = registry
-        .load_from_directory(&collections_dir)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))
-        .context("Failed to load mocks")?;
-    spinner.finish_and_clear();
+    let mut total_count = 0usize;
+
+    // Load mocks from directory if provided
+    if let Some(ref dir) = mocks_dir {
+        let spinner = ui::spinner(&format!("Loading mocks from {}...", ui::path(dir)));
+        let count = registry
+            .load_from_directory(dir)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+            .context("Failed to load mocks from directory")?;
+        spinner.finish_and_clear();
+        total_count += count;
+        println!(
+            "{}",
+            ui::success(&format!(
+                "Loaded {} mock(s) from {}",
+                ui::number(count),
+                ui::path(dir)
+            ))
+        );
+    } else if mock_file.is_none() {
+        // Default directory if neither --mocks nor --mock-file given
+        let default_dir =
+            std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+        let spinner = ui::spinner(&format!("Loading mocks from {}...", ui::path(&default_dir)));
+        let count = registry
+            .load_from_directory(&default_dir)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+            .context("Failed to load mocks")?;
+        spinner.finish_and_clear();
+        total_count += count;
+        println!(
+            "{}",
+            ui::success(&format!(
+                "Loaded {} mock(s) from {}",
+                ui::number(count),
+                ui::path(&default_dir)
+            ))
+        );
+    }
+
+    // Load specific mock file if provided
+    if let Some(ref file) = mock_file {
+        let path = std::path::Path::new(file);
+        let spinner = ui::spinner(&format!("Loading mocks from {}...", ui::path(file)));
+        let count = registry
+            .load_collection_file(path)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+            .context("Failed to load mock file")?;
+        spinner.finish_and_clear();
+        total_count += count;
+        println!(
+            "{}",
+            ui::success(&format!(
+                "Loaded {} mock(s) from {}",
+                ui::number(count),
+                ui::path(file)
+            ))
+        );
+    }
 
     println!(
         "{}",
-        ui::success(&format!("Loaded {} mock definition(s)", ui::number(count)))
+        ui::success(&format!(
+            "Total: {} mock definition(s)",
+            ui::number(total_count)
+        ))
     );
+
+    let collections_dir = mocks_dir.unwrap_or_else(|| {
+        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string())
+    });
 
     // Set up hot reload if enabled
     if watch {
@@ -97,6 +157,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         matcher,
         registry: Arc::clone(&registry),
         verbose,
+        log_matches,
         enable_render_endpoint,
     });
 
@@ -154,6 +215,10 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
     if verbose {
         app = app.layer(TraceLayer::new_for_http());
         println!("{}", ui::info("Verbose logging enabled"));
+    }
+
+    if log_matches {
+        println!("{}", ui::info("Match logging enabled"));
     }
 
     // Add state LAST to convert Router<S> to Router<()>
@@ -303,6 +368,8 @@ async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -
         }
     };
 
+    let request_start = std::time::Instant::now();
+
     // Log request if verbose
     if state.verbose {
         debug!(
@@ -327,6 +394,19 @@ async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -
             debug!(
               mock_id = %mock_def.id,
               "Request matched mock"
+            );
+        }
+
+        if state.log_matches {
+            let elapsed = request_start.elapsed();
+            info!(
+              mock_id = %mock_def.id,
+              method = %method,
+              path = %path,
+              status = %mock_def.response.status.as_u16(),
+              captures = ?captures,
+              elapsed_ms = elapsed.as_secs_f64() * 1000.0,
+              "Mock matched"
             );
         }
 
@@ -361,10 +441,13 @@ async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -
             }
         }
     } else {
-        if state.verbose {
+        if state.verbose || state.log_matches {
+            let elapsed = request_start.elapsed();
             warn!(
               method = %method,
               path = %path,
+              query = ?query,
+              elapsed_ms = elapsed.as_secs_f64() * 1000.0,
               "No matching mock found"
             );
         }
@@ -374,7 +457,7 @@ async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -
           "method": method.as_str(),
           "path": path,
           "query": query,
-          "hint": "Use 'box-dev-gate mock test --debug' to see why mocks didn't match"
+          "hint": "Use 'mockpit mock test --debug' to see why mocks didn't match"
         });
 
         Response::builder()

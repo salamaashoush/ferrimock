@@ -100,7 +100,7 @@ impl TemplateGenerator {
         // Check if this is a pagination results array field
         let results_array_field = detect_results_array_field(analysis);
 
-        // Detect file extension for Box file objects
+        // Detect file extension via registered detectors
         let file_extension = extract_file_extension_from_response(analysis);
 
         for (field, field_type) in &analysis.varying_fields {
@@ -122,7 +122,7 @@ impl TemplateGenerator {
                 } else if matches!(field_type, FieldType::DownloadUrl { .. })
                     && file_extension.is_some()
                 {
-                    // For download URLs in Box file objects, use file extension
+                    // For download URLs in file objects, use detected file extension
                     field_type_to_tera_expr_with_context(
                         field,
                         field_type,
@@ -133,7 +133,7 @@ impl TemplateGenerator {
                     && file_extension.is_some()
                     && (field.contains("download_url") || field.contains("download"))
                 {
-                    // Treat URLs with "download" in name as download URLs in Box file objects
+                    // Treat URLs with "download" in name as download URLs in file objects
                     field_type_to_tera_expr_with_context(
                         field,
                         &FieldType::DownloadUrl { sample_url: None },
@@ -340,16 +340,21 @@ mod tests {
     use crate::type_detector::{ArrayPattern, FieldType};
 
     #[test]
-    fn test_box_file_object_with_pdf_download_url() {
+    fn test_file_object_with_pdf_download_url() {
+        crate::codegen::register_file_object_detector(crate::codegen::SimpleFileDetector::new(
+            "type",
+            "file",
+            "extension",
+        ));
         let generator = TemplateGenerator::new("api.{path}.total".to_string());
 
-        // Simulate a Box file object response with sign.download_url
+        // Simulate a file object response with sign.download_url
         let sign_object = FieldType::Object(Box::new(crate::type_detector::ObjectAnalysis {
             varying_fields: vec![(
                 "download_url".to_string(),
                 FieldType::DownloadUrl {
                     sample_url: Some(
-                        "https://dl.boxcloud.com/d/1/b0!6mFruo9M1-NhU-3a1Ou3mh...".to_string(),
+                        "https://cdn.example.com/download/b0!6mFruo9M1-NhU-3a1Ou3mh...".to_string(),
                     ),
                 },
             )],
@@ -398,7 +403,7 @@ mod tests {
         // CRITICAL: Check that download_url uses fake_pdf_data_uri() NOT fake_download_url()
         assert!(
             template.contains("fake_pdf_data_uri"),
-            "Box file object with extension: pdf should use fake_pdf_data_uri(). Template:\n{template}"
+            "File object with extension: pdf should use fake_pdf_data_uri(). Template:\n{template}"
         );
 
         assert!(
@@ -412,14 +417,19 @@ mod tests {
     }
 
     #[test]
-    fn test_box_file_object_with_png_download_url() {
+    fn test_file_object_with_png_download_url() {
+        crate::codegen::register_file_object_detector(crate::codegen::SimpleFileDetector::new(
+            "type",
+            "file",
+            "extension",
+        ));
         let generator = TemplateGenerator::new("api.{path}.total".to_string());
 
         let sign_object = FieldType::Object(Box::new(crate::type_detector::ObjectAnalysis {
             varying_fields: vec![(
                 "download_url".to_string(),
                 FieldType::DownloadUrl {
-                    sample_url: Some("https://dl.boxcloud.com/d/1/abc123...".to_string()),
+                    sample_url: Some("https://cdn.example.com/download/abc123...".to_string()),
                 },
             )],
             constant_fields: vec![(
@@ -466,14 +476,19 @@ mod tests {
     }
 
     #[test]
-    fn test_box_file_object_with_jpeg_download_url() {
+    fn test_file_object_with_jpeg_download_url() {
+        crate::codegen::register_file_object_detector(crate::codegen::SimpleFileDetector::new(
+            "type",
+            "file",
+            "extension",
+        ));
         let generator = TemplateGenerator::new("api.{path}.total".to_string());
 
         let sign_object = FieldType::Object(Box::new(crate::type_detector::ObjectAnalysis {
             varying_fields: vec![(
                 "download_url".to_string(),
                 FieldType::DownloadUrl {
-                    sample_url: Some("https://dl.boxcloud.com/d/1/xyz789...".to_string()),
+                    sample_url: Some("https://cdn.example.com/download/xyz789...".to_string()),
                 },
             )],
             constant_fields: vec![(
@@ -521,13 +536,18 @@ mod tests {
 
     #[test]
     fn test_box_file_with_authenticated_download_url() {
+        crate::codegen::register_file_object_detector(crate::codegen::SimpleFileDetector::new(
+            "type",
+            "file",
+            "extension",
+        ));
         let generator = TemplateGenerator::new("api.{path}.total".to_string());
 
         let sign_object = FieldType::Object(Box::new(crate::type_detector::ObjectAnalysis {
             varying_fields: vec![(
                 "download_url".to_string(),
                 FieldType::DownloadUrl {
-                    sample_url: Some("https://dl.boxcloud.com/d/1/long_url...".to_string()),
+                    sample_url: Some("https://cdn.example.com/download/long_url...".to_string()),
                 },
             )],
             constant_fields: vec![(
@@ -593,7 +613,12 @@ mod tests {
     }
 
     #[test]
-    fn test_all_box_file_extensions_detected() {
+    fn test_all_file_extensions_detected() {
+        crate::codegen::register_file_object_detector(crate::codegen::SimpleFileDetector::new(
+            "type",
+            "file",
+            "extension",
+        ));
         // Test that various extensions work correctly
         for (ext, expected_generator) in &[
             ("pdf", "fake_pdf_data_uri"),
@@ -607,7 +632,7 @@ mod tests {
                 varying_fields: vec![(
                     "download_url".to_string(),
                     FieldType::DownloadUrl {
-                        sample_url: Some("https://dl.boxcloud.com/d/1/test...".to_string()),
+                        sample_url: Some("https://cdn.example.com/download/test...".to_string()),
                     },
                 )],
                 constant_fields: vec![],

@@ -20,9 +20,12 @@ pub fn export_mocks_to_har(mocks: &[Arc<MockDefinition>]) -> Result<Har> {
     Ok(Har {
         log: Spec::V1_2(v1_2::Log {
             creator: v1_2::Creator {
-                name: "box-dev-gate".to_string(),
+                name: crate::core::app_name().to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                comment: Some("Exported from box-dev-gate mock definitions".to_string()),
+                comment: Some(format!(
+                    "Exported from {} mock definitions",
+                    crate::core::app_name()
+                )),
             },
             browser: None,
             pages: None,

@@ -4,7 +4,7 @@
     clippy::panic,
     clippy::indexing_slicing
 )]
-//! Box Mock Engine Test Suite
+//! Mock Engine Test Suite
 //!
 //! Organized test suite for the mock engine library.
 //!

@@ -199,7 +199,7 @@ pub(super) fn check_download_url(values: &[&str], _features: &TypeFeatures) -> O
             || s.contains("/d/")
             || s.contains("content")
             || s.contains("attachment")
-            || s.contains("dl.boxcloud.com")) // Box download URLs
+            || super::is_custom_download_url(s))
         })
         .count();
 
@@ -365,7 +365,7 @@ pub(super) fn check_numeric_string_id(values: &[&str], _features: &TypeFeatures)
     // - No decimals
     //
     // This correctly classifies all numeric string IDs.
-    // Box API ETags are handled separately via semantic field name detection.
+    // Numeric ETags are handled separately via semantic field name detection.
     // Real HTTP ETags are quoted strings, handled by the ETag checker.
     let matches = values
         .iter()

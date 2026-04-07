@@ -812,10 +812,10 @@ pub fn detect_from_semantic_context(
                 s.contains("download")
                     || s.contains("/d/")
                     || s.contains("/dl/")
-                    || s.contains("dl.boxcloud.com")
                     || s.contains("content")
                     || s.contains("attachment")
                     || s.contains("/file")
+                    || super::is_custom_download_url(s)
                     || s.contains(".pdf")
                     || s.contains(".doc")
                     || s.contains(".zip")
@@ -991,8 +991,8 @@ pub fn detect_from_semantic_context(
             return Some((FieldType::Semver, 0.90));
         }
 
-        // ETag fields (Box API uses numeric version numbers in "etag" field)
-        // This handles Box-specific ETags which are just numeric version numbers
+        // ETag fields (some APIs use numeric version numbers)
+        // This handles numeric ETags (simple version numbers)
         if matches_field_name(field_name, "etag")
             && strs.iter().all(|s| s.chars().all(|c| c.is_ascii_digit()))
         {

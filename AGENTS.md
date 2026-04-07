@@ -41,7 +41,7 @@ CLI binary and command implementations. Has both `[[bin]]` and `[lib]` sections.
 
 ```bash
 cargo build                              # Debug build
-cargo nextest run                        # Run all tests (1153 tests)
+cargo nextest run                        # Run all tests (1139 tests)
 cargo nextest run --package mockpit      # Test mockpit library
 cargo check --workspace                  # Fast compile check
 ```
@@ -84,6 +84,17 @@ mocks:
 | `schema` | no | JSON schema generation |
 | `full` | no | Everything |
 
+### Extension APIs
+
+Embedders can extend mockpit without modifying its source:
+
+- `mockpit::template::register_template_function(name, closure)` - custom template functions
+- `mockpit::config::DomainFilter` trait on `HarLoadOptions` - domain filtering for HAR loading
+- `mockpit::type_detector::register_url_classifier(closure)` - custom download URL detection
+- `mockpit::codegen::register_file_object_detector(detector)` - file object detection in responses
+- `mockpit::consolidator::register_path_normalizer(closure)` - custom URL path normalization
+- `mockpit::core::set_app_name(name)` - app identity for HAR exports
+
 ### API Route Prefix
 
 The HTTP API uses `/__mockpit/` prefix by default. Consumers can customize via
@@ -99,7 +110,7 @@ The HTTP API uses `/__mockpit/` prefix by default. Consumers can customize via
 
 ## Testing
 
-1153 tests. Uses cargo-nextest for parallel execution.
+1139 tests. Uses cargo-nextest for parallel execution.
 
 ```bash
 cargo nextest run                        # All tests

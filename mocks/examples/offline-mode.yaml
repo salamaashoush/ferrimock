@@ -10,7 +10,7 @@ mocks:
     headers:
       content-type: application/json
     body:
-      avatar_url: https://app.box.com/api/avatar/large/12345678
+      avatar_url: https://app.example.com/api/avatar/large/12345678
       created_at: 2024-01-01T00:00:00Z
       enterprise:
         id: "11111"
@@ -128,7 +128,7 @@ mocks:
       content-type: application/json
     body:
       address: San Francisco, CA
-      avatar_url: https://app.box.com/api/avatar/large/12345678
+      avatar_url: https://app.example.com/api/avatar/large/12345678
       created_at: 2024-01-01T00:00:00Z
       id: "12345678"
       job_title: Developer

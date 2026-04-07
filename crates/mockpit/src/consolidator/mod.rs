@@ -6,6 +6,8 @@
 pub mod analysis;
 pub mod pattern;
 
+pub use pattern::{PathNormalizer, register_path_normalizer};
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,

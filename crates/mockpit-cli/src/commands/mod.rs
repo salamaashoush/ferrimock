@@ -23,7 +23,7 @@ pub use dispatch::execute;
 pub use fake::{FakeAction, FakeCommand};
 
 // ---------------------------------------------------------------------------
-// CLI argument types (moved from box-dev-gate/src/cli/tool_commands.rs)
+// CLI argument types
 // ---------------------------------------------------------------------------
 
 use clap::{Args, Subcommand};
@@ -249,7 +249,7 @@ pub enum MockAction {
     /// Convert HAR file to mock collection
     ///
     /// By default, produces clean replay-ready mocks: normalizes absolute URLs
-    /// to relative paths, filters non-Box domains and static assets, strips
+    /// to relative paths, filters domains and static assets, strips
     /// sensitive/infrastructure headers, and removes access_token from query strings.
     #[command(visible_alias = "conv")]
     Convert {
@@ -289,9 +289,10 @@ pub enum MockAction {
         #[arg(long)]
         absolute_urls: bool,
 
-        /// Include non-Box domains (don't filter by domain)
-        #[arg(long)]
-        all_domains: bool,
+        /// Only include entries from these domains (comma-separated, e.g. "api.example.com,cdn.example.com").
+        /// Subdomains are included automatically. When not set, all domains are included.
+        #[arg(long, value_name = "DOMAINS", value_delimiter = ',')]
+        domains: Vec<String>,
 
         /// Include static assets (.js, .css, .png, etc.)
         #[arg(long)]
@@ -312,10 +313,6 @@ pub enum MockAction {
         /// Body size threshold in KB for extraction (default: 100)
         #[arg(long, value_name = "KB", default_value = "100")]
         body_threshold_kb: usize,
-
-        /// Additional domains to treat as Box (comma-separated)
-        #[arg(long, value_name = "DOMAINS", value_delimiter = ',')]
-        extra_domains: Vec<String>,
     },
 
     /// Export mock collection to HAR format
@@ -404,6 +401,12 @@ pub enum MockAction {
     ///
     ///   # From specific mock directory
     ///   mock serve --mocks ./mocks/api/
+    ///
+    ///   # Load a specific mock file
+    ///   mock serve -f mocks/api-users.yaml
+    ///
+    ///   # Log which mock matched each request
+    ///   mock serve --mocks ./mocks/ --log-matches
     #[command(visible_alias = "sv")]
     Serve {
         /// Port to listen on
@@ -418,6 +421,10 @@ pub enum MockAction {
         #[arg(short = 'm', long, value_name = "DIR")]
         mocks: Option<String>,
 
+        /// Load a specific mock file (can be combined with --mocks)
+        #[arg(short = 'f', long = "mock-file", value_name = "FILE")]
+        mock_file: Option<String>,
+
         /// Watch mock files and hot-reload on change
         #[arg(short = 'w', long)]
         watch: bool,
@@ -429,6 +436,10 @@ pub enum MockAction {
         /// Enable template rendering endpoint (POST /__mock/render)
         #[arg(long)]
         enable_render_endpoint: bool,
+
+        /// Log mock match details for every request (mock ID, captures, elapsed time)
+        #[arg(long)]
+        log_matches: bool,
 
         /// Enable verbose request logging
         #[arg(short = 'v', long)]
