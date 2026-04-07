@@ -136,8 +136,16 @@ jobs:
         run: |
           set -e
           publish() {
-            echo "Publishing $1..."
-            cargo publish -p "$1" --allow-dirty
+            local crate="$1"
+            local version
+            version=$(cargo metadata --format-version=1 --no-deps | jq -r ".packages[] | select(.name == \"$crate\") | .version")
+            # Skip if already published
+            if curl -sf "https://crates.io/api/v1/crates/$crate/$version" > /dev/null 2>&1; then
+              echo "Skipping $crate@$version (already published)"
+              return
+            fi
+            echo "Publishing $crate@$version..."
+            cargo publish -p "$crate" --allow-dirty
             echo "Waiting for crates.io index..."
             sleep 30
           }
