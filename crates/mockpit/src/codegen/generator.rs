@@ -335,8 +335,8 @@ impl TemplateGenerator {
 
 #[cfg(test)]
 mod tests {
-    use crate::codegen::types::PaginationInfo;
     use super::*;
+    use crate::codegen::types::PaginationInfo;
     use crate::type_detector::{ArrayPattern, FieldType};
 
     #[test]

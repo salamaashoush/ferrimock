@@ -376,9 +376,7 @@ pub async fn get_mock(
                     Some(crate::engine::types::UrlPattern::Regex(pattern)) => {
                         format!("~{pattern}")
                     }
-                    Some(crate::engine::types::UrlPattern::Glob(_)) => {
-                        "[glob pattern]".to_string()
-                    }
+                    Some(crate::engine::types::UrlPattern::Glob(_)) => "[glob pattern]".to_string(),
                     None => "/*".to_string(),
                 }
             };

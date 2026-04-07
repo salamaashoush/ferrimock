@@ -1,7 +1,7 @@
 //! Type definitions for the mock management API
 
-use lean_string::LeanString;
 use crate::config::MockConfig;
+use lean_string::LeanString;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 

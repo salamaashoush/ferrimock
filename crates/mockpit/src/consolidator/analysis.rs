@@ -1,9 +1,9 @@
 //! Response analysis and pagination detection for mock consolidation
 
-use crate::consolidator::pattern::QueryParamAnalysis;
-use anyhow::Result;
 use crate::config::MockConfig;
+use crate::consolidator::pattern::QueryParamAnalysis;
 use crate::type_detector::{FieldType, TypeDetector};
+use anyhow::Result;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
@@ -413,7 +413,8 @@ impl ResponseAnalyzer {
                 .max()
         });
 
-        let query_analysis = crate::consolidator::pattern::PatternDetector::analyze_query_param_variations(group);
+        let query_analysis =
+            crate::consolidator::pattern::PatternDetector::analyze_query_param_variations(group);
         let has_pagination_query_params = Self::has_pagination_params(&query_analysis);
 
         if has_pagination_query_params

@@ -1,11 +1,11 @@
 //! Request matching configuration
 
 use super::patterns::{is_valid_http_method, parse_url_pattern};
-use http::Method;
-use http::header::HeaderName;
 use crate::types::{
     BodyMatcher, HeaderMatcher, QueryMatcher, RequestMatcher, SmallVec, UrlPattern,
 };
+use http::Method;
+use http::header::HeaderName;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;

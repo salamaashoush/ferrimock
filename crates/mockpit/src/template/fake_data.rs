@@ -186,9 +186,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_postal_code",
         |_: &HashMap<String, Value>| -> tera::Result<Value> {
-            Ok(Value::String(
-                crate::fake_data::location::fake_postal_code(),
-            ))
+            Ok(Value::String(crate::fake_data::location::fake_postal_code()))
         },
     );
 
@@ -251,9 +249,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_job_position",
         |_: &HashMap<String, Value>| -> tera::Result<Value> {
-            Ok(Value::String(
-                crate::fake_data::company::fake_job_position(),
-            ))
+            Ok(Value::String(crate::fake_data::company::fake_job_position()))
         },
     );
 
@@ -298,9 +294,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_mac_address",
         |_: &HashMap<String, Value>| -> tera::Result<Value> {
-            Ok(Value::String(
-                crate::fake_data::internet::fake_mac_address(),
-            ))
+            Ok(Value::String(crate::fake_data::internet::fake_mac_address()))
         },
     );
 
@@ -362,9 +356,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_webhook_url",
         |_: &HashMap<String, Value>| -> tera::Result<Value> {
-            Ok(Value::String(
-                crate::fake_data::internet::fake_webhook_url(),
-            ))
+            Ok(Value::String(crate::fake_data::internet::fake_webhook_url()))
         },
     );
 
@@ -952,15 +944,13 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
             let start_color = args.get("start_color").and_then(|v| v.as_str());
             let end_color = args.get("end_color").and_then(|v| v.as_str());
             let direction = args.get("direction").and_then(|v| v.as_str());
-            Ok(Value::String(
-                crate::fake_data::files::fake_image_gradient(
-                    width,
-                    height,
-                    start_color,
-                    end_color,
-                    direction,
-                ),
-            ))
+            Ok(Value::String(crate::fake_data::files::fake_image_gradient(
+                width,
+                height,
+                start_color,
+                end_color,
+                direction,
+            )))
         },
     );
 

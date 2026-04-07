@@ -3,12 +3,12 @@
 //! This module provides validation for mock collection configurations,
 //! catching errors before runtime with helpful, compiler-style error messages.
 
+use crate::config::MockCollectionConfig;
 use crate::engine::types::MockDefinition;
+use crate::template;
 use http::Method;
 use http::header::HeaderName;
 use lean_string::LeanString;
-use crate::config::MockCollectionConfig;
-use crate::template as template;
 use regex::Regex;
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
@@ -1620,10 +1620,10 @@ mod tests {
 
     #[test]
     fn test_url_patterns_different_methods_and_paths() {
-        use http::{Method, StatusCode};
         use crate::engine::types::{
             BodySource, RequestMatcher, ResponseGenerator, ResponseMode, UrlPattern,
         };
+        use http::{Method, StatusCode};
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
 
@@ -1751,10 +1751,10 @@ mod tests {
 
     #[test]
     fn test_mocks_with_different_query_params() {
-        use http::{Method, StatusCode};
         use crate::engine::types::{
             BodySource, QueryMatcher, RequestMatcher, ResponseGenerator, ResponseMode, UrlPattern,
         };
+        use http::{Method, StatusCode};
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
 
@@ -1821,11 +1821,11 @@ mod tests {
 
     #[test]
     fn test_mocks_with_different_headers() {
-        use http::header::HeaderName;
-        use http::{Method, StatusCode};
         use crate::engine::types::{
             BodySource, HeaderMatcher, RequestMatcher, ResponseGenerator, ResponseMode, UrlPattern,
         };
+        use http::header::HeaderName;
+        use http::{Method, StatusCode};
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
 

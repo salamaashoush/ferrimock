@@ -1,8 +1,8 @@
 //! Response configuration
 
 use super::patches::{HeaderPatchesConfig, JsonPatchConfig, RegexReplaceConfig};
-use http::StatusCode;
 use crate::types::{BodySource, PatchOperation, ResponseGenerator};
+use http::StatusCode;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

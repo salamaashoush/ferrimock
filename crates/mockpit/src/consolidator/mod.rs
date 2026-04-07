@@ -20,10 +20,10 @@ pub mod pattern;
 )]
 mod tests;
 
-use analysis::{ResponseAnalysis, ResponseAnalyzer};
-use anyhow::{Context, Result};
 use crate::codegen::TemplateGenerator;
 use crate::config::{MockCollectionConfig, MockConfig, ReturnConfig};
+use analysis::{ResponseAnalysis, ResponseAnalyzer};
+use anyhow::{Context, Result};
 use pattern::PatternDetector;
 use rustc_hash::FxHashMap;
 use std::path::Path;
