@@ -1,10 +1,11 @@
-//! Mock management CLI commands: create, list, test, serve, validate, and convert mocks.
+//! Mockpit CLI commands: mock management and fake data generation.
 
 mod consolidate;
 mod convert;
 mod create;
 mod dispatch;
 mod export;
+pub mod fake;
 mod format;
 mod list;
 mod recordings;
@@ -16,8 +17,10 @@ pub mod ui;
 mod validate;
 mod wizard;
 
-// Re-export the entry point
+// Re-export the mock command entry point
 pub use dispatch::execute;
+// Re-export the fake command types and entry point
+pub use fake::{FakeAction, FakeCommand};
 
 // ---------------------------------------------------------------------------
 // CLI argument types (moved from box-dev-gate/src/cli/tool_commands.rs)
