@@ -1760,7 +1760,7 @@ mocks:
     response:
       template_file: "{}"
 "#,
-        template_path.display()
+        template_path.display().to_string().replace('\\', "/")
     );
 
     let config: MockCollectionConfig = serde_yaml::from_str(&yaml).unwrap();

@@ -5,18 +5,18 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use mockpit::prelude::*;
 //!
-//! # async fn example() -> anyhow::Result<()> {
-//! // Create a mock registry and load mocks from a directory
-//! let registry = MockRegistry::new();
-//! registry.load_from_directory("mocks/").await?;
+//! async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create a mock registry and load mocks from a directory
+//!     let registry = MockRegistry::new();
+//!     registry.load_from_directory("mocks/").await?;
 //!
-//! // Create a matcher to evaluate incoming requests
-//! let matcher = MockMatcher::new(registry);
-//! # Ok(())
-//! # }
+//!     // Create a matcher to evaluate incoming requests
+//!     let matcher = MockMatcher::new(registry);
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Feature Flags

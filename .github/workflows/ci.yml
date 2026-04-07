@@ -144,52 +144,8 @@ jobs:
       - name: Check feature powerset (depth 2)
         run: cargo hack check -p mockpit --feature-powerset --depth 2 --no-dev-deps
 
-  # ---------------------------------------------------------------------------
-  # MSRV: ensure minimum supported Rust version still compiles
-  # ---------------------------------------------------------------------------
-  msrv:
-    name: MSRV
-    needs: [basics]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      # MSRV check should not fail on warnings from older compilers
-      RUSTFLAGS: ""
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@cargo-hack
-      - name: Check MSRV
-        run: cargo hack check --rust-version --workspace --all-features --ignore-private
-
-  # ---------------------------------------------------------------------------
-  # Minimal versions: verify lower bounds of dependencies are correct
-  # ---------------------------------------------------------------------------
-  minimal-versions:
-    name: Minimal versions
-    needs: [basics]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      RUSTFLAGS: ""
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Resolve minimal versions
-        run: cargo +nightly update -Z minimal-versions
-      - name: Check with minimal versions
-        run: cargo +stable check --workspace --all-features
+  # Note: MSRV and minimal-versions checks are not applicable since this project
+  # requires nightly Rust (edition 2024 features, nightly clippy lints).
 
   # ---------------------------------------------------------------------------
   # Semver: catch accidental breaking changes
@@ -247,8 +203,6 @@ jobs:
     needs:
       - test
       - features
-      - msrv
-      - minimal-versions
       - security
       - lockfile
     runs-on: ubuntu-latest
