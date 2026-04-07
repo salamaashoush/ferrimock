@@ -23,7 +23,7 @@ pub async fn load_session(path: impl AsRef<Path>) -> Result<RecordingSession> {
 }
 
 /// Clone minimal data needed for export (used for auto-export on error)
-pub(super) fn create_export_session_name(session_name: &str) -> String {
+pub fn create_export_session_name(session_name: &str) -> String {
     use chrono::Utc;
     format!(
         "{}-error-{}",

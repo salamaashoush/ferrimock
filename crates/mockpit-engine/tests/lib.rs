@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 //! Box Mock Engine Test Suite
 //!
 //! Organized test suite for the mock engine library.

@@ -57,7 +57,7 @@ impl RequestContext {
                 .filter_map(|pair| {
                     let mut parts = pair.splitn(2, '=');
                     let key = parts.next()?.to_string();
-                    let value = parts.next().unwrap_or("").to_string();
+                    let value = parts.next().unwrap_or_default().to_string();
                     Some((key, value))
                 })
                 .collect()
@@ -66,12 +66,12 @@ impl RequestContext {
         };
 
         // Extract path (uri without query string)
-        let path = uri.split('?').next().unwrap_or(uri).to_string();
+        let path = uri.split('?').next().unwrap_or_default().to_string();
 
         // Extract headers
         let header_map: FxHashMap<_, _> = headers
             .iter()
-            .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
+            .filter_map(|(k, v)| v.to_str().ok().map(|val| (k.to_string(), val.to_string())))
             .collect();
 
         // Validate UTF-8 in-place (no copy), then allocate String only if valid
@@ -94,18 +94,21 @@ impl RequestContext {
     }
 
     /// Add a capture variable (builder pattern)
+    #[must_use]
     pub fn with_capture(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.captures.insert(key.into(), value.into());
         self
     }
 
     /// Add a query parameter (builder pattern)
+    #[must_use]
     pub fn with_query(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.query.insert(key.into(), value.into());
         self
     }
 
     /// Add a header (builder pattern)
+    #[must_use]
     pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(key.into(), value.into());
         self
@@ -263,7 +266,10 @@ impl UrlPattern {
                 None
             }
             // Other pattern types don't support captures
-            _ => None,
+            UrlPattern::Exact(_)
+            | UrlPattern::Prefix(_)
+            | UrlPattern::Suffix(_)
+            | UrlPattern::Glob(_) => None,
         }
     }
 
@@ -342,13 +348,11 @@ impl HeaderMatcher {
             HeaderMatchPattern::Exact(expected) => headers
                 .get(&self.name)
                 .and_then(|v| v.to_str().ok())
-                .map(|v| v == expected)
-                .unwrap_or(false),
+                .is_some_and(|v| v == expected),
             HeaderMatchPattern::Regex(re) => headers
                 .get(&self.name)
                 .and_then(|v| v.to_str().ok())
-                .map(|v| re.is_match(v))
-                .unwrap_or(false),
+                .is_some_and(|v| re.is_match(v)),
             HeaderMatchPattern::Present => headers.contains_key(&self.name),
             HeaderMatchPattern::Absent => !headers.contains_key(&self.name),
         }
@@ -423,14 +427,12 @@ impl QueryMatcher {
     #[inline]
     pub fn matches_parsed(&self, query_params: &FxHashMap<String, String>) -> bool {
         match &self.pattern {
-            QueryMatchPattern::Exact(expected) => query_params
-                .get(&self.name)
-                .map(|v| v == expected)
-                .unwrap_or(false),
-            QueryMatchPattern::Regex(re) => query_params
-                .get(&self.name)
-                .map(|v| re.is_match(v))
-                .unwrap_or(false),
+            QueryMatchPattern::Exact(expected) => {
+                query_params.get(&self.name).is_some_and(|v| v == expected)
+            }
+            QueryMatchPattern::Regex(re) => {
+                query_params.get(&self.name).is_some_and(|v| re.is_match(v))
+            }
             QueryMatchPattern::Present => query_params.contains_key(&self.name),
             QueryMatchPattern::Absent => !query_params.contains_key(&self.name),
         }
@@ -598,7 +600,7 @@ impl BodyMatcher {
     fn parse_jsonpath_segments(path: &str) -> Vec<PathSegment> {
         let mut segments = Vec::new();
         let mut current_key = String::new();
-        let mut chars = path.chars().peekable();
+        let mut chars = path.chars();
 
         while let Some(ch) = chars.next() {
             match ch {
@@ -618,12 +620,11 @@ impl BodyMatcher {
 
                     // Parse array index
                     let mut index_str = String::new();
-                    while let Some(&next_ch) = chars.peek() {
+                    for next_ch in chars.by_ref() {
                         if next_ch == ']' {
-                            chars.next(); // consume ']'
                             break;
                         }
-                        index_str.push(chars.next().unwrap());
+                        index_str.push(next_ch);
                     }
 
                     // Parse index as number
@@ -803,7 +804,7 @@ impl DynamicResponse {
     /// It checks for structured response format: { status?, headers?, body }
     /// - If the response has status/headers/body fields, parse them
     /// - If not, use the entire JSON as the body
-    pub fn from_json(json: serde_json::Value) -> Result<Self, anyhow::Error> {
+    pub fn from_json(json: &serde_json::Value) -> Result<Self, anyhow::Error> {
         if let Some(obj) = json.as_object() {
             // Check for structured response format: { status, headers, body }
             let has_status = obj.contains_key("status");
@@ -814,8 +815,9 @@ impl DynamicResponse {
                 // Parse structured response
                 let status = obj
                     .get("status")
-                    .and_then(|v| v.as_u64())
-                    .and_then(|code| StatusCode::from_u16(code as u16).ok());
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|code| u16::try_from(code).ok())
+                    .and_then(|code| StatusCode::from_u16(code).ok());
 
                 let headers = obj
                     .get("headers")
@@ -828,13 +830,13 @@ impl DynamicResponse {
                     });
 
                 // Use "body" field if present, otherwise use the whole result
-                let body_value = if has_body {
-                    obj.get("body").unwrap()
+                let body_value = if let Some(body_val) = obj.get("body") {
+                    body_val
                 } else {
-                    &json
+                    json
                 };
 
-                let body_str = serde_json::to_string(&body_value)?;
+                let body_str = serde_json::to_string(body_value)?;
                 let body_bytes = bytes::Bytes::from(body_str);
 
                 return Ok(DynamicResponse {
@@ -846,7 +848,7 @@ impl DynamicResponse {
         }
 
         // Not a structured response - just return body
-        let body_str = serde_json::to_string(&json)?;
+        let body_str = serde_json::to_string(json)?;
         Ok(DynamicResponse::body_only(bytes::Bytes::from(body_str)))
     }
 
@@ -857,24 +859,24 @@ impl DynamicResponse {
     /// original string as-is without a wasteful parse→re-serialize round-trip.
     pub fn from_rendered_string(rendered: String) -> Self {
         // Quick check: only attempt JSON parse if it looks like a JSON object
-        if rendered.starts_with('{') {
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&rendered) {
-                if let Some(obj) = json_value.as_object() {
-                    let has_status = obj.contains_key("status");
-                    let has_headers = obj.contains_key("headers");
-                    let has_body = obj.contains_key("body");
+        if rendered.starts_with('{')
+            && let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&rendered)
+        {
+            if let Some(obj) = json_value.as_object() {
+                let has_status = obj.contains_key("status");
+                let has_headers = obj.contains_key("headers");
+                let has_body = obj.contains_key("body");
 
-                    if has_status || has_headers || has_body {
-                        // Structured response — extract fields
-                        if let Ok(dynamic_response) = Self::from_json(json_value) {
-                            return dynamic_response;
-                        }
+                if has_status || has_headers || has_body {
+                    // Structured response -- extract fields
+                    if let Ok(dynamic_response) = Self::from_json(&json_value) {
+                        return dynamic_response;
                     }
                 }
-                // Valid JSON but not structured — return original string directly
-                // instead of re-serializing (avoids wasteful Value → String round-trip)
-                return Self::body_only(bytes::Bytes::from(rendered));
             }
+            // Valid JSON but not structured -- return original string directly
+            // instead of re-serializing (avoids wasteful Value -> String round-trip)
+            return Self::body_only(bytes::Bytes::from(rendered));
         }
 
         // Not JSON — return as body
@@ -915,18 +917,21 @@ impl ResponseGenerator {
     }
 
     /// Add a header to the response
+    #[must_use]
     pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
         self.headers.insert(name.into(), value.into());
         self
     }
 
     /// Set the response delay
+    #[must_use]
     pub fn with_delay(mut self, delay: Duration) -> Self {
         self.delay = Some(delay);
         self
     }
 
     /// Set the response mode
+    #[must_use]
     pub fn with_mode(mut self, mode: ResponseMode) -> Self {
         self.mode = mode;
         self
@@ -1062,6 +1067,13 @@ impl BodySource {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::get_unwrap
+)]
 mod tests {
     use super::*;
 

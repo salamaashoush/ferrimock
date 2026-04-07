@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use anyhow::Result;
 use bytes::Bytes;
 use http::{HeaderMap, Method, StatusCode};
@@ -186,7 +193,7 @@ async fn test_exclude_static_assets() {
             )
             .await
             .unwrap();
-        assert!(id.is_empty(), "Static asset {} should be filtered", url);
+        assert!(id.is_empty(), "Static asset {url} should be filtered");
     }
 
     // Images are NOT filtered by web_static_patterns (could be API content)
@@ -206,7 +213,7 @@ async fn test_exclude_static_assets() {
             )
             .await
             .unwrap();
-        assert!(!id.is_empty(), "Image {} should NOT be filtered", url);
+        assert!(!id.is_empty(), "Image {url} should NOT be filtered");
     }
 
     // API endpoint + images should be recorded
@@ -335,7 +342,7 @@ async fn test_auto_export_on_error() {
     // Check if an error export file was created
     let entries = std::fs::read_dir(&temp_dir).unwrap();
     let error_files: Vec<_> = entries
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             name.contains("auto-export") && name.contains("error")
@@ -479,7 +486,7 @@ async fn test_error_context_buffer_circular() {
     // Verify the export file exists
     let entries = std::fs::read_dir(&temp_dir).unwrap();
     let error_files: Vec<_> = entries
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             name.contains("circular-buffer") && name.contains("error")
@@ -585,7 +592,7 @@ async fn test_file_body_storage_threshold() {
 
     let body_files: Vec<_> = std::fs::read_dir(&bodies_dir)
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .collect();
     assert_eq!(
         body_files.len(),
@@ -639,7 +646,7 @@ async fn test_yaml_serialization_format() {
     let file_path = recorder.save(RecordingFormat::Yaml).await.unwrap();
     let yaml_content = tokio::fs::read_to_string(&file_path).await.unwrap();
 
-    println!("=== Generated YAML ===\n{}\n=== End YAML ===", yaml_content);
+    println!("=== Generated YAML ===\n{yaml_content}\n=== End YAML ===");
 
     // Verify it's valid YAML and can be parsed back
     let parsed: mockpit_config::MockCollectionConfig =
@@ -719,7 +726,7 @@ async fn test_file_body_storage_for_html() {
 
     let body_files: Vec<_> = std::fs::read_dir(&bodies_dir)
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .collect();
     assert_eq!(body_files.len(), 1, "Exactly one body file should exist");
 
@@ -810,13 +817,13 @@ async fn test_yaml_streaming_format() {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/item/{}", i),
+                &format!("/api/item/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!(r#"{{"id":{}}}"#, i)),
+                &Bytes::from(format!(r#"{{"id":{i}}}"#)),
                 Duration::from_millis(10),
             )
             .await
@@ -831,7 +838,7 @@ async fn test_yaml_streaming_format() {
     // Verify YAML file structure
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
 
-    println!("=== Streaming YAML ===\n{}\n=== End ===", content);
+    println!("=== Streaming YAML ===\n{content}\n=== End ===");
 
     // Verify all items are present
     assert!(content.contains("/api/item/0"));
@@ -858,13 +865,13 @@ async fn test_finalize_and_consolidate() -> Result<()> {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/users/{}", i),
+                &format!("/api/users/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!(r#"{{"id":{}}}"#, i)),
+                &Bytes::from(format!(r#"{{"id":{i}}}"#)),
                 Duration::from_millis(10),
             )
             .await?;
@@ -922,7 +929,7 @@ async fn test_finalize_and_consolidate_har_format() -> Result<()> {
     // Stats should be empty for HAR format
     assert_eq!(stats.original_count, 0);
     assert_eq!(stats.consolidated_count, 0);
-    assert_eq!(stats.reduction_ratio, 0.0);
+    assert!((stats.reduction_ratio - 0.0).abs() < f64::EPSILON);
 
     Ok(())
 }
@@ -1066,9 +1073,8 @@ async fn test_har_with_query_string_parsing() {
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
     let har: har::Har = serde_json::from_str(&content).unwrap();
 
-    let log = match &har.log {
-        har::Spec::V1_2(log) => log,
-        _ => panic!("Expected V1_2 spec"),
+    let har::Spec::V1_2(log) = &har.log else {
+        panic!("Expected V1_2 spec");
     };
 
     let entry = &log.entries[0];
@@ -1100,13 +1106,13 @@ async fn test_yaml_streaming_format_multiple() {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/yaml/{}", i),
+                &format!("/api/yaml/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!(r#"{{"index":{}}}"#, i)),
+                &Bytes::from(format!(r#"{{"index":{i}}}"#)),
                 Duration::from_millis(10),
             )
             .await
@@ -1151,13 +1157,11 @@ async fn test_yaml_streaming_format_multiple() {
     for (i, mock) in mocks.iter().enumerate() {
         assert!(
             mock.get("match_config").is_some() || mock.get("match").is_some(),
-            "Mock {} should have match or match_config field",
-            i
+            "Mock {i} should have match or match_config field"
         );
         assert!(
             mock.get("response").is_some() || mock.get("return").is_some(),
-            "Mock {} should have response or return field",
-            i
+            "Mock {i} should have response or return field"
         );
     }
 
@@ -1178,13 +1182,13 @@ async fn test_pending_writes_timeout() {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/item/{}", i),
+                &format!("/api/item/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!(r#"{{"id":{}}}"#, i)),
+                &Bytes::from(format!(r#"{{"id":{i}}}"#)),
                 Duration::from_millis(1),
             )
             .await
@@ -1211,13 +1215,11 @@ async fn test_pending_writes_timeout() {
 
     // Verify interactions have expected URLs
     for (i, mock) in collection.mocks.iter().enumerate().take(100) {
-        let expected_url = format!("/api/item/{}", i);
+        let expected_url = format!("/api/item/{i}");
         let urls = &mock.match_config.as_ref().unwrap().urls;
         assert!(
             urls.iter().any(|u| u.contains(&expected_url)),
-            "Mock {} should contain URL {}",
-            i,
-            expected_url
+            "Mock {i} should contain URL {expected_url}"
         );
     }
 
@@ -1507,7 +1509,7 @@ async fn test_file_body_with_image_content_type() {
 
     let body_files: Vec<_> = std::fs::read_dir(&bodies_dir)
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .collect();
     assert_eq!(body_files.len(), 1, "Exactly one body file should exist");
 
@@ -1602,13 +1604,13 @@ async fn test_get_all_interactions() {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/item/{}", i),
+                &format!("/api/item/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!("item {}", i)),
+                &Bytes::from(format!("item {i}")),
                 Duration::from_millis(10),
             )
             .await
@@ -1653,7 +1655,7 @@ async fn test_session_name_with_spaces() {
         "Filename should contain sanitized session name"
     );
     assert!(
-        !filename.contains(" "),
+        !filename.contains(' '),
         "Filename should not contain spaces"
     );
 
@@ -2072,13 +2074,12 @@ async fn test_har_status_code_text_mapping() {
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
     let har: har::Har = serde_json::from_str(&content).unwrap();
 
-    let log = match &har.log {
-        har::Spec::V1_2(log) => log,
-        _ => panic!("Expected V1_2 spec"),
+    let har::Spec::V1_2(log) = &har.log else {
+        panic!("Expected V1_2 spec");
     };
 
     for entry in &log.entries {
-        let status = entry.response.status as u16;
+        let status = u16::try_from(entry.response.status).unwrap();
         let expected = match status {
             201 => "Created",
             202 => "Accepted",
@@ -2138,9 +2139,8 @@ async fn test_har_unknown_status_code() {
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
     let har: har::Har = serde_json::from_str(&content).unwrap();
 
-    let log = match &har.log {
-        har::Spec::V1_2(log) => log,
-        _ => panic!("Expected V1_2 spec"),
+    let har::Spec::V1_2(log) = &har.log else {
+        panic!("Expected V1_2 spec");
     };
 
     assert_eq!(log.entries[0].response.status_text, "Unknown");
@@ -2170,16 +2170,15 @@ async fn test_har_query_string_without_value() {
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
     let har: har::Har = serde_json::from_str(&content).unwrap();
 
-    let log = match &har.log {
-        har::Spec::V1_2(log) => log,
-        _ => panic!("Expected V1_2 spec"),
+    let har::Spec::V1_2(log) = &har.log else {
+        panic!("Expected V1_2 spec");
     };
 
     let query_params: Vec<_> = log.entries[0]
         .request
         .query_string
         .iter()
-        .map(|q| (&q.name[..], &q.value[..]))
+        .map(|q| (q.name.as_str(), q.value.as_str()))
         .collect();
 
     assert!(query_params.contains(&("flag", "")));
@@ -2210,9 +2209,8 @@ async fn test_har_no_query_string() {
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
     let har: har::Har = serde_json::from_str(&content).unwrap();
 
-    let log = match &har.log {
-        har::Spec::V1_2(log) => log,
-        _ => panic!("Expected V1_2 spec"),
+    let har::Spec::V1_2(log) = &har.log else {
+        panic!("Expected V1_2 spec");
     };
 
     assert!(log.entries[0].request.query_string.is_empty());
@@ -2244,9 +2242,8 @@ async fn test_har_with_post_data() {
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
     let har: har::Har = serde_json::from_str(&content).unwrap();
 
-    let log = match &har.log {
-        har::Spec::V1_2(log) => log,
-        _ => panic!("Expected V1_2 spec"),
+    let har::Spec::V1_2(log) = &har.log else {
+        panic!("Expected V1_2 spec");
     };
 
     assert!(log.entries[0].request.post_data.is_some());
@@ -2269,13 +2266,13 @@ async fn test_json_streaming_multiple_interactions() {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/item-{}", i),
+                &format!("/api/item-{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!(r#"{{"index":{}}}"#, i)),
+                &Bytes::from(format!(r#"{{"index":{i}}}"#)),
                 Duration::from_millis(5),
             )
             .await
@@ -2354,7 +2351,7 @@ async fn test_filter_with_all_static_extensions() {
     ];
 
     for ext in &filtered_exts {
-        let url = format!("/assets/file{}", ext);
+        let url = format!("/assets/file{ext}");
         let id = recorder
             .record(
                 &Method::GET,
@@ -2370,7 +2367,7 @@ async fn test_filter_with_all_static_extensions() {
             .await
             .unwrap();
 
-        assert!(id.is_empty(), "Static file {} should be filtered", url);
+        assert!(id.is_empty(), "Static file {url} should be filtered");
     }
 
     // Images are NOT in web_static_patterns (could be API content)
@@ -2379,7 +2376,7 @@ async fn test_filter_with_all_static_extensions() {
     ];
 
     for ext in &not_filtered_exts {
-        let url = format!("/assets/file{}", ext);
+        let url = format!("/assets/file{ext}");
         let id = recorder
             .record(
                 &Method::GET,
@@ -2397,8 +2394,7 @@ async fn test_filter_with_all_static_extensions() {
 
         assert!(
             !id.is_empty(),
-            "Image file {} should NOT be filtered (could be API content)",
-            url
+            "Image file {url} should NOT be filtered (could be API content)"
         );
     }
 
@@ -2886,7 +2882,7 @@ async fn test_auto_export_multiple_errors() {
     // Check that multiple error files were created
     let entries = std::fs::read_dir(&temp_dir).unwrap();
     let error_files: Vec<_> = entries
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             name.contains("multi-error") && name.contains("error")
@@ -2986,13 +2982,13 @@ async fn test_finalize_and_consolidate_with_yaml() -> Result<()> {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/users/{}", i),
+                &format!("/api/users/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!(r#"{{"id":{}}}"#, i)),
+                &Bytes::from(format!(r#"{{"id":{i}}}"#)),
                 Duration::from_millis(10),
             )
             .await?;
@@ -3027,13 +3023,13 @@ async fn test_finalize_and_consolidate_with_yaml_items() -> Result<()> {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/items/{}", i),
+                &format!("/api/items/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!(r#"{{"id":{}}}"#, i)),
+                &Bytes::from(format!(r#"{{"id":{i}}}"#)),
                 Duration::from_millis(10),
             )
             .await?;
@@ -3168,9 +3164,9 @@ async fn test_response_headers_preserved() {
     let header_map: FxHashMap<String, String> =
         interaction.response.headers.iter().cloned().collect();
 
-    assert_eq!(header_map.get("content-type").unwrap(), "application/json");
-    assert_eq!(header_map.get("x-request-id").unwrap(), "req-123");
-    assert_eq!(header_map.get("cache-control").unwrap(), "no-cache");
+    assert_eq!(&header_map["content-type"], "application/json");
+    assert_eq!(&header_map["x-request-id"], "req-123");
+    assert_eq!(&header_map["cache-control"], "no-cache");
 }
 
 // ============================================================================
@@ -3206,7 +3202,7 @@ async fn test_very_long_duration() {
     let temp_dir = TempDir::new().unwrap();
     let recorder = MockRecorder::new("long-duration", temp_dir.path());
 
-    let long_duration = Duration::from_secs(300); // 5 minutes
+    let long_duration = Duration::from_mins(5); // 5 minutes
 
     let id = recorder
         .record(
@@ -3339,13 +3335,13 @@ async fn test_mock_priority_ordering() {
         recorder
             .record(
                 &Method::GET,
-                &format!("/api/item/{}", i),
+                &format!("/api/item/{i}"),
                 None,
                 &HeaderMap::new(),
                 None,
                 StatusCode::OK,
                 &HeaderMap::new(),
-                &Bytes::from(format!("item {}", i)),
+                &Bytes::from(format!("item {i}")),
                 Duration::from_millis(10),
             )
             .await

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 //! Tests for mock call tracking functionality
 
 use http::{Method, StatusCode};
@@ -58,7 +64,7 @@ fn test_record_calls() {
     for i in 0..5 {
         let call = MockCall::new(
             "GET".to_string(),
-            format!("/api/test/{}", i),
+            format!("/api/test/{i}"),
             None,
             FxHashMap::default(),
             None,
@@ -76,7 +82,7 @@ fn test_record_calls() {
     // Verify call details
     for (i, call) in calls.iter().enumerate() {
         assert_eq!(call.method, "GET");
-        assert_eq!(call.path, format!("/api/test/{}", i));
+        assert_eq!(call.path, format!("/api/test/{i}"));
     }
 }
 
@@ -93,7 +99,7 @@ fn test_call_tracking_limit() {
     for i in 0..15 {
         let call = MockCall::new(
             "GET".to_string(),
-            format!("/api/test/{}", i),
+            format!("/api/test/{i}"),
             None,
             FxHashMap::default(),
             None,
@@ -103,7 +109,7 @@ fn test_call_tracking_limit() {
 
     // Should only keep the last 10 calls (oldest ones removed)
     let count = registry.get_call_count("test-mock");
-    assert!(count <= 10, "Call count {} exceeds limit of 10", count);
+    assert!(count <= 10, "Call count {count} exceeds limit of 10");
 
     let calls = registry.get_calls("test-mock").unwrap();
     assert!(
@@ -124,7 +130,7 @@ fn test_clear_calls() {
     for i in 0..5 {
         let call = MockCall::new(
             "GET".to_string(),
-            format!("/api/test/{}", i),
+            format!("/api/test/{i}"),
             None,
             FxHashMap::default(),
             None,

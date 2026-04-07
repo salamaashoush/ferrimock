@@ -59,10 +59,10 @@ pub async fn list_mocks(collection_filter: Option<String>, verbose: bool) -> any
     let mut filtered_count = 0;
     for mock_def in &mocks {
         // Apply collection filter if provided
-        if let Some(ref filter) = collection_filter {
-            if !mock_def.id.contains(filter) {
-                continue;
-            }
+        if let Some(ref filter) = collection_filter
+            && !mock_def.id.contains(filter)
+        {
+            continue;
         }
 
         filtered_count += 1;

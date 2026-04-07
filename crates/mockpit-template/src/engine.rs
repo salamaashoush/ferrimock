@@ -17,6 +17,11 @@ pub fn hash_template(template: &str) -> u64 {
 
 /// LRU cache capacity for compiled templates per thread
 const CACHE_CAPACITY: usize = 256;
+/// Pre-computed NonZeroUsize for CACHE_CAPACITY (256 is non-zero)
+const CACHE_CAPACITY_NZ: NonZeroUsize = match NonZeroUsize::new(CACHE_CAPACITY) {
+    Some(v) => v,
+    None => panic!("CACHE_CAPACITY must be non-zero"),
+};
 
 /// When total compiled templates exceed this multiple of the cache capacity,
 /// reset the Tera instance to reclaim memory from orphaned (evicted) templates.
@@ -35,7 +40,7 @@ thread_local! {
 }
 
 /// Template engine with LRU cache for compiled templates
-pub(super) struct TemplateEngine {
+pub struct TemplateEngine {
     pub(super) tera: Tera,
     /// LRU cache mapping template hash to template ID (nohash for pre-hashed u64 keys)
     template_cache: LruCache<u64, String, BuildNoHashHasher<u64>>,
@@ -50,10 +55,7 @@ impl TemplateEngine {
     pub(super) fn new() -> Self {
         Self {
             tera: Self::new_tera(),
-            template_cache: LruCache::with_hasher(
-                NonZeroUsize::new(CACHE_CAPACITY).expect("CACHE_CAPACITY is non-zero, cannot fail"),
-                BuildNoHashHasher::default(),
-            ),
+            template_cache: LruCache::with_hasher(CACHE_CAPACITY_NZ, BuildNoHashHasher::default()),
             total_compiled: 0,
         }
     }
@@ -98,12 +100,12 @@ impl TemplateEngine {
             }
 
             // Cache miss - compile and cache the template
-            let new_id = format!("tpl_{}", template_hash);
+            let new_id = format!("tpl_{template_hash}");
 
             // Add the template to Tera
             self.tera.add_raw_template(&new_id, template).map_err(|e| {
-                let error = super::error::TemplateError::from_tera_error(e, template);
-                format!("{}", error)
+                let error = super::error::TemplateError::from_tera_error(&e, template);
+                format!("{error}")
             })?;
 
             // Store in cache and track total compiled
@@ -112,15 +114,15 @@ impl TemplateEngine {
         }
 
         // Use peek() to get a shared reference - avoids cloning the template ID.
-        let template_id = self
-            .template_cache
-            .peek(&template_hash)
-            .expect("template was just inserted or found in cache");
+        // The template was just inserted or confirmed present via get() above.
+        let Some(template_id) = self.template_cache.peek(&template_hash) else {
+            return Err("internal error: template cache inconsistency".to_string());
+        };
 
         // Render the template
         self.tera.render(template_id, tera_context).map_err(|e| {
-            let error = super::error::TemplateError::from_tera_error(e, template);
-            format!("{}", error)
+            let error = super::error::TemplateError::from_tera_error(&e, template);
+            format!("{error}")
         })
     }
 
@@ -139,7 +141,7 @@ const VALIDATION_RESET_THRESHOLD: usize = 500;
 /// Separate engine for template validation only.
 /// Unlike the render engine, this doesn't need caching (validation is not a hot path).
 /// Periodically resets to prevent memory growth from accumulated validated templates.
-pub(super) struct ValidationEngine {
+pub struct ValidationEngine {
     tera: Tera,
     validation_count: usize,
 }
@@ -159,12 +161,13 @@ impl ValidationEngine {
     }
 
     /// Validate a template by attempting to parse it
+    #[allow(clippy::result_large_err)]
     pub(super) fn validate(&mut self, template: &str) -> Result<(), super::error::TemplateError> {
         let template_hash = TemplateEngine::hash_template(template);
-        let template_id = format!("val_{}", template_hash);
+        let template_id = format!("val_{template_hash}");
 
         match self.tera.add_raw_template(&template_id, template) {
-            Ok(_) => {
+            Ok(()) => {
                 self.validation_count += 1;
 
                 // Reset after threshold to prevent unbounded memory growth
@@ -174,7 +177,7 @@ impl ValidationEngine {
 
                 Ok(())
             }
-            Err(e) => Err(super::error::TemplateError::from_tera_error(e, template)),
+            Err(e) => Err(super::error::TemplateError::from_tera_error(&e, template)),
         }
     }
 }

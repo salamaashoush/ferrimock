@@ -49,38 +49,39 @@ impl schemars::JsonSchema for MatchConfig {
     }
 
     fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        serde_json::json!({
-      "description": "Request matching configuration. Supports string shorthand ('GET /url') or structured object.",
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Ultra-flat syntax: 'METHOD /url' (e.g., 'GET /api/users')"
-        },
-        {
-          "type": "object",
-          "description": "Structured match configuration with method/url/headers/query/body/graphql fields, or HTTP method as key (e.g., GET: '/url')",
-          "properties": {
-            "method": { "type": "string", "description": "Single HTTP method" },
-            "methods": { "type": "array", "items": { "type": "string" }, "description": "Multiple HTTP methods" },
-            "url": { "type": "string", "description": "Single URL pattern" },
-            "urls": { "type": "array", "items": { "type": "string" }, "description": "Multiple URL patterns" },
-            "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Header matching conditions" },
-            "query": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Query parameter matching" },
-            "body": { "type": "object", "description": "Body matcher (key prefix: $ for JSONPath, ~ for regex, @ for contains)" },
-            "graphql": { "description": "GraphQL operation matcher" },
-            "GET": { "type": "string", "description": "Method-as-key shortcut" },
-            "POST": { "type": "string", "description": "Method-as-key shortcut" },
-            "PUT": { "type": "string", "description": "Method-as-key shortcut" },
-            "DELETE": { "type": "string", "description": "Method-as-key shortcut" },
-            "PATCH": { "type": "string", "description": "Method-as-key shortcut" }
-          }
+        let value = serde_json::json!({
+          "description": "Request matching configuration. Supports string shorthand ('GET /url') or structured object.",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Ultra-flat syntax: 'METHOD /url' (e.g., 'GET /api/users')"
+            },
+            {
+              "type": "object",
+              "description": "Structured match configuration with method/url/headers/query/body/graphql fields, or HTTP method as key (e.g., GET: '/url')",
+              "properties": {
+                "method": { "type": "string", "description": "Single HTTP method" },
+                "methods": { "type": "array", "items": { "type": "string" }, "description": "Multiple HTTP methods" },
+                "url": { "type": "string", "description": "Single URL pattern" },
+                "urls": { "type": "array", "items": { "type": "string" }, "description": "Multiple URL patterns" },
+                "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Header matching conditions" },
+                "query": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Query parameter matching" },
+                "body": { "type": "object", "description": "Body matcher (key prefix: $ for JSONPath, ~ for regex, @ for contains)" },
+                "graphql": { "description": "GraphQL operation matcher" },
+                "GET": { "type": "string", "description": "Method-as-key shortcut" },
+                "POST": { "type": "string", "description": "Method-as-key shortcut" },
+                "PUT": { "type": "string", "description": "Method-as-key shortcut" },
+                "DELETE": { "type": "string", "description": "Method-as-key shortcut" },
+                "PATCH": { "type": "string", "description": "Method-as-key shortcut" }
+              }
+            }
+          ]
+        });
+        if let serde_json::Value::Object(map) = value {
+            map.into()
+        } else {
+            serde_json::Map::new().into()
         }
-      ]
-    })
-    .as_object()
-    .unwrap()
-    .clone()
-    .into()
     }
 }
 
@@ -171,17 +172,24 @@ impl<'de> serde::Deserialize<'de> for MatchConfig {
                 let parts: Vec<&str> = s.splitn(2, ' ').collect();
                 if parts.len() != 2 {
                     return Err(D::Error::custom(format!(
-                        "Invalid match string '{}'. Expected format: 'METHOD /url'",
-                        s
+                        "Invalid match string '{s}'. Expected format: 'METHOD /url'"
                     )));
                 }
 
-                let method = parts[0].trim().to_string();
-                let url = parts[1].trim().to_string();
+                let method = parts
+                    .first()
+                    .ok_or_else(|| D::Error::custom("missing method"))?
+                    .trim()
+                    .to_string();
+                let url = parts
+                    .get(1)
+                    .ok_or_else(|| D::Error::custom("missing url"))?
+                    .trim()
+                    .to_string();
 
                 // Validate HTTP method
                 if !is_valid_http_method(&method) {
-                    return Err(D::Error::custom(format!("Invalid HTTP method: {}", method)));
+                    return Err(D::Error::custom(format!("Invalid HTTP method: {method}")));
                 }
 
                 Ok(MatchConfig {
@@ -204,7 +212,7 @@ impl<'de> serde::Deserialize<'de> for MatchConfig {
                 extra,
             } => {
                 // Check for HTTP method shortcuts (e.g., match.GET = "/url")
-                for (key, value) in extra.iter() {
+                for (key, value) in &extra {
                     if is_valid_http_method(key) {
                         // This is a method shortcut: match.GET = "/url"
                         methods.push(key.clone());
@@ -214,8 +222,7 @@ impl<'de> serde::Deserialize<'de> for MatchConfig {
                             urls.push(url_str.to_string());
                         } else {
                             return Err(D::Error::custom(format!(
-                                "Method shortcut value must be a string URL pattern, got: {:?}",
-                                value
+                                "Method shortcut value must be a string URL pattern, got: {value:?}"
                             )));
                         }
                     }
@@ -250,10 +257,10 @@ impl MatchConfig {
         }
 
         // Convert body map to BodyMatcherConfig if present
-        let body_matcher = if !self.body.is_empty() {
-            Some(BodyMatcherConfig::Inline(self.body))
-        } else {
+        let body_matcher = if self.body.is_empty() {
             None
+        } else {
+            Some(BodyMatcherConfig::Inline(self.body))
         };
 
         RequestConfig {
@@ -302,7 +309,7 @@ impl RequestConfig {
         let methods: Result<SmallVec<[Method; 2]>, _> = self
             .methods
             .iter()
-            .map(|m| Method::from_str(m).map_err(|e| format!("Invalid method '{}': {}", m, e)))
+            .map(|m| Method::from_str(m).map_err(|e| format!("Invalid method '{m}': {e}")))
             .collect();
         let methods = methods?;
 
@@ -320,7 +327,7 @@ impl RequestConfig {
             .into_iter()
             .map(|(name, config)| {
                 let header_name = HeaderName::from_str(&name)
-                    .map_err(|e| format!("Invalid header name '{}': {}", name, e))?;
+                    .map_err(|e| format!("Invalid header name '{name}': {e}"))?;
                 config.into_header_matcher(header_name)
             })
             .collect();
@@ -333,7 +340,7 @@ impl RequestConfig {
             .map(|(name, value)| {
                 if let Some(regex_pattern) = value.strip_prefix('~') {
                     QueryMatcher::regex(name, regex_pattern)
-                        .map_err(|e| format!("Invalid query regex: {}", e))
+                        .map_err(|e| format!("Invalid query regex: {e}"))
                 } else if value == "?" {
                     Ok(QueryMatcher::present(name))
                 } else if value == "!" {
@@ -348,13 +355,13 @@ impl RequestConfig {
         // Parse body matcher
         let body_matcher = self
             .body_matcher
-            .map(|config| config.into_body_matcher())
+            .map(BodyMatcherConfig::into_body_matcher)
             .transpose()?;
 
         // Parse GraphQL matcher
         let graphql_matcher = self
             .graphql_matcher
-            .map(|config| config.into_graphql_matcher())
+            .map(GraphQLMatchConfig::into_graphql_matcher)
             .transpose()?;
 
         Ok(RequestMatcher {
@@ -389,7 +396,7 @@ impl HeaderMatchConfig {
                 if let Some(regex_pattern) = value.strip_prefix('~') {
                     // ~pattern = regex match
                     HeaderMatcher::regex(name, regex_pattern)
-                        .map_err(|e| format!("Invalid header regex: {}", e))
+                        .map_err(|e| format!("Invalid header regex: {e}"))
                 } else if value == "?" {
                     // ? = header must be present
                     Ok(HeaderMatcher::present(name))
@@ -436,10 +443,9 @@ impl BodyMatcherConfig {
                     return Err("Body matcher requires exactly one key-value pair".to_string());
                 }
 
-                let (key, value) = map
-                    .iter()
-                    .next()
-                    .expect("Body matcher map should have exactly one entry after length check");
+                let Some((key, value)) = map.iter().next() else {
+                    return Err("Body matcher map is empty".to_string());
+                };
 
                 // Check for legacy syntax (backward compatibility)
                 if key == "contains" {
@@ -453,7 +459,7 @@ impl BodyMatcherConfig {
                                     .ok_or_else(|| {
                                         "contains array must contain strings".to_string()
                                     })
-                                    .map(|s| s.to_string())
+                                    .map(std::string::ToString::to_string)
                             })
                             .collect();
                         let text_list = text_list?;
@@ -466,23 +472,23 @@ impl BodyMatcherConfig {
                         // Create a combined matcher using the first one and verify others in matching
                         // For now, just use the first one as a simple contains check
                         // (Full AND logic would require changes to BodyMatcher type)
-                        return Ok(BodyMatcher::contains(&text_list[0]));
+                        return Ok(BodyMatcher::contains(
+                            text_list
+                                .first()
+                                .ok_or_else(|| "contains array cannot be empty".to_string())?,
+                        ));
                     } else if let Some(text) = value.as_str() {
                         // Single string
                         return Ok(BodyMatcher::contains(text));
-                    } else {
-                        return Err(
-                            "contains value must be a string or array of strings".to_string()
-                        );
                     }
+                    return Err("contains value must be a string or array of strings".to_string());
                 } else if key == "regex" {
                     // Legacy syntax: regex = "pattern"
                     if let Some(pattern) = value.as_str() {
                         return BodyMatcher::regex(pattern)
-                            .map_err(|e| format!("Invalid regex pattern: {}", e));
-                    } else {
-                        return Err("regex value must be a string".to_string());
+                            .map_err(|e| format!("Invalid regex pattern: {e}"));
                     }
+                    return Err("regex value must be a string".to_string());
                 } else if key == "json_path" {
                     // Legacy syntax: json_path = { "$.path" = "value" }
                     if let Some(obj) = value.as_object() {
@@ -492,20 +498,19 @@ impl BodyMatcherConfig {
                                 "json_path object must have exactly one key-value pair".to_string()
                             );
                         }
-                        let (path, expected_value) = obj.iter().next().expect(
-                            "json_path object should have exactly one entry after length check",
-                        );
+                        let Some((path, expected_value)) = obj.iter().next() else {
+                            return Err("json_path object is empty".to_string());
+                        };
                         return Ok(BodyMatcher::json_path(path.clone(), expected_value.clone()));
-                    } else {
-                        return Err("json_path value must be an object".to_string());
                     }
+                    return Err("json_path value must be an object".to_string());
                 }
 
                 // Auto-detect based on key prefix
                 if let Some(regex_pattern) = key.strip_prefix('~') {
                     // ~pattern = regex match
                     BodyMatcher::regex(regex_pattern)
-                        .map_err(|e| format!("Invalid regex pattern: {}", e))
+                        .map_err(|e| format!("Invalid regex pattern: {e}"))
                 } else if let Some(contains_text) = key.strip_prefix('@') {
                     // @text = contains match
                     Ok(BodyMatcher::contains(contains_text))
@@ -515,8 +520,7 @@ impl BodyMatcherConfig {
                 } else {
                     // No prefix: error - must use explicit prefix
                     Err(format!(
-                        "Body matcher key '{}' must start with $, ~, or @ for JSONPath, regex, or contains matching",
-                        key
+                        "Body matcher key '{key}' must start with $, ~, or @ for JSONPath, regex, or contains matching"
                     ))
                 }
             }
@@ -525,6 +529,13 @@ impl BodyMatcherConfig {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 mod tests {
     use super::*;
 
@@ -687,7 +698,7 @@ pub enum GraphQLMatchConfig {
 }
 
 /// Introspection match configuration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum IntrospectionMatchConfig {
@@ -798,7 +809,7 @@ impl GraphQLMatchConfig {
             } => {
                 // Parse introspection matcher if present
                 let introspection_matcher =
-                    introspection.and_then(|i| i.into_introspection_matcher());
+                    introspection.and_then(IntrospectionMatchConfig::into_introspection_matcher);
 
                 // Priority: specific type fields > operation field
                 // Handle wildcard "*" specially - it means match any operation of that type

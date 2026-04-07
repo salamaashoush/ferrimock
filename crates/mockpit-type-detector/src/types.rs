@@ -122,7 +122,7 @@ pub struct ObjectAnalysis {
 }
 
 /// Represents the detected structure of a pagination URL
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaginationUrlPattern {
     /// The base URL without query params (e.g., "http://localhost:3003/api/v1/documents-search/")
     pub base_url: String,
@@ -133,7 +133,7 @@ pub struct PaginationUrlPattern {
 }
 
 /// Pagination strategy enumeration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaginationScheme {
     /// For page/offset based pagination
     PageBased {
@@ -152,7 +152,7 @@ pub enum PaginationScheme {
 }
 
 /// Direction for pagination URL generation
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaginationDirection {
     Next,
     Previous,
@@ -233,7 +233,7 @@ pub(super) fn analyze_pagination_pattern(values: &[&str]) -> Option<PaginationUr
     }
 
     // 1. Check for a common base URL (scheme + host + port + path must match)
-    let first_url = &parsed_urls[0];
+    let first_url = parsed_urls.first()?;
 
     // Build base URL with port if present
     let host_with_port = if let Some(port) = first_url.port() {
@@ -279,13 +279,9 @@ pub(super) fn analyze_pagination_pattern(values: &[&str]) -> Option<PaginationUr
     for (key, unique_values) in param_values {
         if unique_values.len() == 1 {
             // Only one value ever seen - it's static
-            static_params.push((
-                key,
-                unique_values
-                    .into_iter()
-                    .next()
-                    .expect("unique_values has exactly 1 element"),
-            ));
+            if let Some(value) = unique_values.into_iter().next() {
+                static_params.push((key, value));
+            }
         } else {
             // Multiple values seen - it's dynamic
             dynamic_keys.insert(key);

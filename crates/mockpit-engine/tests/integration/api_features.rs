@@ -52,7 +52,7 @@ fn test_call_tracking_integration() {
     for i in 0..10 {
         let result = matcher.find_match(&Method::GET, "/api/users", None, &HeaderMap::new(), None);
 
-        assert!(result.is_some(), "Request {} should match", i);
+        assert!(result.is_some(), "Request {i} should match");
     }
 
     // Verify calls were tracked
@@ -302,9 +302,9 @@ fn test_reset_with_call_tracking() {
 
     // Create multiple mocks with tracking
     for i in 1..=3 {
-        let mock = create_test_mock(&format!("mock-{}", i), &format!("/api/{}", i));
+        let mock = create_test_mock(&format!("mock-{i}"), &format!("/api/{i}"));
         registry.add_mock(mock);
-        registry.enable_call_tracking(&format!("mock-{}", i), None);
+        registry.enable_call_tracking(&format!("mock-{i}"), None);
     }
 
     let matcher = MockMatcher::new(registry.clone());
@@ -313,7 +313,7 @@ fn test_reset_with_call_tracking() {
     for i in 1..=3 {
         matcher.find_match(
             &Method::GET,
-            &format!("/api/{}", i),
+            &format!("/api/{i}"),
             None,
             &HeaderMap::new(),
             None,
@@ -329,6 +329,6 @@ fn test_reset_with_call_tracking() {
     // Verify all cleared
     assert_eq!(registry.get_tracked_mock_ids().len(), 0);
     for i in 1..=3 {
-        assert!(!registry.is_call_tracking_enabled(&format!("mock-{}", i)));
+        assert!(!registry.is_call_tracking_enabled(&format!("mock-{i}")));
     }
 }

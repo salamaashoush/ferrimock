@@ -19,6 +19,7 @@ use uuid::Uuid;
 ///
 /// This function registers all fake data generation functions as Tera functions
 /// that can be used in templates.
+#[allow(clippy::cast_possible_truncation)]
 pub fn register_all_functions(tera: &mut tera::Tera) {
     // uuid() - Generates a random UUID v4 (commonly used, so we include it here)
     tera.register_function(
@@ -398,7 +399,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_words",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            let count = args
+                .get("count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(5) as usize;
             Ok(Value::String(mockpit_fake_data::text::fake_words(count)))
         },
     );
@@ -406,7 +410,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_sentence",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let word_count = args.get("word_count").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            let word_count = args
+                .get("word_count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(5) as usize;
             Ok(Value::String(mockpit_fake_data::text::fake_sentence(
                 word_count,
             )))
@@ -418,7 +425,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
             let sentence_count = args
                 .get("sentence_count")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(3) as usize;
             Ok(Value::String(mockpit_fake_data::text::fake_paragraph(
                 sentence_count,
@@ -443,7 +450,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_alphanumeric",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let length = args.get("length").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+            let length = args
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(10) as usize;
             Ok(Value::String(mockpit_fake_data::text::fake_alphanumeric(
                 length,
             )))
@@ -488,8 +498,14 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_price",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let min = args.get("min").and_then(|v| v.as_f64()).unwrap_or(1.0);
-            let max = args.get("max").and_then(|v| v.as_f64()).unwrap_or(9999.99);
+            let min = args
+                .get("min")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(1.0);
+            let max = args
+                .get("max")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(9999.99);
             let price = mockpit_fake_data::finance::fake_price(min, max);
             Ok(Value::Number(
                 serde_json::Number::from_f64(price).unwrap_or_else(|| serde_json::Number::from(0)),
@@ -644,8 +660,14 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_file_size",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let min = args.get("min").and_then(|v| v.as_i64()).unwrap_or(1024);
-            let max = args.get("max").and_then(|v| v.as_i64()).unwrap_or(1048576);
+            let min = args
+                .get("min")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(1024);
+            let max = args
+                .get("max")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(1_048_576);
             Ok(Value::Number(
                 mockpit_fake_data::web::fake_file_size(min, max).into(),
             ))
@@ -748,8 +770,14 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_number",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let min = args.get("min").and_then(|v| v.as_i64()).unwrap_or(1);
-            let max = args.get("max").and_then(|v| v.as_i64()).unwrap_or(1000);
+            let min = args
+                .get("min")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(1);
+            let max = args
+                .get("max")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(1000);
             Ok(Value::Number(
                 mockpit_fake_data::web::fake_number(min, max).into(),
             ))
@@ -759,8 +787,14 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_float",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let min = args.get("min").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let max = args.get("max").and_then(|v| v.as_f64()).unwrap_or(1.0);
+            let min = args
+                .get("min")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0);
+            let max = args
+                .get("max")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(1.0);
             let float_val = mockpit_fake_data::web::fake_float(min, max);
             Ok(Value::Number(
                 serde_json::Number::from_f64(float_val)
@@ -774,7 +808,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
         "fake_pdf",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
             let text = args.get("text").and_then(|v| v.as_str());
-            let pages = args.get("pages").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let pages = args
+                .get("pages")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             Ok(Value::String(mockpit_fake_data::files::fake_pdf(
                 text, pages,
             )))
@@ -784,10 +821,13 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_png",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let color = args.get("color").and_then(|v| v.as_str());
             Ok(Value::String(mockpit_fake_data::files::fake_png(
@@ -799,15 +839,18 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_jpeg",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let color = args.get("color").and_then(|v| v.as_str());
             let quality = args
                 .get("quality")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u8);
             Ok(Value::String(mockpit_fake_data::files::fake_jpeg(
                 width, height, color, quality,
@@ -819,7 +862,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
         "fake_pdf_data_uri",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
             let text = args.get("text").and_then(|v| v.as_str());
-            let pages = args.get("pages").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let pages = args
+                .get("pages")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             Ok(Value::String(mockpit_fake_data::files::fake_pdf_data_uri(
                 text, pages,
             )))
@@ -829,10 +875,13 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_png_data_uri",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let color = args.get("color").and_then(|v| v.as_str());
             Ok(Value::String(mockpit_fake_data::files::fake_png_data_uri(
@@ -844,15 +893,18 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_jpeg_data_uri",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let color = args.get("color").and_then(|v| v.as_str());
             let quality = args
                 .get("quality")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u8);
             Ok(Value::String(mockpit_fake_data::files::fake_jpeg_data_uri(
                 width, height, color, quality,
@@ -864,16 +916,19 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
         "fake_image_with_text",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
             let text = args.get("text").and_then(|v| v.as_str());
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let bg_color = args.get("bg_color").and_then(|v| v.as_str());
             let text_color = args.get("text_color").and_then(|v| v.as_str());
             let font_size = args
                 .get("font_size")
-                .and_then(|v| v.as_f64())
+                .and_then(serde_json::Value::as_f64)
                 .map(|v| v as f32);
             Ok(Value::String(
                 mockpit_fake_data::files::fake_image_with_text(
@@ -886,10 +941,13 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_image_gradient",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let start_color = args.get("start_color").and_then(|v| v.as_str());
             let end_color = args.get("end_color").and_then(|v| v.as_str());
@@ -909,16 +967,19 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_image_checkerboard",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let color1 = args.get("color1").and_then(|v| v.as_str());
             let color2 = args.get("color2").and_then(|v| v.as_str());
             let square_size = args
                 .get("square_size")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             Ok(Value::String(
                 mockpit_fake_data::files::fake_image_checkerboard(
@@ -935,12 +996,15 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_image_noise",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
-            let colored = args.get("colored").and_then(|v| v.as_bool());
+            let colored = args.get("colored").and_then(serde_json::Value::as_bool);
             Ok(Value::String(mockpit_fake_data::files::fake_image_noise(
                 width, height, colored,
             )))
@@ -950,16 +1014,19 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_image_stripes",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let color1 = args.get("color1").and_then(|v| v.as_str());
             let color2 = args.get("color2").and_then(|v| v.as_str());
             let stripe_width = args
                 .get("stripe_width")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let direction = args.get("direction").and_then(|v| v.as_str());
             Ok(Value::String(mockpit_fake_data::files::fake_image_stripes(
@@ -976,10 +1043,13 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_placeholder",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let width = args.get("width").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let width = args
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let height = args
                 .get("height")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32);
             let text = args.get("text").and_then(|v| v.as_str());
             let bg_color = args.get("bg_color").and_then(|v| v.as_str());
@@ -994,7 +1064,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
         "fake_avatar",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
             let initials = args.get("initials").and_then(|v| v.as_str());
-            let size = args.get("size").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let size = args
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as u32);
             let bg_color = args.get("bg_color").and_then(|v| v.as_str());
             let text_color = args.get("text_color").and_then(|v| v.as_str());
             Ok(Value::String(mockpit_fake_data::files::fake_avatar(
@@ -1012,10 +1085,22 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "now_plus",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let days = args.get("days").and_then(|v| v.as_i64()).unwrap_or(0);
-            let hours = args.get("hours").and_then(|v| v.as_i64()).unwrap_or(0);
-            let minutes = args.get("minutes").and_then(|v| v.as_i64()).unwrap_or(0);
-            let seconds = args.get("seconds").and_then(|v| v.as_i64()).unwrap_or(0);
+            let days = args
+                .get("days")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let hours = args
+                .get("hours")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let minutes = args
+                .get("minutes")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let seconds = args
+                .get("seconds")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
             let format = args
                 .get("format")
                 .and_then(|v| v.as_str())
@@ -1036,10 +1121,22 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "now_minus",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let days = args.get("days").and_then(|v| v.as_i64()).unwrap_or(0);
-            let hours = args.get("hours").and_then(|v| v.as_i64()).unwrap_or(0);
-            let minutes = args.get("minutes").and_then(|v| v.as_i64()).unwrap_or(0);
-            let seconds = args.get("seconds").and_then(|v| v.as_i64()).unwrap_or(0);
+            let days = args
+                .get("days")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let hours = args
+                .get("hours")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let minutes = args
+                .get("minutes")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let seconds = args
+                .get("seconds")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
             let format = args
                 .get("format")
                 .and_then(|v| v.as_str())
@@ -1060,7 +1157,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "fake_iso_date_offset",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let days = args.get("days").and_then(|v| v.as_i64()).unwrap_or(0);
+            let days = args
+                .get("days")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
             let result = Utc::now() + Duration::days(days);
             Ok(Value::String(result.format("%Y-%m-%d").to_string()))
         },
@@ -1076,18 +1176,17 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "mock_pdf_url",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let id = args
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            let id = args.get("id").and_then(|v| v.as_str()).map_or_else(
+                || Uuid::new_v4().to_string(),
+                std::string::ToString::to_string,
+            );
 
             let mut params = Vec::new();
             if let Some(text) = args.get("text").and_then(|v| v.as_str()) {
                 params.push(format!("text={}", urlencoding::encode(text)));
             }
-            if let Some(pages) = args.get("pages").and_then(|v| v.as_u64()) {
-                params.push(format!("pages={}", pages));
+            if let Some(pages) = args.get("pages").and_then(serde_json::Value::as_u64) {
+                params.push(format!("pages={pages}"));
             }
             if let Some(filename) = args.get("filename").and_then(|v| v.as_str()) {
                 params.push(format!("filename={}", urlencoding::encode(filename)));
@@ -1100,8 +1199,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
             };
 
             Ok(Value::String(format!(
-                "/__box_dev_gate_files/pdf/{}{}",
-                id, query
+                "/__box_dev_gate_files/pdf/{id}{query}"
             )))
         },
     );
@@ -1111,18 +1209,17 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "mock_image_url",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let id = args
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            let id = args.get("id").and_then(|v| v.as_str()).map_or_else(
+                || Uuid::new_v4().to_string(),
+                std::string::ToString::to_string,
+            );
 
             let mut params = Vec::new();
-            if let Some(w) = args.get("width").and_then(|v| v.as_u64()) {
-                params.push(format!("width={}", w));
+            if let Some(w) = args.get("width").and_then(serde_json::Value::as_u64) {
+                params.push(format!("width={w}"));
             }
-            if let Some(h) = args.get("height").and_then(|v| v.as_u64()) {
-                params.push(format!("height={}", h));
+            if let Some(h) = args.get("height").and_then(serde_json::Value::as_u64) {
+                params.push(format!("height={h}"));
             }
             if let Some(t) = args.get("type").and_then(|v| v.as_str()) {
                 params.push(format!("type={}", urlencoding::encode(t)));
@@ -1133,8 +1230,8 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
             if let Some(fmt) = args.get("format").and_then(|v| v.as_str()) {
                 params.push(format!("format={}", urlencoding::encode(fmt)));
             }
-            if let Some(q) = args.get("quality").and_then(|v| v.as_u64()) {
-                params.push(format!("quality={}", q));
+            if let Some(q) = args.get("quality").and_then(serde_json::Value::as_u64) {
+                params.push(format!("quality={q}"));
             }
             if let Some(bg) = args.get("bg").and_then(|v| v.as_str()) {
                 params.push(format!("bg={}", urlencoding::encode(bg)));
@@ -1154,14 +1251,14 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
             if let Some(dir) = args.get("direction").and_then(|v| v.as_str()) {
                 params.push(format!("direction={}", urlencoding::encode(dir)));
             }
-            if let Some(sq) = args.get("square").and_then(|v| v.as_u64()) {
-                params.push(format!("square={}", sq));
+            if let Some(sq) = args.get("square").and_then(serde_json::Value::as_u64) {
+                params.push(format!("square={sq}"));
             }
-            if let Some(st) = args.get("stripe").and_then(|v| v.as_u64()) {
-                params.push(format!("stripe={}", st));
+            if let Some(st) = args.get("stripe").and_then(serde_json::Value::as_u64) {
+                params.push(format!("stripe={st}"));
             }
-            if let Some(colored) = args.get("colored").and_then(|v| v.as_bool()) {
-                params.push(format!("colored={}", colored));
+            if let Some(colored) = args.get("colored").and_then(serde_json::Value::as_bool) {
+                params.push(format!("colored={colored}"));
             }
 
             let query = if params.is_empty() {
@@ -1171,8 +1268,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
             };
 
             Ok(Value::String(format!(
-                "/__box_dev_gate_files/image/{}{}",
-                id, query
+                "/__box_dev_gate_files/image/{id}{query}"
             )))
         },
     );
@@ -1182,18 +1278,17 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     tera.register_function(
         "mock_avatar_url",
         |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let id = args
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            let id = args.get("id").and_then(|v| v.as_str()).map_or_else(
+                || Uuid::new_v4().to_string(),
+                std::string::ToString::to_string,
+            );
 
             let mut params = Vec::new();
             if let Some(initials) = args.get("initials").and_then(|v| v.as_str()) {
                 params.push(format!("initials={}", urlencoding::encode(initials)));
             }
-            if let Some(size) = args.get("size").and_then(|v| v.as_u64()) {
-                params.push(format!("size={}", size));
+            if let Some(size) = args.get("size").and_then(serde_json::Value::as_u64) {
+                params.push(format!("size={size}"));
             }
             if let Some(bg) = args.get("bg").and_then(|v| v.as_str()) {
                 params.push(format!("bg={}", urlencoding::encode(bg)));
@@ -1209,8 +1304,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
             };
 
             Ok(Value::String(format!(
-                "/__box_dev_gate_files/avatar/{}{}",
-                id, query
+                "/__box_dev_gate_files/avatar/{id}{query}"
             )))
         },
     );
@@ -1231,10 +1325,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
                 format!("?{}", params.join("&"))
             };
 
-            Ok(Value::String(format!(
-                "/__box_dev_gate_files/font{}",
-                query
-            )))
+            Ok(Value::String(format!("/__box_dev_gate_files/font{query}")))
         },
     );
 
@@ -1252,7 +1343,10 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
                 .get("type")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| tera::Error::msg("fake_array requires 'type' parameter"))?;
-            let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            let count = args
+                .get("count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(5) as usize;
 
             let items: Vec<Value> = (0..count)
                 .map(|_| match data_type {
@@ -1275,7 +1369,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
                     "date" => Value::String(mockpit_fake_data::datetime::fake_iso_date()),
                     "number" => Value::Number(mockpit_fake_data::web::fake_number(1, 1000).into()),
                     "boolean" => Value::Bool(mockpit_fake_data::web::fake_boolean()),
-                    other => Value::String(format!("[unknown type: {}]", other)),
+                    other => Value::String(format!("[unknown type: {other}]")),
                 })
                 .collect();
 

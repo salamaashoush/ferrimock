@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use har::{Har, Spec, v1_2};
 use http::{Method, StatusCode};
 use mockpit_config::{HarLoadOptions, HarLoader, ReturnConfig};
@@ -1141,7 +1148,7 @@ async fn test_export_single_mock_to_har() {
             assert_eq!(log.entries[0].response.status, 200);
             assert_eq!(log.creator.name, "box-dev-gate");
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1198,7 +1205,7 @@ async fn test_export_multiple_mocks_to_har() {
             assert_eq!(log.entries[0].response.status, 200);
             assert_eq!(log.entries[1].response.status, 201);
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1230,9 +1237,9 @@ async fn test_export_mock_with_delay() {
     match &har.log {
         Spec::V1_2(log) => {
             assert_eq!(log.entries.len(), 1);
-            assert_eq!(log.entries[0].timings.wait, 250.0);
+            assert!((log.entries[0].timings.wait - 250.0).abs() < f64::EPSILON);
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1277,7 +1284,7 @@ async fn test_export_mock_with_headers() {
             assert_eq!(headers.get("content-type"), Some(&"application/json"));
             assert_eq!(headers.get("x-custom"), Some(&"value"));
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1311,7 +1318,7 @@ async fn test_export_mock_with_regex_pattern() {
             // Regex patterns are exported with special format
             assert!(log.entries[0].request.url.contains("^/api/users/\\d+$"));
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1344,7 +1351,7 @@ async fn test_export_mock_with_prefix_pattern() {
             assert_eq!(log.entries.len(), 1);
             assert_eq!(log.entries[0].request.url, "https://api.box.com/v2/");
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1378,7 +1385,7 @@ async fn test_export_mock_with_file_body() {
             let body_text = log.entries[0].response.content.text.as_ref().unwrap();
             assert!(body_text.contains("<file: /path/to/file.json>"));
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1412,7 +1419,7 @@ async fn test_export_mock_with_template_body() {
             let body_text = log.entries[0].response.content.text.as_ref().unwrap();
             assert!(body_text.contains("<template: {{ user.name }}>"));
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1445,7 +1452,7 @@ async fn test_export_mock_with_no_methods() {
             assert_eq!(log.entries.len(), 1);
             assert_eq!(log.entries[0].request.method, "GET"); // Should default to GET
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1478,7 +1485,7 @@ async fn test_export_mock_with_multiple_methods() {
             assert_eq!(log.entries.len(), 1);
             assert_eq!(log.entries[0].request.method, "GET"); // Should use first method
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1491,7 +1498,7 @@ async fn test_export_empty_mocks_list() {
             assert_eq!(log.entries.len(), 0);
             assert_eq!(log.creator.name, "box-dev-gate");
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1529,7 +1536,7 @@ async fn test_export_mock_includes_metadata() {
             assert!(response_comment.contains("75"));
             assert!(entry_comment.contains("enabled: false"));
         }
-        _ => panic!("Expected HAR v1.2"),
+        Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
 }
 
@@ -1620,7 +1627,7 @@ async fn test_all_options_disabled() {
 #[tokio::test]
 async fn test_priority_large_number_of_entries() {
     let entries: Vec<_> = (0..150)
-        .map(|i| create_test_entry("GET", &format!("https://api.box.com/test{}", i), 200))
+        .map(|i| create_test_entry("GET", &format!("https://api.box.com/test{i}"), 200))
         .collect();
 
     let har = Har {

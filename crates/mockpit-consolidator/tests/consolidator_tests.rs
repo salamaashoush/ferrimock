@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice
+)]
 //! Comprehensive tests for mock consolidation engine
 //!
 //! Tests cover:
@@ -24,7 +31,7 @@ fn create_mock(id: &str, method: &str, url: &str, status: u16, body: &str) -> Mo
         match_config: Some(MatchConfig {
             method: None,
             methods: vec![method.to_string()],
-            url: Some(format!("exact:{}", url)),
+            url: Some(format!("exact:{url}")),
             urls: vec![],
             headers: FxHashMap::default(),
             query: FxHashMap::default(),
@@ -91,7 +98,7 @@ async fn test_pagination_pattern_detection() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 4");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -175,7 +182,7 @@ async fn test_id_based_pattern_detection() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 4");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -249,7 +256,7 @@ async fn test_uuid_pattern_detection() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 3");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -301,7 +308,7 @@ async fn test_search_query_pattern() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 3");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -335,7 +342,7 @@ async fn test_duplicate_removal() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 4");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -377,7 +384,7 @@ async fn test_variable_response_template() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 3");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -437,7 +444,7 @@ async fn test_mixed_patterns() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 8");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -481,7 +488,7 @@ async fn test_no_consolidation_for_single_mock() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 1");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -524,7 +531,7 @@ async fn test_min_pattern_threshold() {
     };
 
     let mut consolidator = MockConsolidator::with_options(options);
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 2");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -567,7 +574,7 @@ async fn test_disable_consolidation() {
     };
 
     let mut consolidator = MockConsolidator::with_options(options);
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 3");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -606,7 +613,7 @@ async fn test_consolidation_stats() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let _result = consolidator.consolidate(collection).await.unwrap();
+    let _result = consolidator.consolidate(collection).unwrap();
 
     let stats = consolidator.stats();
 
@@ -634,22 +641,22 @@ async fn test_complex_real_world_scenario() {
     // Simulate infinite scroll pagination (20 pages)
     for i in 1..=20 {
         mocks.push(create_mock(
-            &format!("page-{}", i),
+            &format!("page-{i}"),
             "GET",
             &format!("/api/feed?offset={}&limit=10", (i - 1) * 10),
             200,
-            &format!(r#"{{"items":[{{"id":{}}}],"hasMore":true}}"#, i),
+            &format!(r#"{{"items":[{{"id":{i}}}],"hasMore":true}}"#),
         ));
     }
 
     // Simulate file downloads (15 different files)
     for i in 1..=15 {
         mocks.push(create_mock(
-            &format!("file-{}", i),
+            &format!("file-{i}"),
             "GET",
             &format!("/api/files/{}/download", 100 + i),
             200,
-            r#"<binary data>"#,
+            r"<binary data>",
         ));
     }
 
@@ -667,18 +674,18 @@ async fn test_complex_real_world_scenario() {
         "perl",
     ] {
         mocks.push(create_mock(
-            &format!("search-{}", term),
+            &format!("search-{term}"),
             "GET",
-            &format!("/api/search?q={}&type=code", term),
+            &format!("/api/search?q={term}&type=code"),
             200,
-            &format!(r#"{{"query":"{}","results":[]}}"#, term),
+            &format!(r#"{{"query":"{term}","results":[]}}"#),
         ));
     }
 
     // Add some duplicates (5 health checks)
     for i in 1..=5 {
         mocks.push(create_mock(
-            &format!("health-{}", i),
+            &format!("health-{i}"),
             "GET",
             "/api/health",
             200,
@@ -687,10 +694,7 @@ async fn test_complex_real_world_scenario() {
     }
 
     let original_count = mocks.len();
-    println!(
-        "Simulating real-world recording with {} mocks:",
-        original_count
-    );
+    println!("Simulating real-world recording with {original_count} mocks:");
     println!("  - 20 pagination requests");
     println!("  - 15 file downloads");
     println!("  - 10 search queries");
@@ -705,7 +709,7 @@ async fn test_complex_real_world_scenario() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     let stats = consolidator.stats();
 
@@ -762,7 +766,7 @@ async fn test_preserves_different_methods() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 4 (different methods, same path)");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -797,7 +801,7 @@ async fn test_path_normalization_via_grouping() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     // If path normalization works, these should be grouped
     assert!(
@@ -845,7 +849,7 @@ async fn test_cursor_based_pagination() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 3");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -902,7 +906,7 @@ async fn test_complex_query_params() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 3");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -985,7 +989,7 @@ async fn test_download_url_file_type_detection() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let result = consolidator.consolidate(collection).await.unwrap();
+    let result = consolidator.consolidate(collection).unwrap();
 
     println!("Original mocks: 6");
     println!("Consolidated mocks: {}", result.mocks.len());
@@ -995,23 +999,23 @@ async fn test_download_url_file_type_detection() {
     let mut found_png = false;
 
     for mock in &result.mocks {
-        if let Some(ref response_config) = mock.response_config {
-            if let Some(tmpl) = response_config.template() {
-                println!("\nMock ID: {}", mock.id);
-                println!("Body template snippet: {}", &tmpl[..200.min(tmpl.len())]);
+        if let Some(ref response_config) = mock.response_config
+            && let Some(tmpl) = response_config.template()
+        {
+            println!("\nMock ID: {}", mock.id);
+            println!("Body template snippet: {}", &tmpl[..200.min(tmpl.len())]);
 
-                // Check if download URLs are detected and appropriate helpers are used
-                if tmpl.contains("download_url") {
-                    // This is a templated mock
-                    if tmpl.contains("fake_pdf_data_uri") {
-                        println!("  PDF file detected - using fake_pdf_data_uri()");
-                        found_pdf = true;
-                    } else if tmpl.contains("fake_png_data_uri") {
-                        println!("  PNG file detected - using fake_png_data_uri()");
-                        found_png = true;
-                    } else if tmpl.contains("fake_jpeg_data_uri") {
-                        println!("  JPEG file detected - using fake_jpeg_data_uri()");
-                    }
+            // Check if download URLs are detected and appropriate helpers are used
+            if tmpl.contains("download_url") {
+                // This is a templated mock
+                if tmpl.contains("fake_pdf_data_uri") {
+                    println!("  PDF file detected - using fake_pdf_data_uri()");
+                    found_pdf = true;
+                } else if tmpl.contains("fake_png_data_uri") {
+                    println!("  PNG file detected - using fake_png_data_uri()");
+                    found_png = true;
+                } else if tmpl.contains("fake_jpeg_data_uri") {
+                    println!("  JPEG file detected - using fake_jpeg_data_uri()");
                 }
             }
         }

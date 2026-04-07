@@ -46,6 +46,7 @@ fn has_tera_syntax(s: &str) -> bool {
 /// pure Tera expressions (e.g., `{{ fake_pdf(...) }}`). Leading `{% %}` block tags
 /// and `{# #}` comments are skipped; the first remaining `{` must NOT be followed
 /// by `{`, `%`, or `#` (which would indicate another Tera delimiter, not JSON).
+#[allow(clippy::indexing_slicing)]
 fn looks_like_json_with_tera(s: &str) -> bool {
     let trimmed = s.trim();
     // Must start with { or [
@@ -64,15 +65,16 @@ fn looks_like_json_with_tera(s: &str) -> bool {
     let len = chars.len();
     let mut i = 0;
     while i + 1 < len {
-        if chars[i] == '{' && matches!(chars[i + 1], '%' | '#') {
-            if let Some((_, end)) = extract_tera_block(&chars, i) {
-                i = end;
-                // Skip whitespace between blocks
-                while i < len && chars[i].is_whitespace() {
-                    i += 1;
-                }
-                continue;
+        if chars[i] == '{'
+            && matches!(chars[i + 1], '%' | '#')
+            && let Some((_, end)) = extract_tera_block(&chars, i)
+        {
+            i = end;
+            // Skip whitespace between blocks
+            while i < len && chars[i].is_whitespace() {
+                i += 1;
             }
+            continue;
         }
         break;
     }
@@ -114,6 +116,7 @@ fn extract_tera_keyword(block: &str) -> Option<&str> {
 }
 
 /// Check if a range of the input chars contains a newline
+#[allow(clippy::indexing_slicing)]
 fn has_newline_in_range(chars: &[char], start: usize, end: usize) -> bool {
     let end = end.min(chars.len());
     for c in &chars[start..end] {
@@ -144,7 +147,7 @@ fn ensure_newline_indent(output: &mut String, depth: usize, indent_str: &str) {
         // Trim any trailing whitespace-only content after last newline
         // to avoid double-indenting
         if let Some(last_nl) = output.rfind('\n') {
-            let after_nl = &output[last_nl + 1..];
+            let after_nl = output.get(last_nl + 1..).unwrap_or("");
             if after_nl.chars().all(|c| c == ' ' || c == '\t') {
                 output.truncate(last_nl + 1);
             }
@@ -160,28 +163,31 @@ fn ensure_newline_indent(output: &mut String, depth: usize, indent_str: &str) {
 /// newlines in the original input. Used to distinguish truly inline if-blocks
 /// (e.g., `{% if not loop.last %},{% endif %}`) from if-blocks that wrap multi-line
 /// content and should be treated as structural.
+#[allow(clippy::indexing_slicing)]
 fn if_content_has_newline(chars: &[char], start: usize) -> bool {
     let mut depth: u32 = 1;
     let len = chars.len();
     let mut i = start;
     while i < len {
-        if i + 1 < len && chars[i] == '{' && chars[i + 1] == '%' {
-            if let Some((block, end)) = extract_tera_block(chars, i) {
-                if let Some(kw) = extract_tera_keyword(&block) {
-                    match kw {
-                        "if" => depth += 1,
-                        "endif" => {
-                            depth -= 1;
-                            if depth == 0 {
-                                return has_newline_in_range(chars, start, i);
-                            }
+        if i + 1 < len
+            && chars[i] == '{'
+            && chars[i + 1] == '%'
+            && let Some((block, end)) = extract_tera_block(chars, i)
+        {
+            if let Some(kw) = extract_tera_keyword(&block) {
+                match kw {
+                    "if" => depth += 1,
+                    "endif" => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return has_newline_in_range(chars, start, i);
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
-                i = end;
-                continue;
             }
+            i = end;
+            continue;
         }
         i += 1;
     }
@@ -204,6 +210,7 @@ fn is_always_structural(keyword: &str) -> bool {
 /// - Inline Tera depth for context-dependent if/endif
 /// - Tera block depth for indenting nested control structures
 /// - JSON string literals (not reformatted internally)
+#[allow(clippy::indexing_slicing)]
 fn format_json_with_tera(input: &str) -> String {
     let mut output = String::with_capacity(input.len() * 2);
     let chars: Vec<char> = input.chars().collect();
@@ -221,7 +228,31 @@ fn format_json_with_tera(input: &str) -> String {
 
     while i < len {
         // Handle Tera blocks outside of strings
-        if !in_string {
+        if in_string {
+            // Inside a JSON string -- copy verbatim (including Tera expressions within strings)
+            match chars[i] {
+                '\\' => {
+                    // Escaped character -- copy both
+                    output.push('\\');
+                    i += 1;
+                    if i < len {
+                        output.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                '"' => {
+                    // End of string
+                    output.push('"');
+                    in_string = false;
+                    last_token_end = i + 1;
+                    i += 1;
+                }
+                _ => {
+                    output.push(chars[i]);
+                    i += 1;
+                }
+            }
+        } else {
             // Check for Tera delimiters: {{ }}, {% %}, {# #}
             if i + 1 < len && chars[i] == '{' && matches!(chars[i + 1], '{' | '%' | '#') {
                 let tera_block = extract_tera_block(&chars, i);
@@ -402,19 +433,19 @@ fn format_json_with_tera(input: &str) -> String {
                     // Check if the object/array is empty (next non-ws char is } or ])
                     // Use peek_non_whitespace (NOT _non_tera) so Tera blocks inside prevent collapse
                     let closing = if chars[i] == '{' { '}' } else { ']' };
-                    if let Some(next) = peek_non_whitespace(&chars, i + 1) {
-                        if next == closing {
-                            // Empty object/array -- skip to closing brace
-                            output.push(closing);
-                            let mut j = i + 1;
-                            while j < len && chars[j] != closing {
-                                j += 1;
-                            }
-                            i = j + 1;
-                            depth -= 1;
-                            last_token_end = i;
-                            continue;
+                    if let Some(next) = peek_non_whitespace(&chars, i + 1)
+                        && next == closing
+                    {
+                        // Empty object/array -- skip to closing brace
+                        output.push(closing);
+                        let mut j = i + 1;
+                        while j < len && chars[j] != closing {
+                            j += 1;
                         }
+                        i = j + 1;
+                        depth -= 1;
+                        last_token_end = i;
+                        continue;
                     }
 
                     output.push('\n');
@@ -457,30 +488,6 @@ fn format_json_with_tera(input: &str) -> String {
                     i += 1;
                 }
             }
-        } else {
-            // Inside a JSON string -- copy verbatim (including Tera expressions within strings)
-            match chars[i] {
-                '\\' => {
-                    // Escaped character -- copy both
-                    output.push('\\');
-                    i += 1;
-                    if i < len {
-                        output.push(chars[i]);
-                        i += 1;
-                    }
-                }
-                '"' => {
-                    // End of string
-                    output.push('"');
-                    in_string = false;
-                    last_token_end = i + 1;
-                    i += 1;
-                }
-                _ => {
-                    output.push(chars[i]);
-                    i += 1;
-                }
-            }
         }
     }
 
@@ -489,6 +496,7 @@ fn format_json_with_tera(input: &str) -> String {
 
 /// Extract a complete Tera block starting at position `start`.
 /// Returns the block content (including delimiters) and the position after the block.
+#[allow(clippy::indexing_slicing)]
 fn extract_tera_block(chars: &[char], start: usize) -> Option<(String, usize)> {
     let len = chars.len();
     if start + 1 >= len {
@@ -525,6 +533,7 @@ fn extract_tera_block(chars: &[char], start: usize) -> Option<(String, usize)> {
 /// Normalize whitespace inside a Tera block.
 /// `{{name}}` -> `{{ name }}`, `{%if x%}` -> `{% if x %}`
 /// Preserves whitespace-trim markers: `{%-` / `-%}`, `{{-` / `-}}`
+#[allow(clippy::indexing_slicing)]
 fn normalize_tera_block(block: &str) -> String {
     let chars: Vec<char> = block.chars().collect();
     let len = chars.len();
@@ -550,7 +559,10 @@ fn normalize_tera_block(block: &str) -> String {
         return block.to_string();
     }
 
-    let inner: String = chars[inner_start..inner_end].iter().collect();
+    let inner: String = chars
+        .get(inner_start..inner_end)
+        .map(|slice| slice.iter().collect())
+        .unwrap_or_default();
 
     // Check for trim markers
     let (open_trim, content_start) = if let Some(stripped) = inner.strip_prefix('-') {
@@ -572,6 +584,7 @@ fn normalize_tera_block(block: &str) -> String {
 
 /// Peek ahead to find the next non-whitespace character (does not skip Tera blocks).
 /// Used for empty container detection where `[{% for %}]` should NOT be treated as `[]`.
+#[allow(clippy::indexing_slicing)]
 fn peek_non_whitespace(chars: &[char], start: usize) -> Option<char> {
     let len = chars.len();
     let mut i = start;
@@ -586,6 +599,7 @@ fn peek_non_whitespace(chars: &[char], start: usize) -> Option<char> {
 
 /// Normalize Tera delimiters in plain (non-JSON) text.
 /// Only touches the delimiter spacing, leaves everything else alone.
+#[allow(clippy::indexing_slicing)]
 fn normalize_tera_delimiters(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
@@ -593,12 +607,14 @@ fn normalize_tera_delimiters(input: &str) -> String {
     let mut i = 0;
 
     while i < len {
-        if i + 1 < len && chars[i] == '{' && matches!(chars[i + 1], '{' | '%' | '#') {
-            if let Some((block, end)) = extract_tera_block(&chars, i) {
-                output.push_str(&normalize_tera_block(&block));
-                i = end;
-                continue;
-            }
+        if i + 1 < len
+            && chars[i] == '{'
+            && matches!(chars[i + 1], '{' | '%' | '#')
+            && let Some((block, end)) = extract_tera_block(&chars, i)
+        {
+            output.push_str(&normalize_tera_block(&block));
+            i = end;
+            continue;
         }
         output.push(chars[i]);
         i += 1;
@@ -614,6 +630,13 @@ fn push_indent(output: &mut String, depth: usize, indent_str: &str) {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 mod tests {
     use super::*;
 
@@ -622,14 +645,12 @@ mod tests {
         let result = format_body(input);
         assert_eq!(
             result, expected,
-            "\n--- INPUT ---\n{}\n--- EXPECTED ---\n{}\n--- GOT ---\n{}\n",
-            input, expected, result
+            "\n--- INPUT ---\n{input}\n--- EXPECTED ---\n{expected}\n--- GOT ---\n{result}\n"
         );
         let second = format_body(&result);
         assert_eq!(
             result, second,
-            "NOT IDEMPOTENT\n--- FIRST ---\n{}\n--- SECOND ---\n{}\n",
-            result, second
+            "NOT IDEMPOTENT\n--- FIRST ---\n{result}\n--- SECOND ---\n{second}\n"
         );
     }
 
@@ -1072,8 +1093,7 @@ mod tests {
         assert_eq!(
             set_lines.len(),
             3,
-            "Should have 3 set lines. Got:\n{}",
-            result
+            "Should have 3 set lines. Got:\n{result}"
         );
 
         // JSON { on its own line after the set blocks
@@ -1090,23 +1110,20 @@ mod tests {
         // for on its own line
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% for")),
-            "for should start its own line. Got:\n{}",
-            result
+            "for should start its own line. Got:\n{result}"
         );
 
         // endfor on its own line
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% endfor")),
-            "endfor should start its own line. Got:\n{}",
-            result
+            "endfor should start its own line. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
         assert_eq!(
             result, second,
-            "NOT IDEMPOTENT\n--- FIRST ---\n{}\n--- SECOND ---\n{}\n",
-            result, second
+            "NOT IDEMPOTENT\n--- FIRST ---\n{result}\n--- SECOND ---\n{second}\n"
         );
     }
 
@@ -1257,8 +1274,7 @@ mod tests {
         // This is plain-text-with-Tera (normalize delimiters only)
         assert!(
             !result.contains('\n') || result.lines().count() <= 2,
-            "set+expression should not be JSON-formatted. Got:\n{}",
-            result
+            "set+expression should not be JSON-formatted. Got:\n{result}"
         );
     }
 
@@ -1486,8 +1502,7 @@ mod tests {
         assert_eq!(
             for_lines.len(),
             2,
-            "Should have 2 for lines. Got:\n{}",
-            result
+            "Should have 2 for lines. Got:\n{result}"
         );
 
         let endfor_lines: Vec<&&str> = lines
@@ -1497,16 +1512,14 @@ mod tests {
         assert_eq!(
             endfor_lines.len(),
             2,
-            "Should have 2 endfor lines. Got:\n{}",
-            result
+            "Should have 2 endfor lines. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
         assert_eq!(
             result, second,
-            "NOT IDEMPOTENT\n--- FIRST ---\n{}\n--- SECOND ---\n{}\n",
-            result, second
+            "NOT IDEMPOTENT\n--- FIRST ---\n{result}\n--- SECOND ---\n{second}\n"
         );
     }
 
@@ -1527,34 +1540,30 @@ mod tests {
         assert_eq!(
             set_lines.len(),
             2,
-            "Should have 2 set lines. Got:\n{}",
-            result
+            "Should have 2 set lines. Got:\n{result}"
         );
 
         // for on its own line
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% for")),
-            "for on own line. Got:\n{}",
-            result
+            "for on own line. Got:\n{result}"
         );
 
         // endfor on its own line
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% endfor")),
-            "endfor on own line. Got:\n{}",
-            result
+            "endfor on own line. Got:\n{result}"
         );
 
         // Inline comma pattern preserved
         assert!(
             result.contains("}{% if not loop.last %},{% endif %}"),
-            "Inline comma preserved. Got:\n{}",
-            result
+            "Inline comma preserved. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     // ==========================================================================
@@ -1664,8 +1673,7 @@ mod tests {
             let second = format_body(&first);
             assert_eq!(
                 first, second,
-                "Pattern {} NOT IDEMPOTENT.\nInput: {}\nFirst:\n{}\nSecond:\n{}",
-                i, pattern, first, second
+                "Pattern {i} NOT IDEMPOTENT.\nInput: {pattern}\nFirst:\n{first}\nSecond:\n{second}"
             );
         }
     }
@@ -1702,39 +1710,34 @@ mod tests {
         let lines: Vec<&str> = result.lines().collect();
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% for")),
-            "for on own line. Got:\n{}",
-            result
+            "for on own line. Got:\n{result}"
         );
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% endfor")),
-            "endfor on own line. Got:\n{}",
-            result
+            "endfor on own line. Got:\n{result}"
         );
 
         // Inline comma preserved
         assert!(
             result.contains("}{% if not loop.last %},{% endif %}"),
-            "Inline comma. Got:\n{}",
-            result
+            "Inline comma. Got:\n{result}"
         );
 
         // Nested arrays formatted
         assert!(
             result.contains("\"highlights\": ["),
-            "highlights array. Got:\n{}",
-            result
+            "highlights array. Got:\n{result}"
         );
 
         // Nested facets object
         assert!(
             result.contains("\"facets\": {"),
-            "facets object. Got:\n{}",
-            result
+            "facets object. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     // ==========================================================================
@@ -1749,17 +1752,15 @@ mod tests {
         let lines: Vec<&str> = result.lines().collect();
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% if")),
-            "Structural if. Got:\n{}",
-            result
+            "Structural if. Got:\n{result}"
         );
         assert!(
             lines.iter().any(|l| l.trim().starts_with("{% endif")),
-            "Structural endif. Got:\n{}",
-            result
+            "Structural endif. Got:\n{result}"
         );
 
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     // ==========================================================================
@@ -1775,21 +1776,15 @@ mod tests {
 
         // set block inside the loop should be on its own line
         let set_lines: Vec<&&str> = lines.iter().filter(|l| l.contains("set")).collect();
-        assert_eq!(
-            set_lines.len(),
-            1,
-            "Should have 1 set line. Got:\n{}",
-            result
-        );
+        assert_eq!(set_lines.len(), 1, "Should have 1 set line. Got:\n{result}");
         assert!(
             set_lines[0].trim().starts_with("{%"),
-            "Set should start its line. Got:\n{}",
-            result
+            "Set should start its line. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     // ==========================================================================
@@ -1806,15 +1801,15 @@ mod tests {
         let if_line = lines
             .iter()
             .position(|l| l.contains("if total"))
-            .unwrap_or_else(|| panic!("No if line. Got:\n{}", result));
+            .unwrap_or_else(|| panic!("No if line. Got:\n{result}"));
         let set_line = lines
             .iter()
             .position(|l| l.contains("set result"))
-            .unwrap_or_else(|| panic!("No set result line. Got:\n{}", result));
+            .unwrap_or_else(|| panic!("No set result line. Got:\n{result}"));
         let endif_line = lines
             .iter()
             .position(|l| l.contains("endif"))
-            .unwrap_or_else(|| panic!("No endif line. Got:\n{}", result));
+            .unwrap_or_else(|| panic!("No endif line. Got:\n{result}"));
 
         // Set inside if should be indented more than if
         let if_indent = lines[if_line]
@@ -1832,20 +1827,16 @@ mod tests {
 
         assert!(
             set_indent > if_indent,
-            "Content inside if should be indented. if_indent={}, set_indent={}. Got:\n{}",
-            if_indent,
-            set_indent,
-            result
+            "Content inside if should be indented. if_indent={if_indent}, set_indent={set_indent}. Got:\n{result}"
         );
         assert_eq!(
             if_indent, endif_indent,
-            "endif should align with if. Got:\n{}",
-            result
+            "endif should align with if. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     #[test]
@@ -1860,7 +1851,7 @@ mod tests {
         let outer_if_indent = lines
             .iter()
             .find(|l| l.contains("if outer"))
-            .unwrap_or_else(|| panic!("No outer if. Got:\n{}", result))
+            .unwrap_or_else(|| panic!("No outer if. Got:\n{result}"))
             .chars()
             .take_while(|c| c.is_whitespace())
             .count();
@@ -1868,7 +1859,7 @@ mod tests {
         let inner_if_indent = lines
             .iter()
             .find(|l| l.contains("if inner"))
-            .unwrap_or_else(|| panic!("No inner if. Got:\n{}", result))
+            .unwrap_or_else(|| panic!("No inner if. Got:\n{result}"))
             .chars()
             .take_while(|c| c.is_whitespace())
             .count();
@@ -1876,7 +1867,7 @@ mod tests {
         let set_indent = lines
             .iter()
             .find(|l| l.contains("set value"))
-            .unwrap_or_else(|| panic!("No set value. Got:\n{}", result))
+            .unwrap_or_else(|| panic!("No set value. Got:\n{result}"))
             .chars()
             .take_while(|c| c.is_whitespace())
             .count();
@@ -1885,19 +1876,17 @@ mod tests {
         assert_eq!(
             inner_if_indent,
             outer_if_indent + 2,
-            "Inner if should be indented. Got:\n{}",
-            result
+            "Inner if should be indented. Got:\n{result}"
         );
         assert_eq!(
             set_indent,
             inner_if_indent + 2,
-            "Set inside inner if should be indented. Got:\n{}",
-            result
+            "Set inside inner if should be indented. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     #[test]
@@ -1927,21 +1916,17 @@ mod tests {
         // Content inside for should be indented
         assert!(
             id_indent > for_indent,
-            "Content inside for should be indented. for_indent={}, id_indent={}. Got:\n{}",
-            for_indent,
-            id_indent,
-            result
+            "Content inside for should be indented. for_indent={for_indent}, id_indent={id_indent}. Got:\n{result}"
         );
         // endfor should align with for
         assert_eq!(
             for_indent, endfor_indent,
-            "endfor should align with for. Got:\n{}",
-            result
+            "endfor should align with for. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     #[test]
@@ -1979,13 +1964,11 @@ mod tests {
         // if, else, and endif should all be at the same indentation level
         assert_eq!(
             if_indent, else_indent,
-            "else should align with if. Got:\n{}",
-            result
+            "else should align with if. Got:\n{result}"
         );
         assert_eq!(
             if_indent, endif_indent,
-            "endif should align with if. Got:\n{}",
-            result
+            "endif should align with if. Got:\n{result}"
         );
 
         // Content inside each branch should be indented
@@ -1997,22 +1980,20 @@ mod tests {
         assert_eq!(
             set_a_lines.len(),
             2,
-            "Should have 2 set statements. Got:\n{}",
-            result
+            "Should have 2 set statements. Got:\n{result}"
         );
 
         for set_line in set_a_lines {
             let set_indent = set_line.chars().take_while(|c| c.is_whitespace()).count();
             assert!(
                 set_indent > if_indent,
-                "Content should be indented. Got:\n{}",
-                result
+                "Content should be indented. Got:\n{result}"
             );
         }
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     #[test]
@@ -2057,23 +2038,20 @@ mod tests {
         // All should be at the same level
         assert_eq!(
             if_indent, elif_indent,
-            "elif should align with if. Got:\n{}",
-            result
+            "elif should align with if. Got:\n{result}"
         );
         assert_eq!(
             if_indent, else_indent,
-            "else should align with if. Got:\n{}",
-            result
+            "else should align with if. Got:\n{result}"
         );
         assert_eq!(
             if_indent, endif_indent,
-            "endif should align with if. Got:\n{}",
-            result
+            "endif should align with if. Got:\n{result}"
         );
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     #[test]
@@ -2094,11 +2072,7 @@ mod tests {
             .filter(|l| l.trim().starts_with("{% if") && !l.contains("not loop.last"))
             .copied()
             .collect();
-        assert!(
-            !if_lines.is_empty(),
-            "Should have if block. Got:\n{}",
-            result
-        );
+        assert!(!if_lines.is_empty(), "Should have if block. Got:\n{result}");
 
         let if_indent = if_lines[0]
             .chars()
@@ -2106,10 +2080,7 @@ mod tests {
             .count();
         assert!(
             if_indent > for_indent,
-            "if inside for should be indented. for_indent={}, if_indent={}. Got:\n{}",
-            for_indent,
-            if_indent,
-            result
+            "if inside for should be indented. for_indent={for_indent}, if_indent={if_indent}. Got:\n{result}"
         );
 
         // JSON content inside if should be indented even more
@@ -2122,16 +2093,13 @@ mod tests {
             let id_indent = id_line.chars().take_while(|c| c.is_whitespace()).count();
             assert!(
                 id_indent > if_indent,
-                "JSON inside if should be indented. if_indent={}, id_indent={}. Got:\n{}",
-                if_indent,
-                id_indent,
-                result
+                "JSON inside if should be indented. if_indent={if_indent}, id_indent={id_indent}. Got:\n{result}"
             );
         }
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 
     #[test]
@@ -2165,8 +2133,7 @@ mod tests {
         assert_eq!(
             if_blocks.len(),
             2,
-            "Should have 2 if blocks. Got:\n{}",
-            result
+            "Should have 2 if blocks. Got:\n{result}"
         );
 
         for (if_idx, if_line) in if_blocks {
@@ -2179,10 +2146,7 @@ mod tests {
                     let set_indent = next_line.chars().take_while(|c| c.is_whitespace()).count();
                     assert!(
                         set_indent > if_indent,
-                        "Set inside if should be indented more than if. if_indent={}, set_indent={}. Got:\n{}",
-                        if_indent,
-                        set_indent,
-                        result
+                        "Set inside if should be indented more than if. if_indent={if_indent}, set_indent={set_indent}. Got:\n{result}"
                     );
                 }
             }
@@ -2194,8 +2158,7 @@ mod tests {
                     let endif_indent = endif_line.chars().take_while(|c| c.is_whitespace()).count();
                     assert_eq!(
                         if_indent, endif_indent,
-                        "endif should align with if. Got:\n{}",
-                        result
+                        "endif should align with if. Got:\n{result}"
                     );
                 }
             }
@@ -2203,6 +2166,6 @@ mod tests {
 
         // Idempotent
         let second = format_body(&result);
-        assert_eq!(result, second, "NOT IDEMPOTENT\n{}\nvs\n{}", result, second);
+        assert_eq!(result, second, "NOT IDEMPOTENT\n{result}\nvs\n{second}");
     }
 }

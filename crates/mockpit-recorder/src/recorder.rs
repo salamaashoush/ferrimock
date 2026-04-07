@@ -243,8 +243,7 @@ impl MockRecorder {
         let is_gzipped = headers
             .get("content-encoding")
             .and_then(|v| v.to_str().ok())
-            .map(|v| v.contains("gzip"))
-            .unwrap_or(false);
+            .is_some_and(|v| v.contains("gzip"));
 
         if !is_gzipped {
             return (data.clone(), false);
@@ -271,10 +270,10 @@ impl MockRecorder {
         _response_headers: Option<&HeaderMap>,
     ) -> bool {
         // Check URL filter (include only matching URLs)
-        if let Some(ref filter_url) = self.filter_options.filter_url {
-            if !filter_url.is_match(uri) {
-                return false;
-            }
+        if let Some(ref filter_url) = self.filter_options.filter_url
+            && !filter_url.is_match(uri)
+        {
+            return false;
         }
 
         // Check exclude patterns (exclude matching URLs)
@@ -300,10 +299,10 @@ impl MockRecorder {
         // If neither flag is set, record all status codes
 
         // Check minimum duration
-        if let Some(min_duration) = self.filter_options.min_duration {
-            if duration < min_duration {
-                return false;
-            }
+        if let Some(min_duration) = self.filter_options.min_duration
+            && duration < min_duration
+        {
+            return false;
         }
 
         true
@@ -426,16 +425,16 @@ impl MockRecorder {
         }
 
         // Write to file incrementally (non-blocking)
-        let file_handle = self.file_handle.clone();
+        let file_handle = Arc::clone(&self.file_handle);
         let format = self.format;
         // Use atomic counter for unique sequential recording numbers.
         // This avoids the race condition where concurrent calls to record() both read
         // self.interactions.len() after both inserts, getting the same count value.
         let recording_number = self.recording_counter.fetch_add(1, Ordering::SeqCst) + 1;
         let storage_dir = self.storage_dir.clone();
-        let pending_writes = self.pending_writes.clone();
+        let pending_writes = Arc::clone(&self.pending_writes);
         let strip_delay = self.filter_options.strip_delay;
-        let is_first_write = self.is_first_write.clone();
+        let is_first_write = Arc::clone(&self.is_first_write);
 
         // Increment pending writes counter
         pending_writes.fetch_add(1, Ordering::Release);
@@ -591,7 +590,7 @@ impl MockRecorder {
                     None
                 },
                 subscription: if operation_type == Some("subscription") {
-                    Some(op_name.clone())
+                    Some(op_name)
                 } else {
                     None
                 },
@@ -600,12 +599,8 @@ impl MockRecorder {
             })
         } else {
             // No operation name - use boolean syntax (match any GraphQL of this type)
-            match operation_type {
-                Some("query") => Some(GraphQLMatchConfig::Boolean(true)),
-                Some("mutation") => Some(GraphQLMatchConfig::Boolean(true)),
-                Some("subscription") => Some(GraphQLMatchConfig::Boolean(true)),
-                _ => Some(GraphQLMatchConfig::Boolean(true)), // Generic GraphQL
-            }
+            // Any GraphQL operation type gets boolean match syntax
+            Some(GraphQLMatchConfig::Boolean(true))
         }
     }
 
@@ -632,7 +627,7 @@ impl MockRecorder {
             );
 
             // Convert interaction to mock config
-            let mock_id = format!("recorded-{}", recording_number);
+            let mock_id = format!("recorded-{recording_number}");
 
             // Build full URL with query parameters
             let full_url = if let Some(ref query) = interaction.request.query {
@@ -648,11 +643,11 @@ impl MockRecorder {
                 tokio::fs::create_dir_all(&bodies_dir).await?;
 
                 // Write body to file
-                let body_filename = format!("{}.body", mock_id);
+                let body_filename = format!("{mock_id}.body");
                 let body_path = bodies_dir.join(&body_filename);
                 tokio::fs::write(&body_path, interaction.response.body.as_bytes()).await?;
 
-                format!("bodies/{}", body_filename)
+                format!("bodies/{body_filename}")
             } else {
                 String::new()
             };
@@ -724,7 +719,7 @@ impl MockRecorder {
                     let json_str = serde_json::to_string_pretty(&mock_config)?;
                     let indented = json_str
                         .lines()
-                        .map(|line| format!("    {}", line))
+                        .map(|line| format!("    {line}"))
                         .collect::<Vec<_>>()
                         .join("\n");
 
@@ -739,9 +734,9 @@ impl MockRecorder {
                         .enumerate()
                         .map(|(i, line)| {
                             if i == 0 {
-                                format!("  - {}", line)
+                                format!("  - {line}")
                             } else {
-                                format!("    {}", line)
+                                format!("    {line}")
                             }
                         })
                         .collect::<Vec<_>>()
@@ -761,7 +756,7 @@ impl MockRecorder {
                     let json_str = serde_json::to_string_pretty(&har_entry)?;
                     let indented = json_str
                         .lines()
-                        .map(|line| format!("      {}", line))
+                        .map(|line| format!("      {line}"))
                         .collect::<Vec<_>>()
                         .join("\n");
 
@@ -871,15 +866,15 @@ impl MockRecorder {
         let interactions = self.get_all();
 
         for (mock, interaction) in collection.mocks.iter().zip(interactions.iter()) {
-            if let Some(ref response_config) = mock.response_config {
-                if let Some(file_ref) = response_config.file_ref() {
-                    let filename = std::path::Path::new(file_ref)
-                        .file_name()
-                        .ok_or_else(|| anyhow::anyhow!("Invalid body file path: {}", file_ref))?;
+            if let Some(ref response_config) = mock.response_config
+                && let Some(file_ref) = response_config.file_ref()
+            {
+                let filename = std::path::Path::new(file_ref)
+                    .file_name()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid body file path: {file_ref}"))?;
 
-                    let body_file_path = bodies_dir.join(filename);
-                    tokio::fs::write(&body_file_path, &interaction.response.body).await?;
-                }
+                let body_file_path = bodies_dir.join(filename);
+                tokio::fs::write(&body_file_path, &interaction.response.body).await?;
             }
         }
 
@@ -912,7 +907,7 @@ impl MockRecorder {
 
             // Prepare body - use file field for external files, body for inline
             let (inline_body, file_ref) = if use_file {
-                (None, Some(format!("bodies/{}.body", mock_id)))
+                (None, Some(format!("bodies/{mock_id}.body")))
             } else {
                 (Some(interaction.response.body.clone()), None)
             };
@@ -927,7 +922,7 @@ impl MockRecorder {
             let mock_config = MockConfig {
                 id: mock_id.as_str().into(),
                 description: None,
-                priority: 100 - idx as u32,
+                priority: 100_u32.saturating_sub(u32::try_from(idx).unwrap_or(u32::MAX)),
                 enabled: true,
                 scope: None, // Recorded mocks don't belong to a scope by default
                 vars: None,
@@ -1013,7 +1008,7 @@ impl MockRecorder {
             format: self.format,
             file_handle: Arc::new(Mutex::new(None)),
             file_path: Arc::new(Mutex::new(None)),
-            filter_options: self.filter_options.clone(),
+            filter_options: Arc::clone(&self.filter_options),
             error_context_buffer: Arc::new(Mutex::new(VecDeque::new())),
             pending_writes: Arc::new(AtomicUsize::new(0)),
             recording_counter: Arc::new(AtomicUsize::new(0)),
@@ -1045,16 +1040,14 @@ impl MockRecorder {
         let mut priority = 500u32; // Base priority (normal tier)
 
         // Parse URL to extract path
-        let path = if let Some(query_start) = url.find('?') {
-            &url[..query_start]
-        } else {
-            url
-        };
+        let path = url.split('?').next().unwrap_or(url);
 
         // Higher priority for more specific patterns:
         // 1. Path depth (more segments = more specific)
         let path_segments = path.split('/').filter(|s| !s.is_empty()).count();
-        priority += (path_segments as u32) * 10;
+        priority += u32::try_from(path_segments)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(10);
 
         // 2. Presence of numeric IDs (e.g., /api/users/123)
         let has_numeric_id = path.split('/').any(|seg| seg.parse::<u64>().is_ok());
@@ -1063,11 +1056,11 @@ impl MockRecorder {
         }
 
         // 3. Longer paths are more specific
-        priority += (path.len() as u32).min(100);
+        priority += u32::try_from(path.len()).unwrap_or(u32::MAX).min(100);
 
         // 4. Recording order as tiebreaker (earlier = slightly higher)
         // Limit impact to avoid overflow (max 1000 requests before it saturates)
-        let order_penalty = (recording_order as u32).min(1000);
+        let order_penalty = u32::try_from(recording_order).unwrap_or(u32::MAX).min(1000);
         priority = priority.saturating_sub(order_penalty / 100);
 
         priority
@@ -1075,6 +1068,18 @@ impl MockRecorder {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants,
+    clippy::clone_on_ref_ptr,
+    clippy::cast_sign_loss,
+    clippy::option_if_let_else,
+    clippy::manual_let_else
+)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -1094,7 +1099,7 @@ mod tests {
 
         let json_str = serde_json::to_string_pretty(&header).unwrap();
 
-        println!("Generated JSON:\n{}", json_str);
+        println!("Generated JSON:\n{json_str}");
 
         // Verify name is present in the JSON string
         assert!(
@@ -1129,7 +1134,7 @@ mod tests {
         // Read the file and check its contents
         let content = tokio::fs::read_to_string(&file_path).await.unwrap();
 
-        println!("Generated file content:\n{}", content);
+        println!("Generated file content:\n{content}");
 
         // Parse as JSON
         let json_value: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -1141,7 +1146,7 @@ mod tests {
         );
 
         let name = json_value.get("name").unwrap();
-        println!("Name field value: {:?}", name);
+        println!("Name field value: {name:?}");
 
         assert!(!name.is_null(), "Name should not be null");
         assert_eq!(
@@ -1307,7 +1312,7 @@ mod tests {
 
         // Verify the content
         let content = tokio::fs::read_to_string(&output_path).await.unwrap();
-        println!("=== Saved YAML ===\n{}\n=== End ===", content);
+        println!("=== Saved YAML ===\n{content}\n=== End ===");
 
         assert!(content.contains("export-test"));
         assert!(content.contains("/api/users"));
@@ -1449,13 +1454,13 @@ mod tests {
             recorder
                 .record(
                     &Method::GET,
-                    &format!("/api/test/{}", i),
+                    &format!("/api/test/{i}"),
                     None,
                     &HeaderMap::new(),
                     None,
                     StatusCode::OK,
                     &HeaderMap::new(),
-                    &Bytes::from(format!(r#"{{"id":{}}}"#, i)),
+                    &Bytes::from(format!(r#"{{"id":{i}}}"#)),
                     Duration::from_millis(10),
                 )
                 .await
@@ -1844,15 +1849,12 @@ mod tests {
 
         // Must be valid JSON
         let parsed: serde_json::Value = serde_json::from_str(&content)
-            .unwrap_or_else(|e| panic!("Invalid JSON: {}\nContent:\n{}", e, content));
+            .unwrap_or_else(|e| panic!("Invalid JSON: {e}\nContent:\n{content}"));
 
         // Must parse as MockCollectionConfig
         let collection: mockpit_config::MockCollectionConfig = serde_json::from_str(&content)
             .unwrap_or_else(|e| {
-                panic!(
-                    "Failed to parse as MockCollectionConfig: {}\nContent:\n{}",
-                    e, content
-                )
+                panic!("Failed to parse as MockCollectionConfig: {e}\nContent:\n{content}")
             });
 
         assert_eq!(collection.mocks.len(), 1);
@@ -1873,13 +1875,13 @@ mod tests {
             recorder
                 .record(
                     &Method::GET,
-                    &format!("/api/items/{}", i),
+                    &format!("/api/items/{i}"),
                     None,
                     &HeaderMap::new(),
                     None,
                     StatusCode::OK,
                     &HeaderMap::new(),
-                    &Bytes::from(format!(r#"{{"id": {}, "value": "item-{}"}}"#, i, i)),
+                    &Bytes::from(format!(r#"{{"id": {i}, "value": "item-{i}"}}"#)),
                     Duration::from_millis(10 * i as u64),
                 )
                 .await
@@ -1896,10 +1898,7 @@ mod tests {
         // Must parse as MockCollectionConfig
         let collection: mockpit_config::MockCollectionConfig = serde_json::from_str(&content)
             .unwrap_or_else(|e| {
-                panic!(
-                    "Failed to parse as MockCollectionConfig: {}\nContent:\n{}",
-                    e, content
-                )
+                panic!("Failed to parse as MockCollectionConfig: {e}\nContent:\n{content}")
             });
 
         assert_eq!(
@@ -1932,13 +1931,13 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 rec.record(
                     &Method::GET,
-                    &format!("/api/concurrent/{}", i),
+                    &format!("/api/concurrent/{i}"),
                     None,
                     &HeaderMap::new(),
                     None,
                     StatusCode::OK,
                     &HeaderMap::new(),
-                    &Bytes::from(format!(r#"{{"id": {}}}"#, i)),
+                    &Bytes::from(format!(r#"{{"id": {i}}}"#)),
                     Duration::from_millis(5),
                 )
                 .await
@@ -1960,10 +1959,7 @@ mod tests {
         // Must be valid JSON - this is the key assertion that was failing before the fix
         let collection: mockpit_config::MockCollectionConfig = serde_json::from_str(&content)
             .unwrap_or_else(|e| {
-                panic!(
-                    "Invalid JSON from concurrent writes: {}\nContent:\n{}",
-                    e, content
-                )
+                panic!("Invalid JSON from concurrent writes: {e}\nContent:\n{content}")
             });
 
         assert_eq!(
@@ -1998,10 +1994,7 @@ mod tests {
         // Must be valid JSON even with no mocks
         let collection: mockpit_config::MockCollectionConfig = serde_json::from_str(&content)
             .unwrap_or_else(|e| {
-                panic!(
-                    "Empty recording should be valid JSON: {}\nContent:\n{}",
-                    e, content
-                )
+                panic!("Empty recording should be valid JSON: {e}\nContent:\n{content}")
             });
 
         assert_eq!(collection.mocks.len(), 0);
@@ -2064,10 +2057,7 @@ mod tests {
         // Must be valid JSON even when first request was filtered
         let collection: mockpit_config::MockCollectionConfig = serde_json::from_str(&content)
             .unwrap_or_else(|e| {
-                panic!(
-                    "Filtered recording should be valid JSON: {}\nContent:\n{}",
-                    e, content
-                )
+                panic!("Filtered recording should be valid JSON: {e}\nContent:\n{content}")
             });
 
         assert_eq!(
@@ -2089,13 +2079,13 @@ mod tests {
             recorder
                 .record(
                     &Method::GET,
-                    &format!("/api/yaml/{}", i),
+                    &format!("/api/yaml/{i}"),
                     None,
                     &HeaderMap::new(),
                     None,
                     StatusCode::OK,
                     &HeaderMap::new(),
-                    &Bytes::from(format!(r#"{{"id": {}}}"#, i)),
+                    &Bytes::from(format!(r#"{{"id": {i}}}"#)),
                     Duration::from_millis(10),
                 )
                 .await
@@ -2110,12 +2100,7 @@ mod tests {
 
         // Must parse as valid YAML MockCollectionConfig
         let collection: mockpit_config::MockCollectionConfig = serde_yaml::from_str(&content)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Streaming YAML should be valid: {}\nContent:\n{}",
-                    e, content
-                )
-            });
+            .unwrap_or_else(|e| panic!("Streaming YAML should be valid: {e}\nContent:\n{content}"));
 
         assert_eq!(collection.mocks.len(), 3);
     }
@@ -2159,7 +2144,7 @@ mod tests {
         // Verify the file can be loaded by MockCollectionConfig::from_file
         let collection = mockpit_config::MockCollectionConfig::from_file(&file_path)
             .await
-            .unwrap_or_else(|e| panic!("Recording should be loadable by config parser: {}", e));
+            .unwrap_or_else(|e| panic!("Recording should be loadable by config parser: {e}"));
 
         assert_eq!(collection.mocks.len(), 4);
         assert!(collection.enabled);

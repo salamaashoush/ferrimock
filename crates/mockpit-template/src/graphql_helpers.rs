@@ -10,7 +10,9 @@ use tera::{Error, Result};
 /// Create GraphQL error response
 ///
 /// Usage: `{{ graphql_error(message="User not found", code="NOT_FOUND") }}`
-pub fn graphql_error(args: &HashMap<String, Value>) -> Result<Value> {
+pub fn graphql_error<S: ::std::hash::BuildHasher>(
+    args: &HashMap<String, Value, S>,
+) -> Result<Value> {
     let message = args
         .get("message")
         .and_then(|v| v.as_str())
@@ -45,7 +47,9 @@ pub fn graphql_error(args: &HashMap<String, Value>) -> Result<Value> {
 /// Create GraphQL field error (with automatic path parsing)
 ///
 /// Usage: `{{ graphql_field_error(field="user.email", message="Invalid email", code="VALIDATION_ERROR") }}`
-pub fn graphql_field_error(args: &HashMap<String, Value>) -> Result<Value> {
+pub fn graphql_field_error<S: ::std::hash::BuildHasher>(
+    args: &HashMap<String, Value, S>,
+) -> Result<Value> {
     let field = args
         .get("field")
         .and_then(|v| v.as_str())
@@ -86,7 +90,9 @@ pub fn graphql_field_error(args: &HashMap<String, Value>) -> Result<Value> {
 /// Build a simple GraphQL type for __type introspection queries
 ///
 /// Usage: `{{ graphql_type(name="User", kind="OBJECT") }}`
-pub fn graphql_type(args: &HashMap<String, Value>) -> Result<Value> {
+pub fn graphql_type<S: ::std::hash::BuildHasher>(
+    args: &HashMap<String, Value, S>,
+) -> Result<Value> {
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
@@ -123,7 +129,9 @@ pub fn graphql_type(args: &HashMap<String, Value>) -> Result<Value> {
 /// Build a GraphQL schema introspection response
 ///
 /// Usage: `{{ graphql_schema(types=[...]) }}` or just `{{ graphql_schema() }}` for empty schema
-pub fn graphql_schema(args: &HashMap<String, Value>) -> Result<Value> {
+pub fn graphql_schema<S: ::std::hash::BuildHasher>(
+    args: &HashMap<String, Value, S>,
+) -> Result<Value> {
     let query_type = args
         .get("queryType")
         .and_then(|v| v.as_str())
@@ -178,13 +186,14 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use serde_json::Value;
 
     #[test]
     fn test_graphql_error() {
-        let mut args = HashMap::default();
+        let mut args: HashMap<String, Value> = HashMap::new();
         args.insert(
             "message".to_string(),
             Value::String("Not found".to_string()),
@@ -199,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_graphql_field_error() {
-        let mut args = HashMap::default();
+        let mut args: HashMap<String, Value> = HashMap::new();
         args.insert("field".to_string(), Value::String("user.email".to_string()));
         args.insert(
             "message".to_string(),
@@ -222,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_graphql_type() {
-        let mut args = HashMap::default();
+        let mut args: HashMap<String, Value> = HashMap::new();
         args.insert("name".to_string(), Value::String("User".to_string()));
         args.insert("kind".to_string(), Value::String("OBJECT".to_string()));
 
@@ -233,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_graphql_schema() {
-        let mut args = HashMap::default();
+        let mut args: HashMap<String, Value> = HashMap::new();
         args.insert("queryType".to_string(), Value::String("Query".to_string()));
         args.insert(
             "mutationType".to_string(),

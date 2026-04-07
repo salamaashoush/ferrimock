@@ -62,8 +62,11 @@ impl MockCall {
             hasher
                 .finalize()
                 .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
+                .fold(String::with_capacity(64), |mut acc, b| {
+                    use std::fmt::Write;
+                    let _ = write!(acc, "{b:02x}");
+                    acc
+                })
         });
 
         Self {
@@ -228,13 +231,13 @@ impl MockRegistry {
         }
 
         if !path.is_dir() {
-            return Err(format!("{} is not a directory", dir_path));
+            return Err(format!("{dir_path} is not a directory"));
         }
 
         // Read directory entries
         let mut entries = tokio::fs::read_dir(path)
             .await
-            .map_err(|e| format!("Failed to read directory {}: {}", dir_path, e))?;
+            .map_err(|e| format!("Failed to read directory {dir_path}: {e}"))?;
 
         // Collect all mock collection files (JSON, YAML) and HAR files
         let mut collection_files = Vec::new();
@@ -242,7 +245,7 @@ impl MockRegistry {
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| format!("Failed to read directory entry: {}", e))?
+            .map_err(|e| format!("Failed to read directory entry: {e}"))?
         {
             let entry_path = entry.path();
             if let Some(ext) = entry_path.extension().and_then(|s| s.to_str()) {
@@ -278,10 +281,12 @@ impl MockRegistry {
                     loaded_count += count;
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to load mock collection from {:?}: {}",
-                        collection_files[i], e
-                    );
+                    if let Some(file) = collection_files.get(i) {
+                        eprintln!(
+                            "Warning: Failed to load mock collection from {}: {e}",
+                            file.display()
+                        );
+                    }
                 }
             }
         }
@@ -293,10 +298,12 @@ impl MockRegistry {
                     loaded_count += count;
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to load HAR file from {:?}: {}",
-                        har_files[i], e
-                    );
+                    if let Some(file) = har_files.get(i) {
+                        eprintln!(
+                            "Warning: Failed to load HAR file from {}: {e}",
+                            file.display()
+                        );
+                    }
                 }
             }
         }
@@ -362,7 +369,7 @@ impl MockRegistry {
             let mut definition = config
                 .into_mock_definition()
                 .await
-                .map_err(|e| format!("Failed to convert HAR entry to mock: {}", e))?;
+                .map_err(|e| format!("Failed to convert HAR entry to mock: {e}"))?;
             // Set source file for hot reload tracking
             definition.source_file = Some(source_path.clone());
             self.add_mock(definition);
@@ -481,19 +488,18 @@ impl MockRegistry {
             if !is_conditional
                 && mock.request.url_patterns.len() == 1
                 && mock.request_transforms.is_none()
+                && let Some(crate::types::UrlPattern::Exact(path)) =
+                    mock.request.url_patterns.first()
             {
-                if let crate::types::UrlPattern::Exact(ref path) = mock.request.url_patterns[0] {
-                    if mock.request.methods.is_empty() {
-                        for method in &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
-                        {
-                            let key = exact_match_key(method, path);
-                            index.entry(key).or_insert_with(|| Arc::clone(mock));
-                        }
-                    } else {
-                        for method in &mock.request.methods {
-                            let key = exact_match_key(method.as_str(), path);
-                            index.entry(key).or_insert_with(|| Arc::clone(mock));
-                        }
+                if mock.request.methods.is_empty() {
+                    for method in &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] {
+                        let key = exact_match_key(method, path);
+                        index.entry(key).or_insert_with(|| Arc::clone(mock));
+                    }
+                } else {
+                    for method in &mock.request.methods {
+                        let key = exact_match_key(method.as_str(), path);
+                        index.entry(key).or_insert_with(|| Arc::clone(mock));
                     }
                 }
             }
@@ -572,7 +578,7 @@ impl MockRegistry {
             self.invalidate_exact_index();
             Ok(())
         } else {
-            Err(format!("Mock with ID '{}' not found", id))
+            Err(format!("Mock with ID '{id}' not found"))
         }
     }
 
@@ -589,7 +595,7 @@ impl MockRegistry {
             self.invalidate_exact_index();
             Ok(())
         } else {
-            Err(format!("Mock with ID '{}' not found", id))
+            Err(format!("Mock with ID '{id}' not found"))
         }
     }
 
@@ -760,10 +766,7 @@ impl MockRegistry {
 
     /// Get the count of calls for a specific mock
     pub fn get_call_count(&self, mock_id: &str) -> usize {
-        self.call_tracking
-            .get(mock_id)
-            .map(|v| v.len())
-            .unwrap_or(0)
+        self.call_tracking.get(mock_id).map_or(0, |v| v.len())
     }
 
     /// Clear all recorded calls for a specific mock (keeps tracking enabled)
@@ -790,7 +793,7 @@ impl MockRegistry {
 
     /// Get access to the persistence store for debugging/inspection
     pub fn get_persistence_store(&self) -> Arc<PersistenceStore> {
-        self.persistence_store.clone()
+        Arc::clone(&self.persistence_store)
     }
 
     // ===== Hot Reload Methods =====
@@ -802,7 +805,7 @@ impl MockRegistry {
         let normalized_source = source_path
             .canonicalize()
             .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .and_then(|p| p.to_str().map(std::string::ToString::to_string))
             .unwrap_or_else(|| source_file.to_string());
 
         self.mocks
@@ -817,12 +820,11 @@ impl MockRegistry {
                     }
 
                     // Try canonicalizing the stored path and compare
-                    if let Ok(canonical_mock) = std::path::Path::new(mock_source).canonicalize() {
-                        if let Some(canonical_str) = canonical_mock.to_str() {
-                            if canonical_str == source_file || canonical_str == normalized_source {
-                                return Some(mock.id.clone());
-                            }
-                        }
+                    if let Ok(canonical_mock) = std::path::Path::new(mock_source).canonicalize()
+                        && let Some(canonical_str) = canonical_mock.to_str()
+                        && (canonical_str == source_file || canonical_str == normalized_source)
+                    {
+                        return Some(mock.id.clone());
                     }
                 }
 
@@ -851,7 +853,7 @@ impl MockRegistry {
             match ext {
                 "json" | "yaml" | "yml" => self.load_collection_file(path).await,
                 "har" => self.load_har_file(path).await,
-                _ => Err(format!("Unsupported file extension: {}", ext)),
+                _ => Err(format!("Unsupported file extension: {ext}")),
             }
         } else {
             Err("File has no extension".to_string())
@@ -879,13 +881,12 @@ impl MockRegistry {
         if let crate::BodySource::Template {
             source: template, ..
         } = &mock.response.body
+            && let Err(e) = mockpit_template::validate_template(template)
         {
-            if let Err(e) = mockpit_template::validate_template(template) {
-                return Err(format!(
-                    "Mock '{}': Template validation failed: {}",
-                    mock.id, e
-                ));
-            }
+            return Err(format!(
+                "Mock '{}': Template validation failed: {}",
+                mock.id, e
+            ));
         }
 
         Ok(())
@@ -899,6 +900,12 @@ impl Default for MockRegistry {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::types::{BodySource, RequestMatcher, ResponseGenerator};
@@ -1146,7 +1153,7 @@ mod tests {
     fn test_create_scope_with_ttl() {
         let registry = MockRegistry::new();
 
-        let ttl = std::time::Duration::from_secs(3600);
+        let ttl = std::time::Duration::from_hours(1);
         let info = registry
             .create_scope("test-scope".into(), Some(ttl))
             .unwrap();

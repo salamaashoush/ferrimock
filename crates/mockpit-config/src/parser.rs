@@ -75,7 +75,7 @@ impl MockCollectionConfig {
             }
             "har" => Self::from_har(&content).await,
             "yaml" | "yml" => Ok(Self::from_yaml(&content)?),
-            _ => Err(anyhow::anyhow!("Unsupported file format: {}", extension)),
+            _ => Err(anyhow::anyhow!("Unsupported file format: {extension}")),
         }
     }
 
@@ -130,10 +130,13 @@ fn default_enabled() -> bool {
     true
 }
 
+// These functions take references because serde's skip_serializing_if requires &T -> bool
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_true(v: &bool) -> bool {
     *v
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_default_priority(v: &u32) -> bool {
     *v == 100
 }
@@ -253,7 +256,9 @@ impl MockConfig {
         // - request.* set (any field) => PatchUpstream
         // - patch.* set => PatchUpstream
         // - Only response.status/delay/headers (no body/json) => FullMock
-        let is_full_mock = response_config.as_ref().is_some_and(|rc| rc.is_full_mock());
+        let is_full_mock = response_config
+            .as_ref()
+            .is_some_and(super::response::ResponseConfig::is_full_mock);
 
         // Validation: conflicting combinations
         if is_full_mock && has_request_transforms {
@@ -282,7 +287,7 @@ impl MockConfig {
         // Apply top-level delay
         if let Some(ref delay_str) = self.delay {
             let delay =
-                parse_duration(delay_str).map_err(|e| format!("Invalid top-level delay: {}", e))?;
+                parse_duration(delay_str).map_err(|e| format!("Invalid top-level delay: {e}"))?;
             response = response.with_delay(delay);
         }
 
@@ -306,7 +311,9 @@ impl MockConfig {
 
         // Build request transforms if present
         let request_transforms = if has_request_transforms {
-            let rt = self.request.unwrap();
+            let rt = self
+                .request
+                .ok_or_else(|| "request transforms missing".to_string())?;
             Some(build_request_transforms(rt)?)
         } else {
             None
@@ -362,9 +369,9 @@ fn build_request_transforms(
     // Body patches - RFC 6902
     if !config.body.operations.is_empty() {
         let json_patch_str = serde_json::to_string(&config.body.operations)
-            .map_err(|e| format!("Failed to serialize JSON Patch operations: {}", e))?;
+            .map_err(|e| format!("Failed to serialize JSON Patch operations: {e}"))?;
         let json_patch: json_patch::Patch = serde_json::from_str(&json_patch_str)
-            .map_err(|e| format!("Failed to parse JSON Patch operations: {}", e))?;
+            .map_err(|e| format!("Failed to parse JSON Patch operations: {e}"))?;
         patches.push(RequestPatch::JsonPatch(json_patch));
     }
 
@@ -395,6 +402,13 @@ fn build_request_transforms(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 mod tests {
     use super::*;
 

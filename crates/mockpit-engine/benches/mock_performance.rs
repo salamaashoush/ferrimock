@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use http::header::{HeaderName, HeaderValue};
 use http::{HeaderMap, Method, StatusCode};
@@ -154,7 +161,7 @@ fn bench_simple_exact_match(c: &mut Criterion) {
                 black_box(&headers),
                 None,
             )
-        })
+        });
     });
 
     group.bench_function("exact_match_last", |b| {
@@ -166,7 +173,7 @@ fn bench_simple_exact_match(c: &mut Criterion) {
                 black_box(&headers),
                 None,
             )
-        })
+        });
     });
 
     group.bench_function("exact_no_match", |b| {
@@ -178,7 +185,7 @@ fn bench_simple_exact_match(c: &mut Criterion) {
                 black_box(&headers),
                 None,
             )
-        })
+        });
     });
 
     group.finish();
@@ -207,7 +214,7 @@ fn bench_complex_match(c: &mut Criterion) {
         HeaderValue::from_static("Bearer token123"),
     );
 
-    let body = r#"{"email": "test@example.com"}"#.as_bytes();
+    let body = br#"{"email": "test@example.com"}"#;
 
     group.bench_function("regex_headers_body_match", |b| {
         b.iter(|| {
@@ -218,7 +225,7 @@ fn bench_complex_match(c: &mut Criterion) {
                 black_box(&headers),
                 black_box(Some(body)),
             )
-        })
+        });
     });
 
     group.finish();
@@ -232,14 +239,14 @@ fn bench_pattern_matching_scale(c: &mut Criterion) {
     let mut group = c.benchmark_group("pattern_matching_scale");
     group.significance_level(0.05).sample_size(500);
 
-    for size in [10, 50, 100, 200].iter() {
+    for size in &[10, 50, 100, 200] {
         let registry = MockRegistry::new();
 
         // Add many mocks with different patterns
         for i in 0..*size {
             registry.add_mock(create_regex_mock(
-                &format!("mock{}", i),
-                &format!(r"^/api/endpoint{}(/.*)?$", i),
+                &format!("mock{i}"),
+                &format!(r"^/api/endpoint{i}(/.*)?$"),
             ));
         }
 
@@ -255,7 +262,7 @@ fn bench_pattern_matching_scale(c: &mut Criterion) {
                     black_box(&headers),
                     None,
                 )
-            })
+            });
         });
     }
 
@@ -271,13 +278,13 @@ fn bench_miss_at_scale(c: &mut Criterion) {
     group.significance_level(0.05).sample_size(500);
 
     // Test misses with different mock counts and pattern types
-    for size in [10, 50, 100, 200, 500].iter() {
+    for size in &[10, 50, 100, 200, 500] {
         // Regex mocks (Express-style patterns compiled to regex)
         let registry = MockRegistry::new();
         for i in 0..*size {
             registry.add_mock(create_regex_mock(
-                &format!("regex-{}", i),
-                &format!(r"^/api/users/(?P<id>[^/]+)/endpoint{}$", i),
+                &format!("regex-{i}"),
+                &format!(r"^/api/users/(?P<id>[^/]+)/endpoint{i}$"),
             ));
         }
         let matcher = MockMatcher::new(registry);
@@ -292,17 +299,17 @@ fn bench_miss_at_scale(c: &mut Criterion) {
                     black_box(&headers),
                     None,
                 )
-            })
+            });
         });
     }
 
     // Exact mocks (cheapest pattern type)
-    for size in [10, 50, 100, 200, 500].iter() {
+    for size in &[10, 50, 100, 200, 500] {
         let registry = MockRegistry::new();
         for i in 0..*size {
             registry.add_mock(create_simple_mock(
-                &format!("exact-{}", i),
-                &format!("/api/exact/endpoint/{}", i),
+                &format!("exact-{i}"),
+                &format!("/api/exact/endpoint/{i}"),
             ));
         }
         let matcher = MockMatcher::new(registry);
@@ -317,12 +324,12 @@ fn bench_miss_at_scale(c: &mut Criterion) {
                     black_box(&headers),
                     None,
                 )
-            })
+            });
         });
     }
 
     // Mixed methods (GET, POST, PUT, DELETE, PATCH) to see method filtering effect
-    for size in [100, 500].iter() {
+    for size in &[100, 500] {
         let registry = MockRegistry::new();
         let methods = [
             Method::GET,
@@ -334,7 +341,7 @@ fn bench_miss_at_scale(c: &mut Criterion) {
         for i in 0..*size {
             let method = methods[i % methods.len()].clone();
             let mock = MockDefinition {
-                id: format!("mixed-{}", i).into(),
+                id: format!("mixed-{i}").into(),
                 priority: 100,
                 enabled: true,
                 scope: None,
@@ -343,7 +350,7 @@ fn bench_miss_at_scale(c: &mut Criterion) {
                 request: RequestMatcher {
                     methods: smallvec![method],
                     url_patterns: smallvec![
-                        UrlPattern::regex(&format!(r"^/api/endpoint{}(/.*)?$", i)).unwrap()
+                        UrlPattern::regex(&format!(r"^/api/endpoint{i}(/.*)?$")).unwrap()
                     ],
                     header_matchers: smallvec![],
                     query_matchers: smallvec![],
@@ -373,7 +380,7 @@ fn bench_miss_at_scale(c: &mut Criterion) {
                         black_box(&headers),
                         None,
                     )
-                })
+                });
             },
         );
     }
@@ -389,13 +396,13 @@ fn bench_isolate_costs(c: &mut Criterion) {
     let mut group = c.benchmark_group("isolate_costs");
     group.significance_level(0.05).sample_size(500);
 
-    for size in [100, 500].iter() {
+    for size in &[100, 500] {
         // Setup
         let registry = MockRegistry::new();
         for i in 0..*size {
             registry.add_mock(create_regex_mock(
-                &format!("isolate-{}", i),
-                &format!(r"^/api/endpoint{}(/.*)?$", i),
+                &format!("isolate-{i}"),
+                &format!(r"^/api/endpoint{i}(/.*)?$"),
             ));
         }
 
@@ -403,7 +410,7 @@ fn bench_isolate_costs(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("get_enabled_mocks", size), size, |b, _| {
             b.iter(|| {
                 black_box(registry.get_enabled_mocks());
-            })
+            });
         });
 
         // Cost of iterating + method check only
@@ -416,7 +423,7 @@ fn bench_isolate_costs(c: &mut Criterion) {
                     .filter(|m| m.request.methods.is_empty() || m.request.methods.contains(&method))
                     .count();
                 black_box(count);
-            })
+            });
         });
 
         // Cost of iterating + method + URL check (regex is_match)
@@ -434,7 +441,7 @@ fn bench_isolate_costs(c: &mut Criterion) {
                             && m.request.url_patterns.iter().any(|p| p.matches(path))
                     });
                     black_box(found);
-                })
+                });
             },
         );
     }
@@ -465,17 +472,17 @@ fn bench_static_response(c: &mut Criterion) {
 
     group.bench_function("small_20B", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| async { small_response.generate().await.unwrap() })
+            .iter(|| async { small_response.generate().await.unwrap() });
     });
 
     group.bench_function("medium_500B", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| async { medium_response.generate().await.unwrap() })
+            .iter(|| async { medium_response.generate().await.unwrap() });
     });
 
     group.bench_function("large_5KB", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| async { large_response.generate().await.unwrap() })
+            .iter(|| async { large_response.generate().await.unwrap() });
     });
 
     group.finish();
@@ -515,17 +522,17 @@ fn bench_file_response(c: &mut Criterion) {
 
     group.bench_function("file_small_20B", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| async { small_mock.response.generate().await.unwrap() })
+            .iter(|| async { small_mock.response.generate().await.unwrap() });
     });
 
     group.bench_function("file_medium_5KB", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| async { medium_mock.response.generate().await.unwrap() })
+            .iter(|| async { medium_mock.response.generate().await.unwrap() });
     });
 
     group.bench_function("file_large_50KB", |b| {
         b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| async { large_mock.response.generate().await.unwrap() })
+            .iter(|| async { large_mock.response.generate().await.unwrap() });
     });
 
     group.finish();
@@ -551,7 +558,7 @@ fn bench_template_response(c: &mut Criterion) {
                 let resp = template_mock.response.clone();
                 let ctx = context.clone();
                 async move { resp.generate_with_context(&ctx).await.unwrap() }
-            })
+            });
     });
 
     group.finish();
@@ -584,7 +591,7 @@ fn bench_concurrent_throughput(c: &mut Criterion) {
                     handles.push(handle);
                 }
                 futures::future::join_all(handles).await
-            })
+            });
     });
 
     group.finish();
@@ -602,17 +609,17 @@ fn bench_registry_operations(c: &mut Criterion) {
         let registry = MockRegistry::new();
         let mut counter = 0;
         b.iter(|| {
-            registry.add_mock(create_simple_mock(&format!("mock{}", counter), "/api/test"));
+            registry.add_mock(create_simple_mock(&format!("mock{counter}"), "/api/test"));
             counter += 1;
-        })
+        });
     });
 
     group.bench_function("get_enabled_mocks_100", |b| {
         let registry = MockRegistry::new();
         for i in 0..100 {
-            registry.add_mock(create_simple_mock(&format!("mock{}", i), "/api/test"));
+            registry.add_mock(create_simple_mock(&format!("mock{i}"), "/api/test"));
         }
-        b.iter(|| registry.get_enabled_mocks())
+        b.iter(|| registry.get_enabled_mocks());
     });
 
     group.finish();
@@ -708,8 +715,8 @@ fn bench_response_patcher(c: &mut Criterion) {
                     .status(StatusCode::OK)
                     .body(body_bytes.clone())
                     .unwrap();
-                async move { patcher.apply(response, None).await.unwrap() }
-            })
+                async move { patcher.apply(response, None).unwrap() }
+            });
     });
 
     group.bench_function("four_jsonpath_batched", |b| {
@@ -720,8 +727,8 @@ fn bench_response_patcher(c: &mut Criterion) {
                     .status(StatusCode::OK)
                     .body(body_bytes.clone())
                     .unwrap();
-                async move { patcher.apply(response, None).await.unwrap() }
-            })
+                async move { patcher.apply(response, None).unwrap() }
+            });
     });
 
     group.bench_function("mixed_json_and_headers", |b| {
@@ -732,8 +739,8 @@ fn bench_response_patcher(c: &mut Criterion) {
                     .status(StatusCode::OK)
                     .body(body_bytes.clone())
                     .unwrap();
-                async move { patcher.apply(response, None).await.unwrap() }
-            })
+                async move { patcher.apply(response, None).unwrap() }
+            });
     });
 
     group.finish();
@@ -786,7 +793,7 @@ fn bench_structured_response(c: &mut Criterion) {
                 let resp = plain_response.clone();
                 let ctx = ctx.clone();
                 async move { resp.generate_with_context(&ctx).await.unwrap() }
-            })
+            });
     });
 
     group.bench_function("structured_template_with_parse", |b| {
@@ -795,7 +802,7 @@ fn bench_structured_response(c: &mut Criterion) {
                 let resp = structured_response.clone();
                 let ctx = ctx.clone();
                 async move { resp.generate_with_context(&ctx).await.unwrap() }
-            })
+            });
     });
 
     group.finish();

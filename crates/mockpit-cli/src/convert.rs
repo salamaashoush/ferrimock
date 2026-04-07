@@ -105,10 +105,10 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
                 );
                 println!("{}", ui::kv("Pattern", &format!("{:?}", match_config.urls)));
             }
-            if let Some(ref response_config) = mock.response_config {
-                if let Some(status) = response_config.status() {
-                    println!("{}", ui::kv("Status", &ui::number(status)));
-                }
+            if let Some(ref response_config) = mock.response_config
+                && let Some(status) = response_config.status()
+            {
+                println!("{}", ui::kv("Status", &ui::number(status)));
             }
             println!();
 
@@ -138,10 +138,10 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
                 }
                 "e" | "edit" => {
                     println!();
-                    if let Some(ref match_config) = mock.match_config {
-                        if let Some(first_url) = match_config.urls.first() {
-                            println!("{}", ui::kv("Current pattern", &format!("{first_url:?}")));
-                        }
+                    if let Some(ref match_config) = mock.match_config
+                        && let Some(first_url) = match_config.urls.first()
+                    {
+                        println!("{}", ui::kv("Current pattern", &format!("{first_url:?}")));
                     }
                     println!();
                     print!("{} ", ui::emphasis("New pattern:"));

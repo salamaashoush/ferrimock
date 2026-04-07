@@ -81,27 +81,27 @@ pub async fn reload_mocks(
         }
 
         // Also load from recordings directory if it exists
-        if let Some(recordings_dir) = &app_state.config.recordings_dir {
-            if recordings_dir.exists() {
-                let recordings_str = recordings_dir.to_string_lossy().to_string();
-                match app_state
-                    .mock
-                    .mock_registry
-                    .load_from_directory(&recordings_str)
-                    .await
-                {
-                    Ok(count) => {
-                        debug!(
-                            "Reloaded {} recordings as mocks from: {}",
-                            count, recordings_str
-                        );
-                        total_count += count;
-                        loaded_dirs.push(recordings_str);
-                    }
-                    Err(e) => {
-                        error!("Failed to reload recordings: {}", e);
-                        // Non-fatal, continue
-                    }
+        if let Some(recordings_dir) = &app_state.config.recordings_dir
+            && recordings_dir.exists()
+        {
+            let recordings_str = recordings_dir.to_string_lossy().to_string();
+            match app_state
+                .mock
+                .mock_registry
+                .load_from_directory(&recordings_str)
+                .await
+            {
+                Ok(count) => {
+                    debug!(
+                        "Reloaded {} recordings as mocks from: {}",
+                        count, recordings_str
+                    );
+                    total_count += count;
+                    loaded_dirs.push(recordings_str);
+                }
+                Err(e) => {
+                    error!("Failed to reload recordings: {}", e);
+                    // Non-fatal, continue
                 }
             }
         }

@@ -4,7 +4,7 @@ use crate::types::RecordedInteraction;
 use har::v1_2;
 
 /// Convert RecordedInteraction to HAR Entry
-pub(super) fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
+pub fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
     // Build request URL (combine uri + query)
     let url = if let Some(ref query) = interaction.request.query {
         format!("{}?{}", interaction.request.uri, query)
@@ -61,10 +61,9 @@ pub(super) fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
         .request
         .body
         .as_ref()
-        .map(|b| b.len() as i64)
-        .unwrap_or(0);
+        .map_or(0, |b| i64::try_from(b.len()).unwrap_or(i64::MAX));
 
-    let response_body_size = interaction.response.body.len() as i64;
+    let response_body_size = i64::try_from(interaction.response.body.len()).unwrap_or(i64::MAX);
 
     // Detect if binary data (contains our sentinel string)
     let (response_text, response_encoding) =
@@ -77,7 +76,7 @@ pub(super) fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
     v1_2::Entries {
         pageref: None,
         started_date_time: interaction.timestamp.to_rfc3339(),
-        time: interaction.duration.as_millis() as f64,
+        time: interaction.duration.as_secs_f64() * 1000.0,
         request: v1_2::Request {
             method: interaction.request.method.clone(),
             url,
@@ -100,7 +99,7 @@ pub(super) fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
             comment: None,
         },
         response: v1_2::Response {
-            status: interaction.response.status as i64,
+            status: i64::from(interaction.response.status),
             status_text: status_code_to_text(interaction.response.status),
             http_version: "HTTP/1.1".to_string(),
             cookies: vec![],
@@ -127,7 +126,7 @@ pub(super) fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
             dns: None,
             connect: None,
             send: 0.0,
-            wait: interaction.duration.as_millis() as f64,
+            wait: interaction.duration.as_secs_f64() * 1000.0,
             receive: 0.0,
             ssl: None,
             comment: None,

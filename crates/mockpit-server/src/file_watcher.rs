@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use regex::Regex;
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
@@ -24,13 +23,31 @@ impl FileEvent {
     }
 }
 
+/// A single ignore rule, either a suffix match, a substring match, or a prefix match
+#[derive(Debug, Clone)]
+enum IgnoreRule {
+    EndsWith(&'static str),
+    Contains(&'static str),
+    StartsWith(&'static str),
+}
+
+impl IgnoreRule {
+    fn matches(&self, path_str: &str) -> bool {
+        match self {
+            Self::EndsWith(s) => path_str.ends_with(s),
+            Self::Contains(s) => path_str.contains(s),
+            Self::StartsWith(s) => path_str.starts_with(s),
+        }
+    }
+}
+
 /// Filter configuration for file events
 #[derive(Debug, Clone)]
 pub struct FileEventFilter {
     /// File extensions to watch (e.g., "json", "yaml")
     pub extensions: FxHashSet<String>,
-    /// Patterns to ignore (regex)
-    pub ignore_patterns: Vec<Regex>,
+    /// Patterns to ignore
+    ignore_rules: Vec<IgnoreRule>,
 }
 
 impl FileEventFilter {
@@ -39,15 +56,15 @@ impl FileEventFilter {
     pub fn new() -> Self {
         Self {
             extensions: FxHashSet::default(),
-            ignore_patterns: vec![
-                Regex::new(r"\.swp$").expect("valid regex"),
-                Regex::new(r"\.tmp$").expect("valid regex"),
-                Regex::new(r"~$").expect("valid regex"),
-                Regex::new(r"\.DS_Store$").expect("valid regex"),
-                Regex::new(r"/\.git/").expect("valid regex"),
-                Regex::new(r"/node_modules/").expect("valid regex"),
-                Regex::new(r"\.swx$").expect("valid regex"),
-                Regex::new(r"^\.\#").expect("valid regex"),
+            ignore_rules: vec![
+                IgnoreRule::EndsWith(".swp"),
+                IgnoreRule::EndsWith(".tmp"),
+                IgnoreRule::EndsWith("~"),
+                IgnoreRule::EndsWith(".DS_Store"),
+                IgnoreRule::Contains("/.git/"),
+                IgnoreRule::Contains("/node_modules/"),
+                IgnoreRule::EndsWith(".swx"),
+                IgnoreRule::StartsWith(".#"),
             ],
         }
     }
@@ -74,9 +91,9 @@ impl FileEventFilter {
         }
 
         let path_str = path.to_string_lossy();
-        for pattern in &self.ignore_patterns {
-            if pattern.is_match(&path_str) {
-                debug!("Ignoring file (matches pattern): {}", path_str);
+        for rule in &self.ignore_rules {
+            if rule.matches(&path_str) {
+                debug!("Ignoring file (matches rule): {}", path_str);
                 return false;
             }
         }
@@ -93,7 +110,7 @@ impl Default for FileEventFilter {
 
 /// File watcher using notify crate
 pub struct FileWatcher {
-    _watcher: RecommendedWatcher,
+    watcher: RecommendedWatcher,
     rx: mpsc::UnboundedReceiver<FileEvent>,
     #[allow(dead_code)]
     filter: FileEventFilter,
@@ -143,7 +160,7 @@ impl FileWatcher {
         .context("Failed to create file watcher")?;
 
         Ok(Self {
-            _watcher: watcher,
+            watcher,
             rx,
             filter,
         })
@@ -152,7 +169,7 @@ impl FileWatcher {
     /// Watch a path (file or directory)
     pub fn watch(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        self._watcher
+        self.watcher
             .watch(path, RecursiveMode::Recursive)
             .with_context(|| format!("Failed to watch path: {}", path.display()))?;
         debug!("Watching path: {}", path.display());

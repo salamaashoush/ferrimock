@@ -32,7 +32,7 @@ fn bench_single_field_url(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/url", |b| {
-        b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)));
     });
 }
 
@@ -46,7 +46,7 @@ fn bench_single_field_uuid(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/uuid", |b| {
-        b.iter(|| detector.detect_type(black_box("id"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("id"), black_box(&value_refs)));
     });
 }
 
@@ -60,7 +60,7 @@ fn bench_single_field_email(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/email", |b| {
-        b.iter(|| detector.detect_type(black_box("email"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("email"), black_box(&value_refs)));
     });
 }
 
@@ -74,7 +74,7 @@ fn bench_single_field_numeric_string_id(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/numeric_string_id", |b| {
-        b.iter(|| detector.detect_type(black_box("user_id"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("user_id"), black_box(&value_refs)));
     });
 }
 
@@ -84,7 +84,7 @@ fn bench_single_field_etag(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/etag", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)))
+        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)));
     });
 }
 
@@ -98,7 +98,7 @@ fn bench_single_field_timestamp(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/timestamp", |b| {
-        b.iter(|| detector.detect_type(black_box("created_at"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("created_at"), black_box(&value_refs)));
     });
 }
 
@@ -112,7 +112,7 @@ fn bench_single_field_filename(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/filename", |b| {
-        b.iter(|| detector.detect_type(black_box("file_name"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("file_name"), black_box(&value_refs)));
     });
 }
 
@@ -122,7 +122,7 @@ fn bench_single_field_ip_address(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/ip_address", |b| {
-        b.iter(|| detector.detect_type(black_box("ip"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("ip"), black_box(&value_refs)));
     });
 }
 
@@ -132,7 +132,7 @@ fn bench_single_field_semver(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/semver", |b| {
-        b.iter(|| detector.detect_type(black_box("version"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("version"), black_box(&value_refs)));
     });
 }
 
@@ -145,7 +145,7 @@ fn bench_single_field_base64(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/base64", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)))
+        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)));
     });
 }
 
@@ -159,7 +159,7 @@ fn bench_single_field_mime_type(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("single_field/mime_type", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)))
+        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)));
     });
 }
 
@@ -177,7 +177,7 @@ fn bench_multi_sample_url(c: &mut Criterion) {
         let value_refs = as_refs(&values);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
-            b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)))
+            b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)));
         });
     }
 
@@ -196,13 +196,13 @@ fn bench_multi_sample_uuid(c: &mut Criterion) {
                 i % 10000,
                 i % 10000,
                 i % 10000,
-                i * 100000
+                i * 100_000
             ))
         });
         let value_refs = as_refs(&values);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
-            b.iter(|| detector.detect_type(black_box("id"), black_box(&value_refs)))
+            b.iter(|| detector.detect_type(black_box("id"), black_box(&value_refs)));
         });
     }
 
@@ -218,7 +218,7 @@ fn bench_multi_sample_email(c: &mut Criterion) {
         let value_refs = as_refs(&values);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
-            b.iter(|| detector.detect_type(black_box("email"), black_box(&value_refs)))
+            b.iter(|| detector.detect_type(black_box("email"), black_box(&value_refs)));
         });
     }
 
@@ -230,11 +230,12 @@ fn bench_multi_sample_numeric_id(c: &mut Criterion) {
     let mut group = c.benchmark_group("multi_sample/numeric_id");
 
     for &size in &[10, 50, 100, 500] {
-        let values = generate_sample_values(size, |i| json!(format!("{:015}", i + 1000000000000)));
+        let values =
+            generate_sample_values(size, |i| json!(format!("{:015}", i + 1_000_000_000_000)));
         let value_refs = as_refs(&values);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
-            b.iter(|| detector.detect_type(black_box("user_id"), black_box(&value_refs)))
+            b.iter(|| detector.detect_type(black_box("user_id"), black_box(&value_refs)));
         });
     }
 
@@ -252,7 +253,7 @@ fn bench_multi_sample_timestamp(c: &mut Criterion) {
         let value_refs = as_refs(&values);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
-            b.iter(|| detector.detect_type(black_box("created_at"), black_box(&value_refs)))
+            b.iter(|| detector.detect_type(black_box("created_at"), black_box(&value_refs)));
         });
     }
 
@@ -273,7 +274,7 @@ fn bench_semantic_context_with_hint(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("semantic_context/with_hint", |b| {
-        b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)));
     });
 }
 
@@ -287,7 +288,7 @@ fn bench_semantic_context_without_hint(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("semantic_context/without_hint", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)))
+        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)));
     });
 }
 
@@ -301,7 +302,7 @@ fn bench_semantic_context_id_field(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("semantic_context/id_field_hint", |b| {
-        b.iter(|| detector.detect_type(black_box("user_id"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("user_id"), black_box(&value_refs)));
     });
 }
 
@@ -313,7 +314,7 @@ fn bench_feature_extraction_short_strings(c: &mut Criterion) {
     let values: Vec<&str> = vec!["test1", "test2", "test3"];
 
     c.bench_function("feature_extraction/short_strings", |b| {
-        b.iter(|| features::extract_features(black_box(&values)))
+        b.iter(|| features::extract_features(black_box(&values)));
     });
 }
 
@@ -325,7 +326,7 @@ fn bench_feature_extraction_long_strings(c: &mut Criterion) {
     ];
 
     c.bench_function("feature_extraction/long_strings", |b| {
-        b.iter(|| features::extract_features(black_box(&values)))
+        b.iter(|| features::extract_features(black_box(&values)));
     });
 }
 
@@ -334,12 +335,12 @@ fn bench_feature_extraction_many_samples(c: &mut Criterion) {
 
     for &size in &[10, 50, 100, 500] {
         let values: Vec<String> = (0..size)
-            .map(|i| format!("https://example.com/page/{}", i))
+            .map(|i| format!("https://example.com/page/{i}"))
             .collect();
-        let value_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
+        let value_refs: Vec<&str> = values.iter().map(String::as_str).collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
-            b.iter(|| features::extract_features(black_box(&value_refs)))
+            b.iter(|| features::extract_features(black_box(&value_refs)));
         });
     }
 
@@ -356,14 +357,14 @@ fn bench_shannon_entropy(c: &mut Criterion) {
     // Low entropy (repetitive)
     let low_entropy_values: Vec<&str> = vec!["aaaaaaa", "aaaaaab", "aaaaaac"];
     group.bench_function("low_entropy", |b| {
-        b.iter(|| features::extract_features(black_box(&low_entropy_values)))
+        b.iter(|| features::extract_features(black_box(&low_entropy_values)));
     });
 
     // High entropy (random-looking)
     let high_entropy_values: Vec<&str> =
         vec!["a1B2c3D4e5F6g7H8", "x9Y8z7W6v5U4t3S2", "m1N2o3P4q5R6s7T8"];
     group.bench_function("high_entropy", |b| {
-        b.iter(|| features::extract_features(black_box(&high_entropy_values)))
+        b.iter(|| features::extract_features(black_box(&high_entropy_values)));
     });
 
     group.finish();
@@ -393,19 +394,19 @@ fn bench_real_world_api_response(c: &mut Criterion) {
     let mut group = c.benchmark_group("real_world/api_response");
 
     group.bench_function("url_field", |b| {
-        b.iter(|| detector.detect_type(black_box("next"), black_box(&url_refs)))
+        b.iter(|| detector.detect_type(black_box("next"), black_box(&url_refs)));
     });
 
     group.bench_function("id_field", |b| {
-        b.iter(|| detector.detect_type(black_box("id"), black_box(&id_refs)))
+        b.iter(|| detector.detect_type(black_box("id"), black_box(&id_refs)));
     });
 
     group.bench_function("timestamp_field", |b| {
-        b.iter(|| detector.detect_type(black_box("created_at"), black_box(&timestamp_refs)))
+        b.iter(|| detector.detect_type(black_box("created_at"), black_box(&timestamp_refs)));
     });
 
     group.bench_function("etag_field", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&etag_refs)))
+        b.iter(|| detector.detect_type_from_values(black_box(&etag_refs)));
     });
 
     group.finish();
@@ -444,7 +445,7 @@ fn bench_real_world_mixed_types(c: &mut Criterion) {
                 let value_refs = as_refs(values);
                 detector.detect_type(black_box(field_name), black_box(&value_refs));
             }
-        })
+        });
     });
 }
 
@@ -462,7 +463,7 @@ fn bench_complex_array_detection(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("complex/array_of_emails", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)))
+        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)));
     });
 }
 
@@ -476,7 +477,7 @@ fn bench_complex_object_detection(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("complex/nested_object", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)))
+        b.iter(|| detector.detect_type_from_values(black_box(&value_refs)));
     });
 }
 
@@ -498,7 +499,7 @@ fn bench_edge_case_mixed_confidence(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("edge_case/mixed_confidence_70pct", |b| {
-        b.iter(|| detector.detect_type(black_box("email"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("email"), black_box(&value_refs)));
     });
 }
 
@@ -507,7 +508,7 @@ fn bench_edge_case_empty_values(c: &mut Criterion) {
     let values: Vec<&JsonValue> = vec![];
 
     c.bench_function("edge_case/empty_values", |b| {
-        b.iter(|| detector.detect_type_from_values(black_box(&values)))
+        b.iter(|| detector.detect_type_from_values(black_box(&values)));
     });
 }
 
@@ -517,7 +518,7 @@ fn bench_edge_case_single_value(c: &mut Criterion) {
     let value_refs = as_refs(&values);
 
     c.bench_function("edge_case/single_value", |b| {
-        b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)))
+        b.iter(|| detector.detect_type(black_box("next"), black_box(&value_refs)));
     });
 }
 
@@ -548,7 +549,7 @@ fn bench_end_to_end_full_detection(c: &mut Criterion) {
                 let value_refs = as_refs(values);
                 detector.detect_type(black_box(field_name), black_box(&value_refs));
             }
-        })
+        });
     });
 }
 
@@ -568,7 +569,7 @@ fn bench_bigquery_equivalent(c: &mut Criterion) {
     let url_refs = as_refs(&url_values);
 
     group.bench_function("500_urls", |b| {
-        b.iter(|| detector.detect_type(black_box("next"), black_box(&url_refs)))
+        b.iter(|| detector.detect_type(black_box("next"), black_box(&url_refs)));
     });
 
     // UUID detection with 500 samples
@@ -579,13 +580,13 @@ fn bench_bigquery_equivalent(c: &mut Criterion) {
             i % 10000,
             i % 10000,
             i % 10000,
-            i * 100000
+            i * 100_000
         ))
     });
     let uuid_refs = as_refs(&uuid_values);
 
     group.bench_function("500_uuids", |b| {
-        b.iter(|| detector.detect_type(black_box("id"), black_box(&uuid_refs)))
+        b.iter(|| detector.detect_type(black_box("id"), black_box(&uuid_refs)));
     });
 
     // Email detection with 500 samples
@@ -593,7 +594,7 @@ fn bench_bigquery_equivalent(c: &mut Criterion) {
     let email_refs = as_refs(&email_values);
 
     group.bench_function("500_emails", |b| {
-        b.iter(|| detector.detect_type(black_box("email"), black_box(&email_refs)))
+        b.iter(|| detector.detect_type(black_box("email"), black_box(&email_refs)));
     });
 
     group.finish();

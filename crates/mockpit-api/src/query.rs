@@ -144,6 +144,7 @@ fn get_field_value<'a>(mock: &'a MockDefinition, field: &str) -> Cow<'a, str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use axum::http::{Method, StatusCode};

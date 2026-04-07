@@ -68,7 +68,7 @@ async fn test_consolidation_creates_valid_mocks() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Verify consolidation happened
     assert!(
@@ -97,51 +97,50 @@ async fn test_consolidation_creates_valid_mocks() {
                     url_pattern.starts_with("prefix:")
                         || url_pattern.starts_with("regex:")
                         || url_pattern.starts_with("exact:")
-                        || !url_pattern.contains(":"),
-                    "URL pattern '{}' should use proper prefix format or be plain URL",
-                    url_pattern
+                        || !url_pattern.contains(':'),
+                    "URL pattern '{url_pattern}' should use proper prefix format or be plain URL"
                 );
             }
         }
 
         // Verify template if present
-        if let Some(response_config) = &mock.response_config {
-            if let Some(tmpl) = response_config.template() {
-                // This is a template - validate it
-                assert!(
-                    validate_template(tmpl).is_ok(),
-                    "Mock {} has invalid template: {:?}",
-                    mock.id,
-                    validate_template(tmpl).err()
+        if let Some(response_config) = &mock.response_config
+            && let Some(tmpl) = response_config.template()
+        {
+            // This is a template - validate it
+            assert!(
+                validate_template(tmpl).is_ok(),
+                "Mock {} has invalid template: {:?}",
+                mock.id,
+                validate_template(tmpl).err()
+            );
+
+            // Try to render the template with a proper request context
+            // Create context with URL that might be needed by the template
+            let mut context = RequestContext::new();
+            // Add some sample captures that might be used by templates
+            context.captures.insert("id".to_string(), "123".to_string());
+
+            let rendered = render_template(tmpl, &context);
+
+            // Template should render successfully or have a clear reason for failure
+            if let Err(e) = rendered {
+                // Some templates might fail without real request data, which is OK in unit tests
+                // Just verify the template itself is syntactically valid
+                println!(
+                    "Note: Template for mock {} couldn't render with mock context ({}), but syntax is valid",
+                    mock.id, e
                 );
-
-                // Try to render the template with a proper request context
-                // Create context with URL that might be needed by the template
-                let mut context = RequestContext::new();
-                // Add some sample captures that might be used by templates
-                context.captures.insert("id".to_string(), "123".to_string());
-
-                let rendered = render_template(tmpl, &context);
-
-                // Template should render successfully or have a clear reason for failure
-                if let Err(e) = rendered {
-                    // Some templates might fail without real request data, which is OK in unit tests
-                    // Just verify the template itself is syntactically valid
-                    println!(
-                        "Note: Template for mock {} couldn't render with mock context ({}), but syntax is valid",
-                        mock.id, e
+            } else {
+                // If it renders, verify it's valid JSON if it looks like JSON
+                if tmpl.trim_start().starts_with('{') {
+                    let rendered_text = rendered.unwrap();
+                    assert!(
+                        serde_json::from_str::<serde_json::Value>(&rendered_text).is_ok(),
+                        "Mock {} rendered template is not valid JSON: {}",
+                        mock.id,
+                        rendered_text
                     );
-                } else {
-                    // If it renders, verify it's valid JSON if it looks like JSON
-                    if tmpl.trim_start().starts_with('{') {
-                        let rendered_text = rendered.unwrap();
-                        assert!(
-                            serde_json::from_str::<serde_json::Value>(&rendered_text).is_ok(),
-                            "Mock {} rendered template is not valid JSON: {}",
-                            mock.id,
-                            rendered_text
-                        );
-                    }
                 }
             }
         }
@@ -165,7 +164,7 @@ async fn test_consolidation_uses_modern_url_format() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Check that consolidated mocks use proper URL format
     for mock in &consolidated.mocks {
@@ -183,18 +182,15 @@ async fn test_consolidation_uses_modern_url_format() {
                     // Should NOT have prefixes like "exact:", "prefix:", "regex:"
                     assert!(
                         !url_pattern.starts_with("exact:"),
-                        "URL pattern '{}' should not have 'exact:' prefix - use clean URLs",
-                        url_pattern
+                        "URL pattern '{url_pattern}' should not have 'exact:' prefix - use clean URLs"
                     );
                     assert!(
                         !url_pattern.starts_with("prefix:"),
-                        "URL pattern '{}' should not have 'prefix:' prefix - use clean URLs",
-                        url_pattern
+                        "URL pattern '{url_pattern}' should not have 'prefix:' prefix - use clean URLs"
                     );
                     assert!(
                         !url_pattern.starts_with("regex:"),
-                        "URL pattern '{}' should not have 'regex:' prefix - use Express-style like /users/{{id}}",
-                        url_pattern
+                        "URL pattern '{url_pattern}' should not have 'regex:' prefix - use Express-style like /users/{{id}}"
                     );
 
                     // Should use clean formats:
@@ -213,12 +209,11 @@ async fn test_consolidation_generates_concise_output() {
     let mut mocks = Vec::new();
     for i in 1..=20 {
         mocks.push(create_test_mock(
-      &format!("mock-{}", i),
+      &format!("mock-{i}"),
       "GET",
-      &format!("/api/users/{}", i),
+      &format!("/api/users/{i}"),
       &format!(
-        r#"{{"id": {}, "name": "User{}", "email": "user{}@example.com", "active": true, "role": "user"}}"#,
-        i, i, i
+        r#"{{"id": {i}, "name": "User{i}", "email": "user{i}@example.com", "active": true, "role": "user"}}"#
       ),
     ));
     }
@@ -236,14 +231,14 @@ async fn test_consolidation_generates_concise_output() {
     let original_size = original_json.len();
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Serialize consolidated collection
     let consolidated_json = serde_json::to_string(&consolidated).unwrap();
     let consolidated_size = consolidated_json.len();
 
-    println!("Original size: {} bytes", original_size);
-    println!("Consolidated size: {} bytes", consolidated_size);
+    println!("Original size: {original_size} bytes");
+    println!("Consolidated size: {consolidated_size} bytes");
     println!(
         "Size reduction: {:.1}%",
         (1.0 - (consolidated_size as f64 / original_size as f64)) * 100.0
@@ -297,7 +292,7 @@ async fn test_template_generation_for_varying_fields() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should create template for varying fields
     let template_mock = consolidated
@@ -354,7 +349,7 @@ async fn test_duplicate_removal() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should remove duplicates, keeping only 1
     assert_eq!(
@@ -391,15 +386,14 @@ async fn test_express_style_pattern_generation() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Find the consolidated mock with Express-style pattern
     let pattern_mock = consolidated.mocks.iter().find(|m| {
         m.match_config
             .as_ref()
             .and_then(|mc| mc.urls.first())
-            .map(|url| url.contains("/{") || url.contains("/:"))
-            .unwrap_or(false)
+            .is_some_and(|url| url.contains("/{") || url.contains("/:"))
     });
 
     assert!(
@@ -413,22 +407,19 @@ async fn test_express_style_pattern_generation() {
         // Should be clean Express-style pattern without "regex:" prefix
         assert!(
             !url_pattern.starts_with("regex:"),
-            "Should not have 'regex:' prefix, got: {}",
-            url_pattern
+            "Should not have 'regex:' prefix, got: {url_pattern}"
         );
 
         // Should use {id} syntax for clean, readable patterns
         assert!(
             url_pattern.contains("/{id}") || url_pattern.contains("/:id"),
-            "Should use Express-style parameter syntax: {}",
-            url_pattern
+            "Should use Express-style parameter syntax: {url_pattern}"
         );
 
         // Verify it's a clean pattern like /users/{id}
         assert!(
             url_pattern == "/users/{id}" || url_pattern == "/users/:id",
-            "Expected clean pattern '/users/{{id}}' or '/users/:id', got: {}",
-            url_pattern
+            "Expected clean pattern '/users/{{id}}' or '/users/:id', got: {url_pattern}"
         );
     }
 }
@@ -465,15 +456,14 @@ async fn test_uuid_pattern_generation() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Find Express-style pattern mock
     let pattern_mock = consolidated.mocks.iter().find(|m| {
         m.match_config
             .as_ref()
             .and_then(|mc| mc.urls.first())
-            .map(|url| url.contains("/{") || url.contains("/:"))
-            .unwrap_or(false)
+            .is_some_and(|url| url.contains("/{") || url.contains("/:"))
     });
 
     assert!(
@@ -487,8 +477,7 @@ async fn test_uuid_pattern_generation() {
         // Should be clean Express-style pattern
         assert!(
             !url_pattern.starts_with("regex:"),
-            "Should not have 'regex:' prefix: {}",
-            url_pattern
+            "Should not have 'regex:' prefix: {url_pattern}"
         );
 
         // Should use {uuid} or {id} syntax
@@ -497,8 +486,7 @@ async fn test_uuid_pattern_generation() {
                 || url_pattern.contains("/{id}")
                 || url_pattern.contains("/:uuid")
                 || url_pattern.contains("/:id"),
-            "Should use Express-style parameter syntax for UUIDs: {}",
-            url_pattern
+            "Should use Express-style parameter syntax for UUIDs: {url_pattern}"
         );
     }
 }
@@ -533,7 +521,7 @@ async fn test_consolidation_with_disabled_templates() {
     };
 
     let mut consolidator = MockConsolidator::with_options(options);
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should keep mocks separate when templates are disabled
     assert_eq!(
@@ -544,14 +532,14 @@ async fn test_consolidation_with_disabled_templates() {
 
     // None should have templates
     for mock in &consolidated.mocks {
-        if let Some(response_config) = &mock.response_config {
-            if let Some(body) = response_config.body() {
-                assert!(
-                    !body.contains("{{") && !body.contains("{%"),
-                    "Mock {} should not have template when templates are disabled",
-                    mock.id
-                );
-            }
+        if let Some(response_config) = &mock.response_config
+            && let Some(body) = response_config.body()
+        {
+            assert!(
+                !body.contains("{{") && !body.contains("{%"),
+                "Mock {} should not have template when templates are disabled",
+                mock.id
+            );
         }
     }
 }
@@ -572,7 +560,7 @@ async fn test_consolidation_preserves_mock_properties() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should have 1 mock after duplicate removal
     assert_eq!(consolidated.mocks.len(), 1);
@@ -608,7 +596,7 @@ async fn test_consolidation_statistics_accuracy() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let _consolidated = consolidator.consolidate(collection).await.unwrap();
+    let _consolidated = consolidator.consolidate(collection).unwrap();
 
     let stats = consolidator.stats();
 
@@ -643,7 +631,7 @@ async fn test_min_pattern_threshold() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should keep mocks separate when below threshold
     assert_eq!(
@@ -685,19 +673,18 @@ async fn test_non_json_responses_not_templated() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Non-JSON responses should not be templated
     for mock in &consolidated.mocks {
-        if let Some(response_config) = &mock.response_config {
-            if let Some(body) = response_config.body() {
-                if body.contains("<html>") {
-                    assert!(
-                        !body.contains("{{") && !body.contains("{%"),
-                        "HTML response should not have template syntax"
-                    );
-                }
-            }
+        if let Some(response_config) = &mock.response_config
+            && let Some(body) = response_config.body()
+            && body.contains("<html>")
+        {
+            assert!(
+                !body.contains("{{") && !body.contains("{%"),
+                "HTML response should not have template syntax"
+            );
         }
     }
 }
@@ -726,8 +713,7 @@ async fn test_categorical_detection_rejects_sequential() {
 
     assert!(
         !matches!(field_type, FieldType::Categorical { .. }),
-        "Sequential numbers should not be categorical, got {:?}",
-        field_type
+        "Sequential numbers should not be categorical, got {field_type:?}"
     );
 }
 
@@ -765,7 +751,7 @@ async fn test_categorical_detection_accepts_true_enums() {
         assert!(values.contains(&"rejected".to_string()));
         assert!(confidence >= 0.75, "Should have high confidence");
     } else {
-        panic!("Expected Categorical type, got {:?}", field_type);
+        panic!("Expected Categorical type, got {field_type:?}");
     }
 }
 
@@ -791,7 +777,7 @@ async fn test_priority_aware_grouping() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should keep them separate due to different priority tiers
     assert_eq!(
@@ -824,7 +810,7 @@ async fn test_enabled_state_grouping() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should keep them separate due to different enabled states
     assert_eq!(
@@ -972,15 +958,13 @@ async fn test_semantic_penalty_prevents_false_positives() {
     // Should detect as URL, not Email (despite "email" in name)
     assert!(
         matches!(field_type, FieldType::Url),
-        "Should detect as URL despite 'email' in field name, got {:?}",
-        field_type
+        "Should detect as URL despite 'email' in field name, got {field_type:?}"
     );
 
     // Confidence should be reasonable (penalty prevents false confidence)
     assert!(
         confidence >= 0.7,
-        "Should have reasonable confidence: {}",
-        confidence
+        "Should have reasonable confidence: {confidence}"
     );
 }
 
@@ -1000,7 +984,7 @@ async fn test_consolidation_groups_by_priority() {
     let mut mocks = vec![];
     for i in 1..=3 {
         let mut mock = create_test_mock(
-            &format!("normal-{}", i),
+            &format!("normal-{i}"),
             "GET",
             "/api/data",
             r#"{"value": 1}"#,
@@ -1010,12 +994,8 @@ async fn test_consolidation_groups_by_priority() {
     }
 
     for i in 1..=3 {
-        let mut mock = create_test_mock(
-            &format!("high-{}", i),
-            "GET",
-            "/api/data",
-            r#"{"value": 2}"#,
-        );
+        let mut mock =
+            create_test_mock(&format!("high-{i}"), "GET", "/api/data", r#"{"value": 2}"#);
         mock.priority = 600; // High priority
         mocks.push(mock);
     }
@@ -1029,7 +1009,7 @@ async fn test_consolidation_groups_by_priority() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Should create 2 groups (one per priority tier)
     // Each group might consolidate its own duplicates
@@ -1075,7 +1055,7 @@ async fn test_consolidation_empty_collection() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     assert_eq!(consolidated.mocks.len(), 0);
     let stats = consolidator.stats();
@@ -1099,7 +1079,7 @@ async fn test_consolidation_single_mock() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     assert_eq!(consolidated.mocks.len(), 1);
     assert_eq!(consolidated.mocks[0].id, "solo");
@@ -1125,7 +1105,7 @@ async fn test_consolidation_mixed_content_types() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // JSON users should consolidate, text health should deduplicate
     assert!(
@@ -1169,7 +1149,7 @@ async fn test_consolidation_special_characters_in_body() {
 
     let mut consolidator = MockConsolidator::new();
     // Should not panic even with tricky characters
-    let result = consolidator.consolidate(collection).await;
+    let result = consolidator.consolidate(collection);
     assert!(
         result.is_ok(),
         "Consolidation should handle special characters"
@@ -1179,14 +1159,14 @@ async fn test_consolidation_special_characters_in_body() {
 
     // Verify any generated templates are valid
     for mock in &consolidated.mocks {
-        if let Some(ref rc) = mock.response_config {
-            if let Some(tmpl) = rc.template() {
-                assert!(
-                    validate_template(tmpl).is_ok(),
-                    "Template with special chars should validate: {:?}",
-                    validate_template(tmpl).err()
-                );
-            }
+        if let Some(ref rc) = mock.response_config
+            && let Some(tmpl) = rc.template()
+        {
+            assert!(
+                validate_template(tmpl).is_ok(),
+                "Template with special chars should validate: {:?}",
+                validate_template(tmpl).err()
+            );
         }
     }
 }
@@ -1224,17 +1204,14 @@ async fn test_consolidation_output_is_valid_json() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Serialize to JSON
     let json_str = serde_json::to_string_pretty(&consolidated).unwrap();
 
     // Must deserialize back cleanly
     let roundtripped: MockCollectionConfig = serde_json::from_str(&json_str).unwrap_or_else(|e| {
-        panic!(
-            "Consolidated output should roundtrip through JSON: {}\nJSON:\n{}",
-            e, json_str
-        )
+        panic!("Consolidated output should roundtrip through JSON: {e}\nJSON:\n{json_str}")
     });
 
     assert_eq!(roundtripped.mocks.len(), consolidated.mocks.len());
@@ -1261,7 +1238,7 @@ async fn test_consolidation_different_methods_not_grouped() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // GET and POST should be grouped separately - at minimum 2 consolidated mocks
     assert!(
@@ -1287,7 +1264,7 @@ async fn test_consolidation_preserves_collection_metadata() {
     };
 
     let mut consolidator = MockConsolidator::new();
-    let consolidated = consolidator.consolidate(collection).await.unwrap();
+    let consolidated = consolidator.consolidate(collection).unwrap();
 
     // Name should be preserved (with consolidated suffix)
     assert!(

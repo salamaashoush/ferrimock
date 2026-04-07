@@ -82,7 +82,7 @@ fn test_e2e_basic_query_matching() {
     };
 
     registry.add_mock(mock);
-    let matcher = MockMatcher::new(registry.clone());
+    let matcher = MockMatcher::new(registry);
 
     // Simulate GraphQL request
     let query = r#"
@@ -165,10 +165,10 @@ fn test_e2e_mutation_with_variables() {
     };
 
     registry.add_mock(mock);
-    let matcher = MockMatcher::new(registry.clone());
+    let matcher = MockMatcher::new(registry);
 
     // Simulate mutation with admin role
-    let query = r#"
+    let query = r"
     mutation CreateUser($input: CreateUserInput!) {
       createUser(input: $input) {
         id
@@ -176,7 +176,7 @@ fn test_e2e_mutation_with_variables() {
         role
       }
     }
-  "#;
+  ";
 
     let variables = json!({
       "input": {
@@ -240,10 +240,10 @@ fn test_e2e_introspection_query() {
     };
 
     registry.add_mock(mock);
-    let matcher = MockMatcher::new(registry.clone());
+    let matcher = MockMatcher::new(registry);
 
     // Simulate introspection query
-    let query = r#"
+    let query = r"
     query IntrospectionQuery {
       __schema {
         queryType { name }
@@ -251,7 +251,7 @@ fn test_e2e_introspection_query() {
         subscriptionType { name }
       }
     }
-  "#;
+  ";
 
     let body = graphql_request(query, None);
     let headers = HeaderMap::new();
@@ -352,17 +352,17 @@ fn test_e2e_priority_based_error_handling() {
 
     registry.add_mock(error_mock);
     registry.add_mock(success_mock);
-    let matcher = MockMatcher::new(registry.clone());
+    let matcher = MockMatcher::new(registry);
 
     // Test 1: Invalid email should match error mock
-    let query = r#"
+    let query = r"
     mutation CreateUser($input: CreateUserInput!) {
       createUser(input: $input) {
         id
         email
       }
     }
-  "#;
+  ";
 
     let invalid_variables = json!({
       "input": {
@@ -452,10 +452,10 @@ fn test_e2e_subscription_matching() {
     };
 
     registry.add_mock(mock);
-    let matcher = MockMatcher::new(registry.clone());
+    let matcher = MockMatcher::new(registry);
 
     // Simulate subscription query
-    let query = r#"
+    let query = r"
     subscription OnMessageReceived {
       messageReceived {
         id
@@ -463,7 +463,7 @@ fn test_e2e_subscription_matching() {
         timestamp
       }
     }
-  "#;
+  ";
 
     let body = graphql_request_with_operation_name(query, None, Some("OnMessageReceived"));
     let headers = HeaderMap::new();
@@ -510,7 +510,7 @@ fn test_e2e_apollo_client_headers() {
     };
 
     registry.add_mock(mock);
-    let matcher = MockMatcher::new(registry.clone());
+    let matcher = MockMatcher::new(registry);
 
     // Simulate Apollo Client request with typical headers
     let mut headers = HeaderMap::new();
@@ -519,14 +519,14 @@ fn test_e2e_apollo_client_headers() {
         HeaderValue::from_static("application/json"),
     );
 
-    let query = r#"
+    let query = r"
     query GetData {
       items {
         id
         name
       }
     }
-  "#;
+  ";
 
     let body = graphql_request_with_operation_name(query, None, Some("GetData"));
     let result = matcher.find_match(&Method::POST, "/graphql", None, &headers, Some(&body));
@@ -662,9 +662,9 @@ fn test_e2e_variable_based_routing() {
     registry.add_mock(cache_mock);
     registry.add_mock(slow_mock);
     registry.add_mock(default_mock);
-    let matcher = MockMatcher::new(registry.clone());
+    let matcher = MockMatcher::new(registry);
 
-    let query = r#"
+    let query = r"
     query ListUsers($filter: UserFilter) {
       users(filter: $filter) {
         id
@@ -672,7 +672,7 @@ fn test_e2e_variable_based_routing() {
         status
       }
     }
-  "#;
+  ";
 
     // Test 1: Active users should hit cache
     let active_vars = json!({

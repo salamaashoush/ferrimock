@@ -33,7 +33,7 @@ pub fn set_global_persistence_store(
 
 /// Get a clone of the global persistence store
 pub fn get_global_persistence_store() -> Arc<PersistenceStore> {
-    get_persistence_store().clone()
+    Arc::clone(get_persistence_store())
 }
 
 // ============================================================================
@@ -70,7 +70,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
                 .get("value")
                 .ok_or_else(|| tera::Error::msg("store_set requires 'value' parameter"))?;
 
-            let ttl_seconds = args.get("ttl_seconds").and_then(|v| v.as_u64());
+            let ttl_seconds = args.get("ttl_seconds").and_then(serde_json::Value::as_u64);
             let ttl = ttl_seconds.map(std::time::Duration::from_secs);
 
             get_persistence_store().set_with_ttl(key.to_string(), value.clone(), ttl);
@@ -172,7 +172,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
                 .get("value")
                 .ok_or_else(|| tera::Error::msg("store_set_nx requires 'value' parameter"))?;
 
-            let ttl_seconds = args.get("ttl_seconds").and_then(|v| v.as_u64());
+            let ttl_seconds = args.get("ttl_seconds").and_then(serde_json::Value::as_u64);
             let ttl = ttl_seconds.map(std::time::Duration::from_secs);
 
             let was_set =
@@ -194,7 +194,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
                 .get("default")
                 .ok_or_else(|| tera::Error::msg("store_get_or_set requires 'default' parameter"))?;
 
-            let ttl_seconds = args.get("ttl_seconds").and_then(|v| v.as_u64());
+            let ttl_seconds = args.get("ttl_seconds").and_then(serde_json::Value::as_u64);
             let ttl = ttl_seconds.map(std::time::Duration::from_secs);
 
             // Try to get existing value
@@ -219,9 +219,7 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
 
             let ttl_secs = get_persistence_store().ttl_seconds(key);
 
-            Ok(ttl_secs
-                .map(|s| Value::Number(s.into()))
-                .unwrap_or(Value::Null))
+            Ok(ttl_secs.map_or(Value::Null, |s| Value::Number(s.into())))
         },
     );
 }

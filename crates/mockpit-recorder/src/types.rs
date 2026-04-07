@@ -60,7 +60,7 @@ pub struct RecordingSession {
 }
 
 // Custom serialization for Duration
-pub(crate) mod duration_serde {
+pub mod duration_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::time::Duration;
 

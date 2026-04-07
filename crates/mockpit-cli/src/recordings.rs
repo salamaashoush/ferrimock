@@ -64,20 +64,20 @@ pub fn list_recordings(dir: Option<String>) -> anyhow::Result<()> {
         println!("{}", ui::list_item(&ui::emphasis(name)));
         println!("{}", ui::kv("  Size", &ui::format_bytes(size)));
 
-        if let Ok(modified) = entry.metadata().and_then(|m| m.modified()) {
-            if let Ok(duration) = modified.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                use chrono::{DateTime, Utc};
-                #[allow(clippy::cast_possible_wrap)]
-                let datetime = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0);
-                if let Some(dt) = datetime {
-                    println!(
-                        "{}",
-                        ui::kv(
-                            "  Modified",
-                            &dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
-                        )
-                    );
-                }
+        if let Ok(modified) = entry.metadata().and_then(|m| m.modified())
+            && let Ok(duration) = modified.duration_since(std::time::SystemTime::UNIX_EPOCH)
+        {
+            use chrono::{DateTime, Utc};
+            #[allow(clippy::cast_possible_wrap)]
+            let datetime = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0);
+            if let Some(dt) = datetime {
+                println!(
+                    "{}",
+                    ui::kv(
+                        "  Modified",
+                        &dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+                    )
+                );
             }
         }
     }

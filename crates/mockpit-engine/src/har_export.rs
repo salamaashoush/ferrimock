@@ -43,8 +43,7 @@ fn mock_to_har_entry(mock: &MockDefinition, _index: usize) -> v1_2::Entries {
         .url_patterns
         .iter()
         .find_map(|p| match p {
-            UrlPattern::Exact(url) => Some(url.clone()),
-            UrlPattern::Prefix(url) => Some(url.clone()),
+            UrlPattern::Exact(url) | UrlPattern::Prefix(url) => Some(url.clone()),
             _ => None,
         })
         .or(
@@ -61,8 +60,7 @@ fn mock_to_har_entry(mock: &MockDefinition, _index: usize) -> v1_2::Entries {
         .request
         .methods
         .first()
-        .map(|m| m.to_string())
-        .unwrap_or_else(|| "GET".to_string());
+        .map_or_else(|| "GET".to_string(), std::string::ToString::to_string);
 
     // Convert response headers
     let response_headers: Vec<v1_2::Headers> = mock
@@ -83,7 +81,7 @@ fn mock_to_har_entry(mock: &MockDefinition, _index: usize) -> v1_2::Entries {
         BodySource::File(path) => format!("<file: {}>", path.display()),
         BodySource::FileCached(content) => String::from_utf8(content.to_vec())
             .unwrap_or_else(|_| format!("<binary data: {} bytes>", content.len())),
-        BodySource::Template { source: tmpl, .. } => format!("<template: {}>", tmpl),
+        BodySource::Template { source: tmpl, .. } => format!("<template: {tmpl}>"),
     };
 
     // Calculate delay in milliseconds
@@ -91,8 +89,7 @@ fn mock_to_har_entry(mock: &MockDefinition, _index: usize) -> v1_2::Entries {
         .response
         .delay
         .as_ref()
-        .map(|d| d.as_millis() as f64)
-        .unwrap_or(0.0);
+        .map_or(0.0, |d| d.as_secs_f64() * 1000.0);
 
     v1_2::Entries {
         pageref: None,
@@ -111,13 +108,13 @@ fn mock_to_har_entry(mock: &MockDefinition, _index: usize) -> v1_2::Entries {
             comment: Some(format!("Mock ID: {}", mock.id)),
         },
         response: v1_2::Response {
-            status: mock.response.status.as_u16() as i64,
+            status: i64::from(mock.response.status.as_u16()),
             status_text: status_code_to_text(mock.response.status.as_u16()),
             http_version: "HTTP/1.1".to_string(),
             cookies: vec![],
             headers: response_headers,
             content: v1_2::Content {
-                size: response_body.len() as i64,
+                size: i64::try_from(response_body.len()).unwrap_or(i64::MAX),
                 compression: None,
                 mime_type: Some("application/json".to_string()),
                 text: Some(response_body),

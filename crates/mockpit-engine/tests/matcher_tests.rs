@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 //! Additional matcher tests targeting edge cases and uncovered code paths
 
 use http::header::{HeaderName, HeaderValue};
@@ -1212,7 +1218,7 @@ async fn test_try_match_patch_mode() {
             assert_eq!(mock_id, "test");
             assert_eq!(response_patches.len(), 0);
         }
-        _ => panic!("Expected PatchUpstream action"),
+        MockAction::FullMock(_) => panic!("Expected PatchUpstream action"),
     }
 }
 
@@ -1249,7 +1255,7 @@ async fn test_try_match_template_structured_response() {
             assert_eq!(response.headers().get("X-Custom").unwrap(), "value");
             assert!(response.headers().get("X-Mock-Id").is_some());
         }
-        _ => panic!("Expected FullMock action"),
+        MockAction::PatchUpstream { .. } => panic!("Expected FullMock action"),
     }
 }
 
@@ -1329,7 +1335,7 @@ async fn test_try_match_with_post_body() {
                 "Should have mock ID header"
             );
         }
-        _ => panic!("Expected FullMock action"),
+        MockAction::PatchUpstream { .. } => panic!("Expected FullMock action"),
     }
 }
 
@@ -1348,7 +1354,7 @@ async fn test_apply_patches() {
 
     // Apply patches (empty for now)
     let patches = vec![];
-    let result = MockMatcher::apply_patches(patches, "test-mock".to_string(), upstream, None).await;
+    let result = MockMatcher::apply_patches(patches, "test-mock", upstream, None);
 
     assert!(result.is_ok());
     let patched = result.unwrap();
@@ -1390,7 +1396,7 @@ async fn test_try_match_template_error() {
             assert_eq!(response.headers().get("X-Mock-Error").unwrap(), "true");
             assert_eq!(response.headers().get("X-Mock-Id").unwrap(), "test");
         }
-        _ => panic!("Expected FullMock error response"),
+        MockAction::PatchUpstream { .. } => panic!("Expected FullMock error response"),
     }
 }
 
@@ -1428,7 +1434,7 @@ async fn test_try_match_static_response() {
             assert_eq!(response.headers().get("X-Custom").unwrap(), "static-value");
             assert_eq!(response.headers().get("X-Mock-Id").unwrap(), "test");
         }
-        _ => panic!("Expected FullMock action"),
+        MockAction::PatchUpstream { .. } => panic!("Expected FullMock action"),
     }
 }
 

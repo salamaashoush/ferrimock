@@ -3,16 +3,21 @@
 use mockpit_config::MockConfig;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::LazyLock;
 use url::Url;
 
-lazy_static::lazy_static! {
-  static ref UUID_PATTERN: Regex = Regex::new(r"/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(/|$)")
-    .expect("Failed to compile UUID pattern");
-  static ref ISO_DATE_PATTERN: Regex = Regex::new(r"/(\d{4}-\d{2}-\d{2})(/|$)")
-    .expect("Failed to compile ISO date pattern");
-  static ref NUMERIC_ID_PATTERN: Regex = Regex::new(r"/(\d+)(/|$)")
-    .expect("Failed to compile numeric ID pattern");
-}
+#[allow(clippy::expect_used)] // Static regex literals -- panic on invalid pattern is correct
+static UUID_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(/|$)")
+        .expect("Failed to compile UUID pattern")
+});
+#[allow(clippy::expect_used)]
+static ISO_DATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"/(\d{4}-\d{2}-\d{2})(/|$)").expect("Failed to compile ISO date pattern")
+});
+#[allow(clippy::expect_used)]
+static NUMERIC_ID_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/(\d+)(/|$)").expect("Failed to compile numeric ID pattern"));
 
 /// Analysis of query parameter variations in a group
 #[derive(Debug)]
@@ -46,18 +51,15 @@ impl PatternDetector {
     /// Extract a pattern key for grouping similar requests
     /// Groups by: method + normalized_path + priority_tier + enabled_state
     fn extract_pattern_key(mock: &MockConfig) -> String {
-        let match_config = mock.match_config.as_ref();
-        if match_config.is_none() {
+        let Some(match_config) = mock.match_config.as_ref() else {
             return "unknown".to_string();
-        }
-        let match_config = match_config.expect("match_config should be Some after is_none check");
+        };
 
         let url_pattern = match_config
             .urls
             .first()
             .or(match_config.url.as_ref())
-            .map(|s| s.as_str())
-            .unwrap_or("");
+            .map_or("", std::string::String::as_str);
 
         let url = url_pattern.strip_prefix("exact:").unwrap_or(url_pattern);
 
@@ -81,15 +83,14 @@ impl PatternDetector {
         // Parse URL flexibly: try as absolute URL first, then as relative
         let parsed_path = Url::parse(url)
             .map(|u| u.path().to_string())
-            .or_else(|_| Url::parse(&format!("http://dummy{}", url)).map(|u| u.path().to_string()));
+            .or_else(|_| Url::parse(&format!("http://dummy{url}")).map(|u| u.path().to_string()));
 
         if let Ok(path) = parsed_path {
             let method = match_config
                 .methods
                 .first()
                 .or(match_config.method.as_ref())
-                .map(|s| s.as_str())
-                .unwrap_or("GET");
+                .map_or("GET", std::string::String::as_str);
 
             format!(
                 "{}:{}:{}:{}:{}",
@@ -106,8 +107,7 @@ impl PatternDetector {
                     .methods
                     .first()
                     .or(match_config.method.as_ref())
-                    .map(|s| s.as_str())
-                    .unwrap_or("GET"),
+                    .map_or("GET", std::string::String::as_str),
                 url,
                 graphql_key,
                 priority_tier,
@@ -146,7 +146,7 @@ impl PatternDetector {
                 "query" => "gql:query:*".to_string(),
                 "mutation" => "gql:mutation:*".to_string(),
                 "subscription" => "gql:subscription:*".to_string(),
-                operation_name => format!("gql:op:{}", operation_name),
+                operation_name => format!("gql:op:{operation_name}"),
             },
 
             // Structured syntax with operation details
@@ -160,11 +160,11 @@ impl PatternDetector {
             }) => {
                 // Priority: specific type fields > introspection > operation field
                 if let Some(query_name) = query {
-                    format!("gql:query:{}", query_name)
+                    format!("gql:query:{query_name}")
                 } else if let Some(mutation_name) = mutation {
-                    format!("gql:mutation:{}", mutation_name)
+                    format!("gql:mutation:{mutation_name}")
                 } else if let Some(subscription_name) = subscription {
-                    format!("gql:subscription:{}", subscription_name)
+                    format!("gql:subscription:{subscription_name}")
                 } else if let Some(intro) = introspection {
                     // Parse introspection type
                     let intro_type = match intro {
@@ -178,9 +178,9 @@ impl PatternDetector {
                             _ => "unknown",
                         },
                     };
-                    format!("gql:introspection:{}", intro_type)
+                    format!("gql:introspection:{intro_type}")
                 } else if let Some(operation_name) = operation {
-                    format!("gql:op:{}", operation_name)
+                    format!("gql:op:{operation_name}")
                 } else {
                     // Has GraphQL config but no specific operation - group by variables existence
                     "gql:generic".to_string()
@@ -199,13 +199,13 @@ impl PatternDetector {
         // Use counter for multiple UUIDs: /orgs/{uuid1}/files/{uuid2}
         let mut uuid_counter = 0;
         normalized = UUID_PATTERN
-            .replace_all(&normalized, |caps: &regex::Captures| {
+            .replace_all(&normalized, |caps: &regex::Captures<'_>| {
                 uuid_counter += 1;
-                let suffix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let suffix = caps.get(1).map_or("", |m| m.as_str());
                 if uuid_counter == 1 {
-                    format!("/{{uuid}}{}", suffix)
+                    format!("/{{uuid}}{suffix}")
                 } else {
-                    format!("/{{uuid{}}}{}", uuid_counter, suffix)
+                    format!("/{{uuid{uuid_counter}}}{suffix}")
                 }
             })
             .to_string();
@@ -218,13 +218,13 @@ impl PatternDetector {
         // Replace numeric IDs: /users/123 -> /users/{id}
         // Use counter for multiple IDs: /orgs/{id1}/users/{id2}
         normalized = NUMERIC_ID_PATTERN
-            .replace_all(&normalized, |caps: &regex::Captures| {
+            .replace_all(&normalized, |caps: &regex::Captures<'_>| {
                 id_counter += 1;
-                let suffix = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                let suffix = caps.get(2).map_or("", |m| m.as_str());
                 if id_counter == 1 {
-                    format!("/{{id}}{}", suffix)
+                    format!("/{{id}}{suffix}")
                 } else {
-                    format!("/{{id{}}}{}", id_counter, suffix)
+                    format!("/{{id{id_counter}}}{suffix}")
                 }
             })
             .to_string();
@@ -234,6 +234,7 @@ impl PatternDetector {
 
     /// Generate a smart URL pattern based on the URLs in the group
     /// Returns clean URLs without prefixes - system will auto-detect matching strategy
+    #[allow(clippy::indexing_slicing)] // `group[0]` safe: callers ensure non-empty group; `.windows(2)` guarantees 2-element slices
     pub fn generate_smart_url_pattern(group: &[MockConfig]) -> String {
         let base_path = Self::extract_base_path(&group[0]);
 
@@ -255,8 +256,7 @@ impl PatternDetector {
                 .match_config
                 .as_ref()
                 .and_then(|mc| mc.urls.first().or(mc.url.as_ref()))
-                .map(|s| s.as_str())
-                .unwrap_or("");
+                .map_or("", std::string::String::as_str);
             // Return clean URL without any prefix - will be exact match
             first_url
                 .strip_prefix("exact:")
@@ -269,6 +269,7 @@ impl PatternDetector {
     }
 
     /// Check if there are varying segments in the path (not query params)
+    #[allow(clippy::indexing_slicing)] // `.windows(2)` guarantees 2-element slices
     fn has_varying_path_segments(group: &[MockConfig]) -> bool {
         if group.len() < 2 {
             return false;
@@ -288,6 +289,7 @@ impl PatternDetector {
     }
 
     /// Check if all URLs in group are identical
+    #[allow(clippy::indexing_slicing)] // `group[0]` safe: `group.len() < 2` returns early
     fn all_urls_identical(group: &[MockConfig]) -> bool {
         if group.len() < 2 {
             return true;
@@ -297,16 +299,14 @@ impl PatternDetector {
             .match_config
             .as_ref()
             .and_then(|mc| mc.urls.first().or(mc.url.as_ref()))
-            .map(|s| s.as_str())
-            .unwrap_or("");
+            .map_or("", std::string::String::as_str);
 
         group.iter().skip(1).all(|mock| {
             let mock_url = mock
                 .match_config
                 .as_ref()
                 .and_then(|mc| mc.urls.first().or(mc.url.as_ref()))
-                .map(|s| s.as_str())
-                .unwrap_or("");
+                .map_or("", std::string::String::as_str);
             mock_url == first_url
         })
     }
@@ -331,7 +331,7 @@ impl PatternDetector {
 
                     // Parse flexibly: absolute URL first, then relative
                     let parsed =
-                        Url::parse(url).or_else(|_| Url::parse(&format!("http://dummy{}", url)));
+                        Url::parse(url).or_else(|_| Url::parse(&format!("http://dummy{url}")));
                     if let Ok(parsed) = parsed {
                         base_paths.insert(parsed.path().to_string());
 
@@ -380,20 +380,19 @@ impl PatternDetector {
             .match_config
             .as_ref()
             .and_then(|mc| mc.urls.first().or(mc.url.as_ref()))
-            .map(|s| s.as_str())
-            .unwrap_or("");
+            .map_or("", std::string::String::as_str);
         let cleaned = url.strip_prefix("exact:").unwrap_or(url);
 
         // Try parsing as an absolute URL - if it has a host, return just the path
-        if let Ok(parsed) = Url::parse(cleaned) {
-            if parsed.host_str().is_some() {
-                return parsed.path().to_string();
-            }
+        if let Ok(parsed) = Url::parse(cleaned)
+            && parsed.host_str().is_some()
+        {
+            return parsed.path().to_string();
         }
 
         // Relative URL - strip query params
         if let Some(query_pos) = cleaned.find('?') {
-            cleaned[..query_pos].to_string()
+            cleaned.get(..query_pos).unwrap_or(cleaned).to_string()
         } else {
             cleaned.to_string()
         }
@@ -408,37 +407,44 @@ impl PatternDetector {
     }
 
     /// Check if all mocks in group are duplicates
+    #[allow(clippy::indexing_slicing)] // `group[0]` safe: `group.len() < 2` returns early
     pub fn are_duplicates(group: &[MockConfig]) -> bool {
         if group.len() < 2 {
             return false;
         }
 
         let first_urls = group[0].match_config.as_ref().map(|mc| {
-            if !mc.urls.is_empty() {
-                mc.urls.clone()
-            } else {
+            if mc.urls.is_empty() {
                 mc.url.as_ref().map(|u| vec![u.clone()]).unwrap_or_default()
+            } else {
+                mc.urls.clone()
             }
         });
         let first_body = group[0]
             .response_config
             .as_ref()
             .and_then(|rc| rc.body().cloned());
-        let first_status = group[0].response_config.as_ref().and_then(|rc| rc.status());
+        let first_status = group[0]
+            .response_config
+            .as_ref()
+            .and_then(mockpit_config::ResponseConfig::status);
 
         group.iter().skip(1).all(|mock| {
             let mock_urls = mock.match_config.as_ref().map(|mc| {
-                if !mc.urls.is_empty() {
-                    mc.urls.clone()
-                } else {
+                if mc.urls.is_empty() {
                     mc.url.as_ref().map(|u| vec![u.clone()]).unwrap_or_default()
+                } else {
+                    mc.urls.clone()
                 }
             });
             let mock_body = mock
                 .response_config
                 .as_ref()
                 .and_then(|rc| rc.body().cloned());
-            let mock_status = mock.response_config.as_ref().and_then(|rc| rc.status());
+            let mock_status = mock
+                .response_config
+                .as_ref()
+                .and_then(mockpit_config::ResponseConfig::status);
 
             mock_urls == first_urls && mock_body == first_body && mock_status == first_status
         })
@@ -446,6 +452,13 @@ impl PatternDetector {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice
+)]
 mod tests {
     use super::*;
     use mockpit_config::matcher::{GraphQLMatchConfig, MatchConfig};

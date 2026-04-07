@@ -50,7 +50,6 @@ impl TypeToFakeMapper {
         // Built-in scalar mappings
         match scalar_name {
             // Standard GraphQL scalars
-            "ID" => "\"{{ uuid() }}\"".to_string(),
             "String" => "\"{{ fake_sentence(word_count=8) }}\"".to_string(),
             "Int" => "{{ get_random(start=1, end=1000) }}".to_string(),
             "Float" => "{{ get_random(start=0.0, end=1000.0) }}".to_string(),
@@ -62,7 +61,7 @@ impl TypeToFakeMapper {
             "Time" => "\"{{ fake_time() }}\"".to_string(),
             "Email" | "EmailAddress" => "\"{{ fake_email() }}\"".to_string(),
             "URL" | "Uri" | "Url" => "\"{{ fake_url() }}\"".to_string(),
-            "UUID" | "Uuid" => "\"{{ uuid() }}\"".to_string(),
+            "ID" | "UUID" | "Uuid" => "\"{{ uuid() }}\"".to_string(),
             "JSON" | "Json" | "JSONObject" => "{}".to_string(),
             "PhoneNumber" | "Phone" => "\"{{ fake_phone() }}\"".to_string(),
             "PostalCode" | "ZipCode" => "\"{{ fake_postal_code() }}\"".to_string(),
@@ -98,11 +97,11 @@ impl TypeToFakeMapper {
         // Generate a random choice from enum values
         let values_list = enum_values
             .iter()
-            .map(|v| format!("\"{}\"", v))
+            .map(|v| format!("\"{v}\""))
             .collect::<Vec<_>>()
             .join(", ");
 
-        format!("\"{{{{ [{}] | random_choice }}}}\"", values_list)
+        format!("\"{{{{ [{values_list}] | random_choice }}}}\"")
     }
 
     /// Add a custom type mapping
@@ -147,7 +146,7 @@ impl TypeToFakeMapper {
                     .unwrap_or_default()
             }
             _ => {
-                anyhow::bail!("Unsupported file extension '{}'. Use .json", extension);
+                anyhow::bail!("Unsupported file extension '{extension}'. Use .json");
             }
         };
 
@@ -172,6 +171,7 @@ impl Default for TypeToFakeMapper {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use std::io::Write;

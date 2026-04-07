@@ -38,7 +38,7 @@ pub fn is_box_domain(host: &str, extra_domains: &[String]) -> bool {
     // User-provided extra domains
     for domain in extra_domains {
         let d = domain.to_lowercase();
-        if lower == d || lower.ends_with(&format!(".{}", d)) {
+        if lower == d || lower.ends_with(&format!(".{d}")) {
             return true;
         }
     }
@@ -190,7 +190,7 @@ impl HarLoader {
     pub async fn convert_har_to_mocks(&self, har: Har) -> Result<Vec<MockConfig>> {
         let entries = match &har.log {
             Spec::V1_2(log) => &log.entries,
-            _ => return Err(anyhow::anyhow!("Unsupported HAR version")),
+            Spec::V1_3(_) => return Err(anyhow::anyhow!("Unsupported HAR version")),
         };
 
         // Create bodies directory if body extraction is enabled
@@ -226,6 +226,7 @@ impl HarLoader {
         }
 
         // Skip redirects
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         if self.options.exclude_redirects && (300..400).contains(&(entry.response.status as u16)) {
             return true;
         }
@@ -258,41 +259,43 @@ impl HarLoader {
                     if query.is_empty() {
                         return Some(path.to_string());
                     }
-                    return Some(format!("{}?{}", path, query));
+                    return Some(format!("{path}?{query}"));
                 }
             }
 
             // Not normalizing, but still filter query params if enabled
             if self.options.strip_sensitive_query_params {
                 let query = self.filter_query_params(parsed.query_pairs());
-                let base = &raw_url[..raw_url.find('?').unwrap_or(raw_url.len())];
+                let base = raw_url
+                    .get(..raw_url.find('?').unwrap_or(raw_url.len()))
+                    .unwrap_or(raw_url);
                 if query.is_empty() {
                     return Some(base.to_string());
                 }
-                return Some(format!("{}?{}", base, query));
+                return Some(format!("{base}?{query}"));
             }
 
             return Some(raw_url.to_string());
         }
 
         // Already a relative URL - just handle query param stripping
-        if self.options.strip_sensitive_query_params {
-            if let Some(query_start) = raw_url.find('?') {
-                let path = &raw_url[..query_start];
-                let query_str = &raw_url[query_start + 1..];
-                let filtered: Vec<String> = query_str
-                    .split('&')
-                    .filter(|pair| {
-                        let name = pair.split('=').next().unwrap_or("");
-                        !is_sensitive_query_param(name)
-                    })
-                    .map(|s| s.to_string())
-                    .collect();
-                if filtered.is_empty() {
-                    return Some(path.to_string());
-                }
-                return Some(format!("{}?{}", path, filtered.join("&")));
+        if self.options.strip_sensitive_query_params
+            && let Some(query_start) = raw_url.find('?')
+        {
+            let path = raw_url.get(..query_start).unwrap_or(raw_url);
+            let query_str = raw_url.get(query_start + 1..).unwrap_or("");
+            let filtered: Vec<String> = query_str
+                .split('&')
+                .filter(|pair| {
+                    let name = pair.split('=').next().unwrap_or("");
+                    !is_sensitive_query_param(name)
+                })
+                .map(std::string::ToString::to_string)
+                .collect();
+            if filtered.is_empty() {
+                return Some(path.to_string());
             }
+            return Some(format!("{}?{}", path, filtered.join("&")));
         }
 
         Some(raw_url.to_string())
@@ -304,13 +307,13 @@ impl HarLoader {
         I: Iterator<Item = (std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
     {
         if !self.options.strip_sensitive_query_params {
-            let all: Vec<String> = pairs.map(|(k, v)| format!("{}={}", k, v)).collect();
+            let all: Vec<String> = pairs.map(|(k, v)| format!("{k}={v}")).collect();
             return all.join("&");
         }
 
         let filtered: Vec<String> = pairs
             .filter(|(k, _)| !is_sensitive_query_param(k))
-            .map(|(k, v)| format!("{}={}", k, v))
+            .map(|(k, v)| format!("{k}={v}"))
             .collect();
         filtered.join("&")
     }
@@ -325,13 +328,12 @@ impl HarLoader {
         let mock_id = format!("har-entry-{}", index + 1);
 
         // Normalize the URL (may return None if domain is filtered)
-        let normalized_url = match self.normalize_url(&entry.request.url) {
-            Some(url) => url,
-            None => return Ok(None),
+        let Some(normalized_url) = self.normalize_url(&entry.request.url) else {
+            return Ok(None);
         };
 
         // Use exact matching with normalized URL
-        let url_pattern = format!("exact:{}", normalized_url);
+        let url_pattern = format!("exact:{normalized_url}");
 
         // Convert headers, stripping based on options
         let headers: FxHashMap<String, String> = entry
@@ -350,7 +352,7 @@ impl HarLoader {
         let (body_value, file_value) = if self.options.body_output_dir.is_some()
             && should_use_file_body(&body, content_type, self.options.body_size_threshold)
         {
-            let file_path = format!("bodies/{}.body", mock_id);
+            let file_path = format!("bodies/{mock_id}.body");
             if let Some(ref output_dir) = self.options.body_output_dir {
                 let full_path = output_dir.join(&file_path);
                 tokio::fs::write(&full_path, &body).await.with_context(|| {
@@ -363,11 +365,13 @@ impl HarLoader {
         };
 
         // Calculate delay from timings (use wait time)
-        let delay_ms = entry.timings.wait as u64;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let delay_ms = entry.timings.wait.max(0.0) as u64;
 
         Ok(Some(MockConfig {
             id: mock_id.into(),
             description: None,
+            #[allow(clippy::cast_possible_truncation)]
             priority: 100u32.saturating_sub(index as u32),
             enabled: true,
             scope: None,
@@ -377,13 +381,14 @@ impl HarLoader {
                 methods: vec![entry.request.method.clone()],
                 url: None,
                 urls: vec![url_pattern],
-                headers: Default::default(),
-                query: Default::default(),
-                body: Default::default(),
+                headers: FxHashMap::default(),
+                query: FxHashMap::default(),
+                body: FxHashMap::default(),
                 graphql: None,
             }),
             request: None,
             response_config: Some(ResponseConfig::Structured {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 status: Some(entry.response.status as u16),
                 headers,
                 body: body_value,
@@ -394,7 +399,7 @@ impl HarLoader {
             }),
             patch: None,
             delay: if delay_ms > 0 {
-                Some(format!("{}ms", delay_ms))
+                Some(format!("{delay_ms}ms"))
             } else {
                 None
             },
@@ -484,6 +489,13 @@ impl Default for HarLoader {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -531,7 +543,8 @@ mod tests {
                     })
                     .collect(),
                 content: v1_2::Content {
-                    size: body.map(|b| b.len() as i64).unwrap_or(0),
+                    #[allow(clippy::cast_possible_wrap)]
+                    size: body.map_or(0, |b| b.len() as i64),
                     compression: None,
                     mime_type: Some("application/json".to_string()),
                     text: Some(body.unwrap_or("{}").to_string()),
@@ -842,7 +855,7 @@ mod tests {
             .iter()
             .filter_map(|m| m.match_config.as_ref())
             .flat_map(|mc| mc.urls.iter())
-            .map(|s| s.as_str())
+            .map(std::string::String::as_str)
             .collect();
         assert!(
             urls.iter()

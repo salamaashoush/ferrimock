@@ -251,8 +251,8 @@ fn test_detect_sequential_numbers() {
 fn test_detect_unix_timestamp() {
     let detector = TypeDetector::new();
     let values = vec![
-        json!(1640000000), // 2021-12-20
-        json!(1650000000), // 2022-04-15
+        json!(1_640_000_000), // 2021-12-20
+        json!(1_650_000_000), // 2022-04-15
     ];
 
     let (field_type, confidence) = detector.detect_type_from_values(&as_refs(&values));
@@ -264,9 +264,9 @@ fn test_detect_unix_timestamp() {
 fn test_detect_file_size() {
     let detector = TypeDetector::new();
     let values = vec![
-        json!(1024000),  // ~1MB
-        json!(5242880),  // ~5MB
-        json!(10485760), // ~10MB
+        json!(1_024_000),  // ~1MB
+        json!(5_242_880),  // ~5MB
+        json!(10_485_760), // ~10MB
     ];
 
     // FileSize detection was removed from value-only detection due to false positives
@@ -644,9 +644,9 @@ fn test_millisecond_timestamp() {
 
     // Millisecond timestamps (13 digits)
     let values = vec![
-        json!(1640000000000i64), // 2021-12-20
-        json!(1650000000000i64), // 2022-04-15
-        json!(1700000000000i64), // 2023-11-14
+        json!(1_640_000_000_000_i64), // 2021-12-20
+        json!(1_650_000_000_000_i64), // 2022-04-15
+        json!(1_700_000_000_000_i64), // 2023-11-14
     ];
 
     let (field_type, confidence) = detector.detect_type_from_values(&as_refs(&values));
@@ -660,8 +660,8 @@ fn test_microsecond_timestamp() {
 
     // Microsecond timestamps (16 digits)
     let values = vec![
-        json!(1640000000000000i64), // 2021-12-20
-        json!(1650000000000000i64), // 2022-04-15
+        json!(1_640_000_000_000_000_i64), // 2021-12-20
+        json!(1_650_000_000_000_000_i64), // 2022-04-15
     ];
 
     let (field_type, confidence) = detector.detect_type_from_values(&as_refs(&values));

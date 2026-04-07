@@ -23,9 +23,7 @@ fn json_type_name(value: &serde_json::Value) -> &'static str {
 /// Returns Some(decompressed) if data was gzipped and successfully decompressed, None otherwise.
 /// Avoids cloning the input when decompression is not needed.
 fn try_decompress_gzip(data: &Bytes, content_encoding: Option<&str>) -> Option<Bytes> {
-    let is_gzipped = content_encoding
-        .map(|e| e.contains("gzip"))
-        .unwrap_or(false);
+    let is_gzipped = content_encoding.is_some_and(|e| e.contains("gzip"));
 
     if !is_gzipped {
         return None;
@@ -84,7 +82,8 @@ impl ResponsePatcher {
     /// If `patch_context` is provided, string values containing `{{` or `{%` will be
     /// rendered as Tera templates with access to request context (captures, vars, headers,
     /// body) and upstream response data (response.status, response.headers, response.body_json).
-    pub async fn apply(
+    #[allow(clippy::indexing_slicing, clippy::string_slice, clippy::unwrap_used)] // JSON path navigation uses bounds-checked indexing
+    pub fn apply(
         &self,
         mut response: Response<Bytes>,
         patch_context: Option<&mockpit_types::PatchContext>,
@@ -140,9 +139,7 @@ impl ResponsePatcher {
                                 apply_jsonpath_patch(&mut json, &rendered_path, rendered_value)
                                     .map_err(|e| {
                                         anyhow::anyhow!(
-                                            "JSONPath patch failed for '{}': {}",
-                                            rendered_path,
-                                            e
+                                            "JSONPath patch failed for '{rendered_path}': {e}"
                                         )
                                     })?;
                                 i += 1;
@@ -227,10 +224,12 @@ fn render_if_template<'a>(
     value: &'a str,
     patch_context: Option<&mockpit_types::PatchContext>,
 ) -> std::borrow::Cow<'a, str> {
-    if patch_context.is_none() || (!value.contains("{{") && !value.contains("{%")) {
+    let Some(ctx) = patch_context else {
+        return std::borrow::Cow::Borrowed(value);
+    };
+    if !value.contains("{{") && !value.contains("{%") {
         return std::borrow::Cow::Borrowed(value);
     }
-    let ctx = patch_context.unwrap();
     match mockpit_template::render_patch_template(value, ctx, None) {
         Ok(rendered) => std::borrow::Cow::Owned(rendered),
         Err(e) => {
@@ -257,7 +256,10 @@ fn render_json_value_templates(
         serde_json::Value::String(s)
             if patch_context.is_some() && (s.contains("{{") || s.contains("{%")) =>
         {
-            let ctx = patch_context.unwrap();
+            // SAFETY: patch_context.is_some() guard above ensures this won't panic
+            let Some(ctx) = patch_context else {
+                return value.clone();
+            };
             match mockpit_template::render_patch_template(s, ctx, None) {
                 Ok(rendered) => {
                     // Try to parse as JSON (number, bool, object, array)
@@ -301,12 +303,12 @@ enum PathSegment<'a> {
 /// - `"signers[0,2,4]"` -> ArrayMultiIndex("signers", \[0, 2, 4\])
 /// - `"signers[1..3]"` -> ArrayRange("signers", 1, 3, false) (exclusive)
 /// - `"signers[1..=3]"` -> ArrayRange("signers", 1, 3, true) (inclusive)
+#[allow(clippy::string_slice, clippy::indexing_slicing)] // Path segment parsing uses character-position-based slicing
 fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
     if let Some(bracket_pos) = segment.find('[') {
         if !segment.ends_with(']') {
             return Err(anyhow::anyhow!(
-                "Invalid array notation in path segment: {}",
-                segment
+                "Invalid array notation in path segment: {segment}"
             ));
         }
         let field = &segment[..bracket_pos];
@@ -324,11 +326,7 @@ fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
                 .map(|s| s.trim().parse::<usize>())
                 .collect();
             let indices = indices.map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid multi-index '{}' in path segment: {}",
-                    index_str,
-                    segment
-                )
+                anyhow::anyhow!("Invalid multi-index '{index_str}' in path segment: {segment}")
             })?;
             return Ok(PathSegment::ArrayMultiIndex(field, indices));
         }
@@ -336,18 +334,10 @@ fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
         // Check for inclusive range (..=)
         if let Some(range_pos) = index_str.find("..=") {
             let start: usize = index_str[..range_pos].trim().parse().map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid range start in '{}' for segment: {}",
-                    index_str,
-                    segment
-                )
+                anyhow::anyhow!("Invalid range start in '{index_str}' for segment: {segment}")
             })?;
             let end: usize = index_str[range_pos + 3..].trim().parse().map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid range end in '{}' for segment: {}",
-                    index_str,
-                    segment
-                )
+                anyhow::anyhow!("Invalid range end in '{index_str}' for segment: {segment}")
             })?;
             return Ok(PathSegment::ArrayRange(field, start, end, true));
         }
@@ -355,29 +345,17 @@ fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
         // Check for exclusive range (..)
         if let Some(range_pos) = index_str.find("..") {
             let start: usize = index_str[..range_pos].trim().parse().map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid range start in '{}' for segment: {}",
-                    index_str,
-                    segment
-                )
+                anyhow::anyhow!("Invalid range start in '{index_str}' for segment: {segment}")
             })?;
             let end: usize = index_str[range_pos + 2..].trim().parse().map_err(|_| {
-                anyhow::anyhow!(
-                    "Invalid range end in '{}' for segment: {}",
-                    index_str,
-                    segment
-                )
+                anyhow::anyhow!("Invalid range end in '{index_str}' for segment: {segment}")
             })?;
             return Ok(PathSegment::ArrayRange(field, start, end, false));
         }
 
         // Simple numeric index
         let index: usize = index_str.parse().map_err(|_| {
-            anyhow::anyhow!(
-                "Invalid array index '{}' in path segment: {}",
-                index_str,
-                segment
-            )
+            anyhow::anyhow!("Invalid array index '{index_str}' in path segment: {segment}")
         })?;
         Ok(PathSegment::ArrayIndex(field, index))
     } else {
@@ -414,6 +392,7 @@ fn format_available_keys(obj: &serde_json::Map<String, serde_json::Value>) -> St
 /// Navigate to a value using a path segment, returning a mutable reference.
 /// Only handles simple navigation (Field and ArrayIndex).
 /// Multi-element selectors (wildcard, multi-index, range) must be handled by the caller.
+#[allow(clippy::indexing_slicing, clippy::expect_used)] // Array/field access bounds are validated before access
 fn navigate_segment<'a>(
     current: &'a mut serde_json::Value,
     segment: &PathSegment<'_>,
@@ -428,20 +407,19 @@ fn navigate_segment<'a>(
                     obj.insert(field.to_string(), serde_json::json!({}));
                 }
                 if obj.contains_key(*field) {
-                    Ok(obj.get_mut(*field).unwrap())
+                    // SAFETY: contains_key check above ensures key exists
+                    Ok(obj
+                        .get_mut(*field)
+                        .expect("key exists after contains_key check"))
                 } else {
                     let available = format_available_keys(obj);
                     Err(anyhow::anyhow!(
-                        "Field '{}' not found. Available keys: {}",
-                        field,
-                        available
+                        "Field '{field}' not found. Available keys: {available}"
                     ))
                 }
             } else {
                 Err(anyhow::anyhow!(
-                    "Cannot navigate to field '{}': current value is {} (expected object)",
-                    field,
-                    type_name
+                    "Cannot navigate to field '{field}': current value is {type_name} (expected object)"
                 ))
             }
         }
@@ -452,36 +430,29 @@ fn navigate_segment<'a>(
                 if !obj.contains_key(*field) {
                     let available = format_available_keys(obj);
                     return Err(anyhow::anyhow!(
-                        "Field '{}' not found. Available keys: {}",
-                        field,
-                        available
+                        "Field '{field}' not found. Available keys: {available}"
                     ));
                 }
-                let arr_val = obj.get_mut(*field).unwrap();
+                // SAFETY: contains_key check above ensures key exists
+                let arr_val = obj
+                    .get_mut(*field)
+                    .expect("key exists after contains_key check");
                 let arr_type = json_type_name(arr_val);
                 if let Some(arr) = arr_val.as_array_mut() {
                     let len = arr.len();
                     arr.get_mut(*index).ok_or_else(|| {
                         anyhow::anyhow!(
-                            "Array index {} out of bounds for '{}' (length: {})",
-                            index,
-                            field,
-                            len
+                            "Array index {index} out of bounds for '{field}' (length: {len})"
                         )
                     })
                 } else {
                     Err(anyhow::anyhow!(
-                        "Field '{}' is {} (expected array)",
-                        field,
-                        arr_type
+                        "Field '{field}' is {arr_type} (expected array)"
                     ))
                 }
             } else {
                 Err(anyhow::anyhow!(
-                    "Cannot access '{}[{}]': current value is {} (expected object)",
-                    field,
-                    index,
-                    type_name
+                    "Cannot access '{field}[{index}]': current value is {type_name} (expected object)"
                 ))
             }
         }
@@ -489,14 +460,14 @@ fn navigate_segment<'a>(
         PathSegment::ArrayWildcard(_)
         | PathSegment::ArrayMultiIndex(_, _)
         | PathSegment::ArrayRange(_, _, _, _) => Err(anyhow::anyhow!(
-            "Internal error: multi-element selector reached navigate_segment. Path segment: {:?}",
-            segment
+            "Internal error: multi-element selector reached navigate_segment. Path segment: {segment:?}"
         )),
     }
 }
 
 /// Split a JSONPath by dots, but not dots inside brackets
 /// e.g., "items[1..3].name" -> ["items[1..3]", "name"]
+#[allow(clippy::string_slice)] // ASCII-only JSON path syntax, byte positions are safe
 fn split_jsonpath(path: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
@@ -533,6 +504,7 @@ fn split_jsonpath(path: &str) -> Vec<&str> {
 /// - `$.items[0,2,4].value` (multi-index)
 /// - `$.items[1..3].value` (range, exclusive)
 /// - `$.items[1..=3].value` (range, inclusive)
+#[allow(clippy::indexing_slicing, clippy::unwrap_used)] // JSON path operations with validated indices
 fn apply_jsonpath_patch(
     json: &mut serde_json::Value,
     path: &str,
@@ -582,8 +554,7 @@ fn apply_jsonpath_patch(
                     .as_object()
                     .and_then(|o| o.get(*field))
                     .and_then(|v| v.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0);
+                    .map_or(0, std::vec::Vec::len);
                 (*field, (0..arr_len).collect())
             }
             PathSegment::ArrayMultiIndex(field, indices) => (*field, indices.clone()),
@@ -599,7 +570,7 @@ fn apply_jsonpath_patch(
         for (seg_idx, seg) in segments.iter().take(i).enumerate() {
             current = navigate_segment(current, seg, true).map_err(|e| {
                 let path_so_far = parts[..=seg_idx].join(".");
-                anyhow::anyhow!("At '{}': {}", path_so_far, e)
+                anyhow::anyhow!("At '{path_so_far}': {e}")
             })?;
         }
 
@@ -609,24 +580,20 @@ fn apply_jsonpath_patch(
             if !obj.contains_key(field) {
                 let available = format_available_keys(obj);
                 return Err(anyhow::anyhow!(
-                    "Field '{}' not found. Available keys: {}",
-                    field,
-                    available
+                    "Field '{field}' not found. Available keys: {available}"
                 ));
             }
             obj.get_mut(field).unwrap()
         } else {
             return Err(anyhow::anyhow!(
-                "Cannot access '{}': current value is {} (expected object)",
-                field,
-                current_type
+                "Cannot access '{field}': current value is {current_type} (expected object)"
             ));
         };
 
         let arr_type = json_type_name(arr);
         let arr = arr
             .as_array_mut()
-            .ok_or_else(|| anyhow::anyhow!("Field '{}' is {} (expected array)", field, arr_type))?;
+            .ok_or_else(|| anyhow::anyhow!("Field '{field}' is {arr_type} (expected array)"))?;
 
         // Build remaining path after the selector
         let remaining_parts: Vec<&str> = parts.iter().skip(i + 1).copied().collect();
@@ -667,51 +634,45 @@ fn apply_jsonpath_patch(
                     if let Some(obj) = current.as_object_mut() {
                         obj.insert(field.to_string(), value);
                         return Ok(());
-                    } else {
-                        return Err(anyhow::anyhow!(
-                            "Cannot set field '{}': current value is {} (expected object)",
-                            field,
-                            json_type_name(current)
-                        ));
                     }
+                    return Err(anyhow::anyhow!(
+                        "Cannot set field '{}': current value is {} (expected object)",
+                        field,
+                        json_type_name(current)
+                    ));
                 }
                 PathSegment::ArrayIndex(field, index) => {
                     if let Some(obj) = current.as_object_mut() {
                         let available = format_available_keys(obj);
                         let arr = obj.get_mut(*field).ok_or_else(|| {
                             anyhow::anyhow!(
-                                "Field '{}' not found. Available keys: {}",
-                                field,
-                                available
+                                "Field '{field}' not found. Available keys: {available}"
                             )
                         })?;
                         if let Some(arr_mut) = arr.as_array_mut() {
                             if *index < arr_mut.len() {
                                 arr_mut[*index] = value;
                                 return Ok(());
-                            } else {
-                                return Err(anyhow::anyhow!(
-                                    "Array index {} out of bounds for '{}' (length: {})",
-                                    index,
-                                    field,
-                                    arr_mut.len()
-                                ));
                             }
-                        } else {
                             return Err(anyhow::anyhow!(
-                                "Field '{}' is {} (expected array)",
+                                "Array index {} out of bounds for '{}' (length: {})",
+                                index,
                                 field,
-                                json_type_name(arr)
+                                arr_mut.len()
                             ));
                         }
-                    } else {
                         return Err(anyhow::anyhow!(
-                            "Cannot access '{}[{}]': current value is {} (expected object)",
+                            "Field '{}' is {} (expected array)",
                             field,
-                            index,
-                            json_type_name(current)
+                            json_type_name(arr)
                         ));
                     }
+                    return Err(anyhow::anyhow!(
+                        "Cannot access '{}[{}]': current value is {} (expected object)",
+                        field,
+                        index,
+                        json_type_name(current)
+                    ));
                 }
                 // Multi-element selectors are caught by the check above
                 PathSegment::ArrayWildcard(_)
@@ -722,19 +683,24 @@ fn apply_jsonpath_patch(
                     ));
                 }
             }
-        } else {
-            // Intermediate segment: navigate deeper
-            current = navigate_segment(current, segment, true).map_err(|e| {
-                let path_so_far = parts[..=i].join(".");
-                anyhow::anyhow!("At '{}': {}", path_so_far, e)
-            })?;
         }
+        // Intermediate segment: navigate deeper
+        current = navigate_segment(current, segment, true).map_err(|e| {
+            let path_so_far = parts[..=i].join(".");
+            anyhow::anyhow!("At '{path_so_far}': {e}")
+        })?;
     }
 
     Ok(())
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use http::{Response, StatusCode};
@@ -753,7 +719,7 @@ mod tests {
         let patch: json_patch::Patch = serde_json::from_str(patch_str).unwrap();
 
         let patcher = ResponsePatcher::new(vec![PatchOperation::JsonPatch(patch)]);
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
 
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -777,7 +743,7 @@ mod tests {
         let patch: json_patch::Patch = serde_json::from_str(patch_str).unwrap();
 
         let patcher = ResponsePatcher::new(vec![PatchOperation::JsonPatch(patch)]);
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
 
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -800,7 +766,7 @@ mod tests {
         let patch: json_patch::Patch = serde_json::from_str(patch_str).unwrap();
 
         let patcher = ResponsePatcher::new(vec![PatchOperation::JsonPatch(patch)]);
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
 
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -823,7 +789,7 @@ mod tests {
             value: serde_json::json!("john@example.com"),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -843,7 +809,7 @@ mod tests {
             value: serde_json::json!(30),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -869,7 +835,7 @@ mod tests {
             },
         ]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -893,7 +859,7 @@ mod tests {
             value: serde_json::json!(true),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -914,7 +880,7 @@ mod tests {
             value: serde_json::json!("ja"),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -942,7 +908,7 @@ mod tests {
             value: serde_json::json!(true),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -963,7 +929,7 @@ mod tests {
             value: serde_json::json!(true),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -985,7 +951,7 @@ mod tests {
             value: serde_json::json!(true),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -1010,7 +976,7 @@ mod tests {
             value: serde_json::json!(true),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -1035,7 +1001,7 @@ mod tests {
             value: serde_json::json!(true),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -1056,11 +1022,11 @@ mod tests {
             .unwrap();
 
         let patcher = ResponsePatcher::new(vec![PatchOperation::RegexReplace {
-            pattern: regex::Regex::new(r"John").unwrap(),
+            pattern: regex::Regex::new(r"\bJohn\b").unwrap(),
             replacement: "Jane".to_string(),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.into_body();
         let result = String::from_utf8(body.to_vec()).unwrap();
 
@@ -1079,7 +1045,7 @@ mod tests {
             value: "test-value".to_string(),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let headers = patched.headers();
 
         assert_eq!(
@@ -1101,7 +1067,7 @@ mod tests {
             name: "x-to-remove".to_string(),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let headers = patched.headers();
 
         assert!(headers.get("x-to-remove").is_none());
@@ -1133,7 +1099,7 @@ mod tests {
             },
         ]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         let body = patched.body();
         let json: serde_json::Value = serde_json::from_slice(body).unwrap();
 
@@ -1165,22 +1131,19 @@ mod tests {
         // Error should mention 'signers' is not found
         assert!(
             err_msg.contains("signers"),
-            "Error should mention 'signers': {}",
-            err_msg
+            "Error should mention 'signers': {err_msg}"
         );
 
         // Error should show available keys at the signrequest level (id, status), not root level (doc, signrequest)
         assert!(
             err_msg.contains("id") && err_msg.contains("status"),
-            "Error should show keys inside signrequest (id, status): {}",
-            err_msg
+            "Error should show keys inside signrequest (id, status): {err_msg}"
         );
 
         // Error should NOT show root-level keys (that was the bug)
         assert!(
             !err_msg.contains("doc"),
-            "Error should NOT show root-level keys like 'doc': {}",
-            err_msg
+            "Error should NOT show root-level keys like 'doc': {err_msg}"
         );
     }
 
@@ -1199,8 +1162,7 @@ mod tests {
         // Error should mention that name is a string, not an array/object
         assert!(
             err_msg.contains("string"),
-            "Error should indicate the actual type: {}",
-            err_msg
+            "Error should indicate the actual type: {err_msg}"
         );
     }
 
@@ -1250,7 +1212,7 @@ mod tests {
             value: serde_json::json!("{{ captures.id }}"),
         }]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -1273,7 +1235,7 @@ mod tests {
             value: serde_json::json!("user-{{ captures.name }}"),
         }]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -1295,7 +1257,7 @@ mod tests {
             value: serde_json::json!("{{ response.body_json.count }}"),
         }]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         let body = patched.into_body();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
@@ -1316,7 +1278,7 @@ mod tests {
             value: "{{ captures.id }}".to_string(),
         }]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         assert_eq!(patched.headers().get("x-user-id").unwrap(), "42");
     }
 
@@ -1333,7 +1295,7 @@ mod tests {
             value: "{{ response.status }}".to_string(),
         }]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         assert_eq!(patched.headers().get("x-upstream-status").unwrap(), "200");
     }
 
@@ -1348,16 +1310,16 @@ mod tests {
         let ctx = make_patch_context();
         let patcher = ResponsePatcher::new(vec![
             PatchOperation::RegexReplace {
-                pattern: regex::Regex::new(r"USER_NAME").unwrap(),
+                pattern: regex::Regex::new(r"\bUSER_NAME\b").unwrap(),
                 replacement: "{{ captures.name }}".to_string(),
             },
             PatchOperation::RegexReplace {
-                pattern: regex::Regex::new(r"USER_ID").unwrap(),
+                pattern: regex::Regex::new(r"\bUSER_ID\b").unwrap(),
                 replacement: "{{ captures.id }}".to_string(),
             },
         ]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         let body = patched.into_body();
         let result = String::from_utf8(body.to_vec()).unwrap();
 
@@ -1385,7 +1347,7 @@ mod tests {
             },
         ]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         let body = patched.body();
         let json: serde_json::Value = serde_json::from_slice(body).unwrap();
 
@@ -1408,7 +1370,7 @@ mod tests {
         }]);
 
         // Should not error - falls back to the literal string
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         let header_val = patched.headers().get("x-test").unwrap().to_str().unwrap();
         // Falls back to either the literal template string or empty string
         // depending on Tera's behavior - the key point is it doesn't error
@@ -1428,7 +1390,7 @@ mod tests {
             value: "{{ captures.id }}".to_string(),
         }]);
 
-        let patched = patcher.apply(response, None).await.unwrap();
+        let patched = patcher.apply(response, None).unwrap();
         // Without context, the template string is used as-is
         assert_eq!(
             patched.headers().get("x-test").unwrap(),
@@ -1449,7 +1411,7 @@ mod tests {
             value: "{{ response.headers['x-request-id'] }}".to_string(),
         }]);
 
-        let patched = patcher.apply(response, Some(&ctx)).await.unwrap();
+        let patched = patcher.apply(response, Some(&ctx)).unwrap();
         assert_eq!(
             patched.headers().get("x-echo-request-id").unwrap(),
             "req-abc-123"

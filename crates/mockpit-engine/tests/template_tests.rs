@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use mockpit_core::PersistenceStore;
 use mockpit_template::{TemplateError, render_template, validate_template};
 use mockpit_template::{get_global_persistence_store, set_global_persistence_store};
@@ -103,7 +110,7 @@ fn test_template_error_display() {
         .with_excerpt("{{ unclosed\nline2", Some(1))
         .with_suggestions(vec!["Add closing braces }}".to_string()]);
 
-    let display = format!("{}", error);
+    let display = format!("{error}");
     assert!(display.contains("Template parse Error"));
     assert!(display.contains("Mock ID: test-mock"));
     assert!(display.contains("Message: Unclosed brace"));
@@ -115,7 +122,7 @@ fn test_template_error_display() {
 #[test]
 fn test_template_error_display_minimal() {
     let error = TemplateError::new("render", "Simple error");
-    let display = format!("{}", error);
+    let display = format!("{error}");
 
     assert!(display.contains("Template render Error"));
     assert!(display.contains("Message: Simple error"));
@@ -129,7 +136,7 @@ fn test_template_error_from_tera_error_parse() {
     let template = "{{ unclosed";
     let err = tera.add_raw_template("test", template).unwrap_err();
 
-    let template_error = TemplateError::from_tera_error(err, template);
+    let template_error = TemplateError::from_tera_error(&err, template);
     assert_eq!(template_error.error_type, "parse");
     assert!(template_error.template_excerpt.is_some());
 }
@@ -152,8 +159,7 @@ fn test_template_error_from_tera_error_function() {
             || err_msg.contains("call")
             || err_msg.contains("error")
             || err_msg.contains("render"),
-        "Error message should indicate a function/filter issue, got: {}",
-        err_msg
+        "Error message should indicate a function/filter issue, got: {err_msg}"
     );
 }
 
@@ -315,7 +321,7 @@ fn test_request_context_extract_query_params_special_chars() {
 #[test]
 fn test_request_context_extract_query_params_empty_values() {
     let params = RequestContext::extract_query_params(Some("key1=&key2=value2"));
-    assert_eq!(params.get("key1"), Some(&"".to_string()));
+    assert_eq!(params.get("key1"), Some(&String::new()));
     assert_eq!(params.get("key2"), Some(&"value2".to_string()));
 }
 
@@ -545,11 +551,10 @@ fn test_fake_functions_return_non_empty() {
 
     for (name, template) in functions {
         let result = render_template(template, &ctx);
-        assert!(result.is_ok(), "Function {} failed", name);
+        assert!(result.is_ok(), "Function {name} failed");
         assert!(
             !result.unwrap().is_empty(),
-            "Function {} returned empty",
-            name
+            "Function {name} returned empty"
         );
     }
 }
@@ -718,20 +723,20 @@ fn test_store_decr_after_incr() {
     let ctx = RequestContext::new();
     let unique_key = format!("decr_incr_{}", Uuid::new_v4());
 
-    let clear = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let clear = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&clear, &ctx).unwrap();
 
-    let template1 = format!(r#"{{{{ store_incr(key="{}") }}}}"#, unique_key);
+    let template1 = format!(r#"{{{{ store_incr(key="{unique_key}") }}}}"#);
     render_template(&template1, &ctx).unwrap();
     render_template(&template1, &ctx).unwrap();
     render_template(&template1, &ctx).unwrap(); // Now at 3
 
-    let template2 = format!(r#"{{{{ store_decr(key="{}") }}}}"#, unique_key);
+    let template2 = format!(r#"{{{{ store_decr(key="{unique_key}") }}}}"#);
     let result = render_template(&template2, &ctx).unwrap();
     assert_eq!(result, "2");
 
     // Cleanup
-    let cleanup = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let cleanup = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&cleanup, &ctx).unwrap();
 }
 
@@ -741,18 +746,15 @@ fn test_store_has_existing() {
     let ctx = RequestContext::new();
     let unique_key = format!("has_test_{}", Uuid::new_v4());
 
-    let template1 = format!(
-        r#"{{% set _ = store_set(key="{}", value="exists") %}}ok"#,
-        unique_key
-    );
+    let template1 = format!(r#"{{% set _ = store_set(key="{unique_key}", value="exists") %}}ok"#);
     render_template(&template1, &ctx).unwrap();
 
-    let template2 = format!(r#"{{{{ store_has(key="{}") }}}}"#, unique_key);
+    let template2 = format!(r#"{{{{ store_has(key="{unique_key}") }}}}"#);
     let result = render_template(&template2, &ctx).unwrap();
     assert_eq!(result, "true");
 
     // Cleanup
-    let cleanup = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let cleanup = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&cleanup, &ctx).unwrap();
 }
 
@@ -771,19 +773,17 @@ fn test_store_del_removes_key() {
     let unique_key = format!("del_test_{}", Uuid::new_v4());
 
     // Set a value
-    let template1 = format!(
-        r#"{{% set _ = store_set(key="{}", value="will be deleted") %}}ok"#,
-        unique_key
-    );
+    let template1 =
+        format!(r#"{{% set _ = store_set(key="{unique_key}", value="will be deleted") %}}ok"#);
     render_template(&template1, &ctx).unwrap();
 
     // Verify it exists
-    let template2 = format!(r#"{{{{ store_has(key="{}") }}}}"#, unique_key);
+    let template2 = format!(r#"{{{{ store_has(key="{unique_key}") }}}}"#);
     let result = render_template(&template2, &ctx).unwrap();
     assert_eq!(result, "true");
 
     // Delete it
-    let template3 = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let template3 = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&template3, &ctx).unwrap();
 
     // Verify it's gone
@@ -800,32 +800,30 @@ fn test_store_keys_returns_array() {
     // Set some unique keys
     let setup = format!(
         r#"
-    {{% set _ = store_set(key="keys_test_1_{}", value="a") %}}
-    {{% set _ = store_set(key="keys_test_2_{}", value="b") %}}
-    {{% set _ = store_set(key="keys_test_3_{}", value="c") %}}
+    {{% set _ = store_set(key="keys_test_1_{test_id}", value="a") %}}
+    {{% set _ = store_set(key="keys_test_2_{test_id}", value="b") %}}
+    {{% set _ = store_set(key="keys_test_3_{test_id}", value="c") %}}
     ok
-  "#,
-        test_id, test_id, test_id
+  "#
     );
     render_template(&setup, &ctx).unwrap();
 
-    let template = r#"{{ store_keys() | json_encode() }}"#;
+    let template = r"{{ store_keys() | json_encode() }}";
     let result = render_template(template, &ctx).unwrap();
     let keys: Vec<String> = serde_json::from_str(&result).unwrap();
 
-    assert!(keys.contains(&format!("keys_test_1_{}", test_id)));
-    assert!(keys.contains(&format!("keys_test_2_{}", test_id)));
-    assert!(keys.contains(&format!("keys_test_3_{}", test_id)));
+    assert!(keys.contains(&format!("keys_test_1_{test_id}")));
+    assert!(keys.contains(&format!("keys_test_2_{test_id}")));
+    assert!(keys.contains(&format!("keys_test_3_{test_id}")));
 
     // Cleanup
     let cleanup = format!(
         r#"
-    {{% set _ = store_del(key="keys_test_1_{}") %}}
-    {{% set _ = store_del(key="keys_test_2_{}") %}}
-    {{% set _ = store_del(key="keys_test_3_{}") %}}
+    {{% set _ = store_del(key="keys_test_1_{test_id}") %}}
+    {{% set _ = store_del(key="keys_test_2_{test_id}") %}}
+    {{% set _ = store_del(key="keys_test_3_{test_id}") %}}
     ok
-  "#,
-        test_id, test_id, test_id
+  "#
     );
     render_template(&cleanup, &ctx).unwrap();
 }
@@ -836,23 +834,20 @@ fn test_store_set_nx_when_not_exists() {
     let ctx = RequestContext::new();
     let unique_key = format!("nx_test_{}", Uuid::new_v4());
 
-    let clear = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let clear = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&clear, &ctx).unwrap();
 
-    let template = format!(
-        r#"{{{{ store_set_nx(key="{}", value="first") }}}}"#,
-        unique_key
-    );
+    let template = format!(r#"{{{{ store_set_nx(key="{unique_key}", value="first") }}}}"#);
     let result = render_template(&template, &ctx).unwrap();
     assert_eq!(result, "true");
 
     // Verify value was set
-    let get = format!(r#"{{{{ store_get(key="{}") }}}}"#, unique_key);
+    let get = format!(r#"{{{{ store_get(key="{unique_key}") }}}}"#);
     let result = render_template(&get, &ctx).unwrap();
     assert_eq!(result, "first");
 
     // Cleanup
-    let cleanup = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let cleanup = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&cleanup, &ctx).unwrap();
 }
 
@@ -863,27 +858,21 @@ fn test_store_set_nx_when_exists() {
     let unique_key = format!("nx_exists_{}", Uuid::new_v4());
 
     // Set initial value
-    let template1 = format!(
-        r#"{{% set _ = store_set(key="{}", value="original") %}}ok"#,
-        unique_key
-    );
+    let template1 = format!(r#"{{% set _ = store_set(key="{unique_key}", value="original") %}}ok"#);
     render_template(&template1, &ctx).unwrap();
 
     // Try to set with NX (should fail)
-    let template2 = format!(
-        r#"{{{{ store_set_nx(key="{}", value="new") }}}}"#,
-        unique_key
-    );
+    let template2 = format!(r#"{{{{ store_set_nx(key="{unique_key}", value="new") }}}}"#);
     let result = render_template(&template2, &ctx).unwrap();
     assert_eq!(result, "false");
 
     // Verify original value is unchanged
-    let get = format!(r#"{{{{ store_get(key="{}") }}}}"#, unique_key);
+    let get = format!(r#"{{{{ store_get(key="{unique_key}") }}}}"#);
     let result = render_template(&get, &ctx).unwrap();
     assert_eq!(result, "original");
 
     // Cleanup
-    let cleanup = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let cleanup = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&cleanup, &ctx).unwrap();
 }
 
@@ -893,25 +882,23 @@ fn test_store_get_or_set_nonexistent() {
     let ctx = RequestContext::new();
     let unique_key = format!("get_or_set_{}", Uuid::new_v4());
 
-    let clear = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let clear = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&clear, &ctx).unwrap();
 
-    let template = format!(
-        r#"{{{{ store_get_or_set(key="{}", default="default_value") }}}}"#,
-        unique_key
-    );
+    let template =
+        format!(r#"{{{{ store_get_or_set(key="{unique_key}", default="default_value") }}}}"#);
     let result = render_template(&template, &ctx).unwrap();
     // The value should be the default value since key doesn't exist
     assert_eq!(result, "default_value");
 
     // Verify it was set by get_or_set
-    let get = format!(r#"{{{{ store_get(key="{}") }}}}"#, unique_key);
+    let get = format!(r#"{{{{ store_get(key="{unique_key}") }}}}"#);
     let result = render_template(&get, &ctx).unwrap();
     // Should have the default value now
     assert_eq!(result, "default_value");
 
     // Cleanup
-    let cleanup = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let cleanup = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&cleanup, &ctx).unwrap();
 }
 
@@ -922,22 +909,16 @@ fn test_store_get_or_set_existing() {
     let unique_key = format!("get_or_set_exists_{}", Uuid::new_v4());
 
     // Set initial value
-    let template1 = format!(
-        r#"{{% set _ = store_set(key="{}", value="existing") %}}ok"#,
-        unique_key
-    );
+    let template1 = format!(r#"{{% set _ = store_set(key="{unique_key}", value="existing") %}}ok"#);
     render_template(&template1, &ctx).unwrap();
 
     // get_or_set should return existing value
-    let template2 = format!(
-        r#"{{{{ store_get_or_set(key="{}", default="default") }}}}"#,
-        unique_key
-    );
+    let template2 = format!(r#"{{{{ store_get_or_set(key="{unique_key}", default="default") }}}}"#);
     let result = render_template(&template2, &ctx).unwrap();
     assert_eq!(result, "existing");
 
     // Cleanup
-    let cleanup = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let cleanup = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&cleanup, &ctx).unwrap();
 }
 
@@ -989,23 +970,22 @@ fn test_store_get_or_set_with_ttl() {
     let ctx = RequestContext::new();
     let unique_key = format!("get_or_set_ttl_{}", Uuid::new_v4());
 
-    let clear = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let clear = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&clear, &ctx).unwrap();
 
     let template = format!(
-        r#"{{{{ store_get_or_set(key="{}", default="value", ttl_seconds=900) }}}}"#,
-        unique_key
+        r#"{{{{ store_get_or_set(key="{unique_key}", default="value", ttl_seconds=900) }}}}"#
     );
     render_template(&template, &ctx).unwrap();
 
     // Check TTL
-    let ttl_template = format!(r#"{{{{ store_ttl(key="{}") }}}}"#, unique_key);
+    let ttl_template = format!(r#"{{{{ store_ttl(key="{unique_key}") }}}}"#);
     let result = render_template(&ttl_template, &ctx).unwrap();
     let ttl: i64 = result.trim().parse().unwrap();
     assert!(ttl > 0 && ttl <= 900);
 
     // Cleanup
-    let cleanup = format!(r#"{{% set _ = store_del(key="{}") %}}ok"#, unique_key);
+    let cleanup = format!(r#"{{% set _ = store_del(key="{unique_key}") %}}ok"#);
     render_template(&cleanup, &ctx).unwrap();
 }
 
@@ -1022,7 +1002,7 @@ fn test_store_clear() {
     render_template(setup, &ctx).unwrap();
 
     // Clear all
-    let clear = r#"{% set _ = store_clear() %}ok"#;
+    let clear = r"{% set _ = store_clear() %}ok";
     render_template(clear, &ctx).unwrap();
 
     // Verify keys are gone
@@ -1074,7 +1054,7 @@ fn test_set_global_persistence_store_custom() {
     // Note: We can't actually test set_global_persistence_store because it uses OnceLock
     // which can only be set once per process. This would interfere with other tests.
     // The best we can do is test that the function exists and has the right signature.
-    let result = set_global_persistence_store(custom_store.clone());
+    let result = set_global_persistence_store(custom_store);
     // Verify the function returns Ok (even if it doesn't actually set because already initialized)
     assert!(result.is_ok() || result.is_err()); // Function executes without panic
 }
@@ -1103,7 +1083,7 @@ fn test_random_choice_filter_single_item() {
 #[test]
 fn test_random_choice_filter_empty_array_error() {
     let ctx = RequestContext::new();
-    let template = r#"{{ [] | random_choice }}"#;
+    let template = r"{{ [] | random_choice }}";
     let result = render_template(template, &ctx);
     assert!(result.is_err());
 }
@@ -1132,7 +1112,7 @@ fn test_template_with_conditionals() {
 fn test_template_with_loops_and_conditionals() {
     let ctx = RequestContext::new();
     let template =
-        r#"[{% for i in range(start=0, end=3) %}{% if i > 0 %},{% endif %}{{ i }}{% endfor %}]"#;
+        r"[{% for i in range(start=0, end=3) %}{% if i > 0 %},{% endif %}{{ i }}{% endfor %}]";
     let result = render_template(template, &ctx).unwrap();
     assert_eq!(result, "[0,1,2]");
 }
@@ -1149,7 +1129,7 @@ fn test_template_with_nested_json_access() {
     });
     let mut ctx = RequestContext::new();
     ctx.body_json = Some(json);
-    let template = r#"{{ body_json.user.profile.name }}"#;
+    let template = r"{{ body_json.user.profile.name }}";
     let result = render_template(template, &ctx).unwrap();
     assert_eq!(result, "Alice");
 }
@@ -1161,7 +1141,7 @@ fn test_template_with_json_array_iteration() {
     });
     let mut ctx = RequestContext::new();
     ctx.body_json = Some(json);
-    let template = r#"[{% for item in body_json.items %}{{ item }}{% if not loop.last %},{% endif %}{% endfor %}]"#;
+    let template = r"[{% for item in body_json.items %}{{ item }}{% if not loop.last %},{% endif %}{% endfor %}]";
     let result = render_template(template, &ctx).unwrap();
     assert_eq!(result, "[1,2,3,4,5]");
 }
@@ -1312,9 +1292,9 @@ fn test_store_operations_with_numeric_keys() {
 #[test]
 fn test_template_whitespace_control() {
     let ctx = RequestContext::new();
-    let template = r#"{% for i in range(start=0, end=3) -%}
+    let template = r"{% for i in range(start=0, end=3) -%}
     {{ i }}
-  {%- endfor %}"#;
+  {%- endfor %}";
     let result = render_template(template, &ctx).unwrap();
     // Whitespace control should reduce extra whitespace
     assert!(!result.starts_with('\n'));
@@ -1401,16 +1381,14 @@ fn test_mock_pdf_url_default() {
     let result = render_template("{{ mock_pdf_url() }}", &ctx).unwrap();
     assert!(
         result.starts_with("/__box_dev_gate_files/pdf/"),
-        "Should start with pdf path, got: {}",
-        result
+        "Should start with pdf path, got: {result}"
     );
     // The UUID part should be 36 chars
     let uuid_part = result.strip_prefix("/__box_dev_gate_files/pdf/").unwrap();
     assert_eq!(
         uuid_part.len(),
         36,
-        "UUID should be 36 chars, got: {}",
-        uuid_part
+        "UUID should be 36 chars, got: {uuid_part}"
     );
 }
 
@@ -1424,13 +1402,11 @@ fn test_mock_pdf_url_with_params() {
     );
     assert!(
         result.contains("text=hello"),
-        "Should contain text param, got: {}",
-        result
+        "Should contain text param, got: {result}"
     );
     assert!(
         result.contains("pages=3"),
-        "Should contain pages param, got: {}",
-        result
+        "Should contain pages param, got: {result}"
     );
 }
 
@@ -1440,8 +1416,7 @@ fn test_mock_image_url_default() {
     let result = render_template("{{ mock_image_url() }}", &ctx).unwrap();
     assert!(
         result.starts_with("/__box_dev_gate_files/image/"),
-        "Should start with image path, got: {}",
-        result
+        "Should start with image path, got: {result}"
     );
 }
 
@@ -1456,23 +1431,19 @@ fn test_mock_image_url_with_params() {
     assert!(result.starts_with("/__box_dev_gate_files/image/"));
     assert!(
         result.contains("width=800"),
-        "Should contain width, got: {}",
-        result
+        "Should contain width, got: {result}"
     );
     assert!(
         result.contains("height=600"),
-        "Should contain height, got: {}",
-        result
+        "Should contain height, got: {result}"
     );
     assert!(
         result.contains("type=gradient"),
-        "Should contain type, got: {}",
-        result
+        "Should contain type, got: {result}"
     );
     assert!(
         result.contains("format=jpeg"),
-        "Should contain format, got: {}",
-        result
+        "Should contain format, got: {result}"
     );
 }
 
@@ -1482,8 +1453,7 @@ fn test_mock_avatar_url_default() {
     let result = render_template("{{ mock_avatar_url() }}", &ctx).unwrap();
     assert!(
         result.starts_with("/__box_dev_gate_files/avatar/"),
-        "Should start with avatar path, got: {}",
-        result
+        "Should start with avatar path, got: {result}"
     );
 }
 
@@ -1495,13 +1465,11 @@ fn test_mock_avatar_url_with_params() {
     assert!(result.starts_with("/__box_dev_gate_files/avatar/"));
     assert!(
         result.contains("initials=SA"),
-        "Should contain initials, got: {}",
-        result
+        "Should contain initials, got: {result}"
     );
     assert!(
         result.contains("size=128"),
-        "Should contain size, got: {}",
-        result
+        "Should contain size, got: {result}"
     );
 }
 
@@ -1522,7 +1490,7 @@ fn test_mock_font_url_with_family() {
 #[test]
 fn test_large_loop_iteration() {
     let ctx = RequestContext::new();
-    let template = r#"{% for i in range(start=0, end=100) %}{{ i }}{% if not loop.last %},{% endif %}{% endfor %}"#;
+    let template = r"{% for i in range(start=0, end=100) %}{{ i }}{% if not loop.last %},{% endif %}{% endfor %}";
     let result = render_template(template, &ctx).unwrap();
 
     // Should have 100 numbers

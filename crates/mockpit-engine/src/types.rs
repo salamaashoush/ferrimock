@@ -64,7 +64,7 @@ pub trait ResponseGeneratorExt {
 fn is_likely_base64(s: &str) -> bool {
     let bytes = s.trim().as_bytes();
     match bytes.first() {
-        Some(b'{') | Some(b'[') | Some(b'"') | Some(b'<') | None => false,
+        Some(b'{' | b'[' | b'"' | b'<') | None => false,
         _ => bytes
             .iter()
             .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='),
@@ -92,7 +92,7 @@ fn render_to_dynamic(
     structured_response: bool,
 ) -> Result<DynamicResponse, anyhow::Error> {
     let rendered = mockpit_template::render_template_with_hash(template, hash, context, mock_id)
-        .map_err(|e| anyhow::anyhow!("Template rendering failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Template rendering failed: {e}"))?;
 
     if let Some(decoded) = try_decode_base64(&rendered) {
         return Ok(DynamicResponse::body_only(decoded));
@@ -119,12 +119,13 @@ impl ResponseGeneratorExt for ResponseGenerator {
         }
 
         match &self.body {
-            BodySource::Inline(cached_bytes) => Ok((**cached_bytes).clone()),
+            BodySource::Inline(cached_bytes) | BodySource::FileCached(cached_bytes) => {
+                Ok((**cached_bytes).clone())
+            }
             BodySource::File(path) => {
                 let content = tokio::fs::read(path).await?;
                 Ok(bytes::Bytes::from(content))
             }
-            BodySource::FileCached(cached_bytes) => Ok((**cached_bytes).clone()),
             BodySource::Template { source, hash } => {
                 let dynamic =
                     render_to_dynamic(source, *hash, context, None, self.structured_response)?;
@@ -148,17 +149,14 @@ impl ResponseGeneratorExt for ResponseGenerator {
             tokio::time::sleep(delay).await;
         }
 
-        match &self.body {
-            BodySource::Template { source, hash } => {
-                let mut context = RequestContext::from_request(method, uri, query, headers, body);
-                context.captures = captures;
-                context.vars = vars.cloned();
-                render_to_dynamic(source, *hash, &context, None, self.structured_response)
-            }
-            _ => {
-                let body_bytes = self.generate().await?;
-                Ok(DynamicResponse::body_only(body_bytes))
-            }
+        if let BodySource::Template { source, hash } = &self.body {
+            let mut context = RequestContext::from_request(method, uri, query, headers, body);
+            context.captures = captures;
+            context.vars = vars.cloned();
+            render_to_dynamic(source, *hash, &context, None, self.structured_response)
+        } else {
+            let body_bytes = self.generate().await?;
+            Ok(DynamicResponse::body_only(body_bytes))
         }
     }
 
@@ -185,10 +183,7 @@ impl ResponseGeneratorExt for ResponseGenerator {
                 context.vars = vars.cloned();
                 render_to_dynamic(source, *hash, &context, None, self.structured_response)
             }
-            BodySource::Inline(cached_bytes) => {
-                Ok(DynamicResponse::body_only((**cached_bytes).clone()))
-            }
-            BodySource::FileCached(cached_bytes) => {
+            BodySource::Inline(cached_bytes) | BodySource::FileCached(cached_bytes) => {
                 Ok(DynamicResponse::body_only((**cached_bytes).clone()))
             }
         }
