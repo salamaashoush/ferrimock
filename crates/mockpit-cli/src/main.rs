@@ -4,7 +4,7 @@ mod self_update;
 use anyhow::Result;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint, builder::styling};
 use colored::Colorize;
-use mockpit_commands::{FakeCommand, MockCommand};
+use mockpit_cli::commands::{FakeCommand, MockCommand};
 use std::process::ExitCode;
 
 /// Color output mode
@@ -148,7 +148,7 @@ fn setup_logging(cli: &Cli) {
         }
     };
 
-    let filter = format!("mockpit={level},mockpit_commands={level},mockpit_engine={level}");
+    let filter = format!("mockpit={level},mockpit_cli={level}");
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -191,8 +191,8 @@ async fn main() -> ExitCode {
     let _config = config::load_config(cli.config.as_deref());
 
     let result: Result<()> = match cli.command {
-        Command::Mock(cmd) => mockpit_commands::execute(cmd).await,
-        Command::Fake(cmd) => mockpit_commands::fake::execute(cmd).await,
+        Command::Mock(cmd) => mockpit_cli::commands::execute(cmd).await,
+        Command::Fake(cmd) => mockpit_cli::commands::fake::execute(cmd).await,
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "mockpit", &mut std::io::stdout());

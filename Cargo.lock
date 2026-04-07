@@ -2477,322 +2477,85 @@ dependencies = [
 
 [[package]]
 name = "mockpit"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
- "mockpit-api",
- "mockpit-codegen",
- "mockpit-commands",
- "mockpit-config",
- "mockpit-consolidator",
- "mockpit-core",
- "mockpit-engine",
- "mockpit-fake-data",
- "mockpit-graphql",
- "mockpit-recorder",
- "mockpit-server",
- "mockpit-template",
- "mockpit-type-detector",
- "mockpit-types",
-]
-
-[[package]]
-name = "mockpit-api"
-version = "0.1.1"
-dependencies = [
- "axum",
- "chrono",
- "lean_string",
- "mockpit-config",
- "mockpit-consolidator",
- "mockpit-engine",
- "mockpit-recorder",
- "mockpit-server",
- "regex",
- "rustc-hash",
- "serde",
- "serde_json",
- "smallvec",
- "tracing",
-]
-
-[[package]]
-name = "mockpit-cli"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "clap_mangen",
- "colored",
- "dirs",
- "mockpit-commands",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "mockpit-codegen"
-version = "0.1.1"
-dependencies = [
- "mockpit-template",
- "mockpit-type-detector",
- "rustc-hash",
- "serde_json",
- "urlencoding",
-]
-
-[[package]]
-name = "mockpit-commands"
-version = "0.1.1"
-dependencies = [
+ "ab_glyph",
  "anyhow",
  "axum",
  "base64",
- "chrono",
- "clap",
- "colored",
- "comfy-table",
- "dialoguer",
- "har",
- "indicatif",
- "lean_string",
- "mockpit-config",
- "mockpit-consolidator",
- "mockpit-engine",
- "mockpit-fake-data",
- "mockpit-server",
- "mockpit-template",
- "mockpit-types",
- "open",
- "rustc-hash",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tower-http",
- "tracing",
-]
-
-[[package]]
-name = "mockpit-config"
-version = "0.1.1"
-dependencies = [
- "anyhow",
  "bytes",
+ "chrono",
+ "criterion",
+ "dashmap",
+ "fake",
+ "flate2",
+ "futures",
+ "globset",
+ "graphql-parser",
  "har",
  "http",
+ "image",
+ "imageproc",
  "json-patch",
+ "lazy_static",
  "lean_string",
- "mockpit-types",
+ "lopdf",
+ "lru",
+ "nohash-hasher",
+ "notify",
+ "parking_lot",
+ "rand 0.10.0",
  "regex",
+ "rust-embed",
  "rustc-hash",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "serde_yaml",
- "tempfile",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "mockpit-consolidator"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "lazy_static",
- "mockpit-codegen",
- "mockpit-config",
- "mockpit-template",
- "mockpit-type-detector",
- "mockpit-types",
- "regex",
- "rustc-hash",
- "serde_json",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "mockpit-core"
-version = "0.1.1"
-dependencies = [
- "dashmap",
- "serde_json",
-]
-
-[[package]]
-name = "mockpit-engine"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "chrono",
- "criterion",
- "dashmap",
- "flate2",
- "futures",
- "har",
- "http",
- "json-patch",
- "lean_string",
- "lru",
- "mockpit-config",
- "mockpit-consolidator",
- "mockpit-core",
- "mockpit-recorder",
- "mockpit-template",
- "mockpit-types",
- "nohash-hasher",
- "parking_lot",
- "regex",
- "rustc-hash",
- "serde",
- "serde_json",
- "serde_yaml",
+ "serial_test",
  "sha2 0.11.0",
  "smallvec",
  "tempfile",
  "tera",
- "tokio",
- "tracing",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
-name = "mockpit-fake-data"
-version = "0.1.1"
-dependencies = [
- "ab_glyph",
- "base64",
- "chrono",
- "fake",
- "image",
- "imageproc",
- "lopdf",
- "rand 0.10.0",
- "rust-embed",
- "uuid",
-]
-
-[[package]]
-name = "mockpit-graphql"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "graphql-parser",
- "mockpit-codegen",
- "mockpit-config",
- "mockpit-type-detector",
- "rustc-hash",
- "serde",
- "serde_json",
- "tempfile",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "mockpit-recorder"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "dashmap",
- "flate2",
- "har",
- "http",
- "mockpit-config",
- "regex",
- "rustc-hash",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
  "tokio",
+ "tower-http",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "mockpit-server"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "axum",
- "mockpit-config",
- "mockpit-consolidator",
- "mockpit-engine",
- "mockpit-recorder",
- "mockpit-types",
- "notify",
- "regex",
- "rustc-hash",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "mockpit-template"
-version = "0.1.1"
-dependencies = [
- "base64",
- "chrono",
- "criterion",
- "lru",
- "mockpit-core",
- "mockpit-fake-data",
- "mockpit-types",
- "nohash-hasher",
- "rand 0.10.0",
- "regex",
- "rustc-hash",
- "serde",
- "serde_json",
- "tera",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
-name = "mockpit-type-detector"
-version = "0.1.1"
-dependencies = [
- "criterion",
- "regex",
- "rustc-hash",
- "serde_json",
  "url",
  "urlencoding",
  "uuid",
 ]
 
 [[package]]
-name = "mockpit-types"
-version = "0.1.1"
+name = "mockpit-cli"
+version = "0.1.2"
 dependencies = [
  "anyhow",
- "bytes",
- "globset",
- "http",
- "json-patch",
+ "axum",
+ "base64",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "clap_mangen",
+ "colored",
+ "comfy-table",
+ "dialoguer",
+ "dirs",
+ "har",
+ "indicatif",
  "lean_string",
- "regex",
+ "mockpit",
+ "open",
+ "reqwest",
  "rustc-hash",
  "serde",
  "serde_json",
- "smallvec",
+ "serde_yaml",
  "tokio",
- "urlencoding",
+ "toml",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3911,6 +3674,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scc"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
+dependencies = [
+ "sdd",
+]
+
+[[package]]
 name = "schemars"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3952,6 +3724,12 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sdd"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "semver"
@@ -4088,6 +3866,32 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml",
+]
+
+[[package]]
+name = "serial_test"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "911bd979bf1070a3f3aa7b691a3b3e9968f339ceeec89e08c280a8a22207a32f"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "scc",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a7d91949b85b0d2fb687445e448b40d322b6b3e4af6b44a29b21d9a5f33e6d9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

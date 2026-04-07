@@ -1,6 +1,6 @@
 [package]
 name = "mockpit"
-version.workspace = true
+version = "0.1.2"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,58 +13,129 @@ categories = ["development-tools", "web-programming"]
 default = ["engine", "fake-data"]
 
 # Core mock engine (types + config + matching + registry + templates)
-engine = [
-  "dep:mockpit-types",
-  "dep:mockpit-config",
-  "dep:mockpit-recorder",
-  "dep:mockpit-template",
-  "dep:mockpit-consolidator",
-  "dep:mockpit-engine",
-  "dep:mockpit-core",
-]
+engine = []
 
 # Fake data generators
-fake-data = ["dep:mockpit-fake-data"]
+fake-data = [
+  "dep:fake",
+  "dep:rand",
+  "dep:rust-embed",
+  "dep:ab_glyph",
+  "dep:image",
+  "dep:imageproc",
+  "dep:lopdf",
+]
 
 # Semantic type detection from field names and values
-type-detector = ["dep:mockpit-type-detector"]
+type-detector = []
 
 # Template code generation from detected types
-codegen = ["type-detector", "dep:mockpit-codegen"]
+codegen = ["type-detector"]
 
 # GraphQL schema introspection and mock generation
-graphql = ["engine", "codegen", "dep:mockpit-graphql"]
+graphql = ["engine", "codegen", "dep:graphql-parser", "dep:thiserror"]
 
 # HTTP server with hot reload and graceful shutdown
-server = ["engine", "dep:mockpit-server"]
+server = ["engine", "dep:notify"]
 
 # Mock management HTTP API (axum router)
-api = ["server", "dep:mockpit-api"]
-
-# Mock and fake data command implementations
-commands = ["server", "dep:mockpit-commands"]
+api = ["server"]
 
 # Config schema generation (for editor extensions)
-schema = ["engine", "mockpit-config/schema"]
+schema = ["dep:schemars"]
 
 # Everything
-full = ["engine", "fake-data", "type-detector", "codegen", "graphql", "server", "api", "commands", "schema"]
+full = ["engine", "fake-data", "type-detector", "codegen", "graphql", "server", "api", "schema"]
 
 [dependencies]
-mockpit-core = { version = "0.1.1", path = "../mockpit-core", optional = true }
-mockpit-types = { version = "0.1.1", path = "../mockpit-types", optional = true }
-mockpit-config = { version = "0.1.1", path = "../mockpit-config", optional = true }
-mockpit-recorder = { version = "0.1.1", path = "../mockpit-recorder", optional = true }
-mockpit-codegen = { version = "0.1.1", path = "../mockpit-codegen", optional = true }
-mockpit-template = { version = "0.1.1", path = "../mockpit-template", optional = true }
-mockpit-consolidator = { version = "0.1.1", path = "../mockpit-consolidator", optional = true }
-mockpit-engine = { version = "0.1.1", path = "../mockpit-engine", optional = true }
-mockpit-graphql = { version = "0.1.1", path = "../mockpit-graphql", optional = true }
-mockpit-type-detector = { version = "0.1.1", path = "../mockpit-type-detector", optional = true }
-mockpit-fake-data = { version = "0.1.1", path = "../mockpit-fake-data", optional = true }
-mockpit-server = { version = "0.1.1", path = "../mockpit-server", optional = true }
-mockpit-api = { version = "0.1.1", path = "../mockpit-api", optional = true }
-mockpit-commands = { version = "0.1.1", path = "../mockpit-commands", optional = true }
+# ---- Always required (engine feature) ----
+# Async runtime
+tokio = { workspace = true }
+futures = { workspace = true }
+
+# Web framework (used by api feature, but axum types are in engine too)
+axum = { workspace = true }
+tower-http = { workspace = true }
+
+# Serialization
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Error handling and logging
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+# Utilities
+bytes = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+flate2 = { workspace = true }
+globset = { workspace = true }
+har = { workspace = true }
+json-patch = { workspace = true }
+lazy_static = { workspace = true }
+lean_string = { workspace = true }
+lru = { workspace = true }
+nohash-hasher = { workspace = true }
+parking_lot = { workspace = true }
+regex = { workspace = true }
+rustc-hash = { workspace = true }
+sha2 = { workspace = true }
+smallvec = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+uuid = { workspace = true }
+
+# HTTP
+http = { workspace = true }
+
+# Template engine
+tera = { workspace = true }
+
+# ---- Optional dependencies (feature-gated) ----
+
+# Fake data (fake-data feature)
+fake = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+rust-embed = { workspace = true, optional = true }
+ab_glyph = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+imageproc = { workspace = true, optional = true }
+lopdf = { workspace = true, optional = true }
+
+# GraphQL (graphql feature)
+graphql-parser = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+
+# Server (server feature)
+notify = { workspace = true, optional = true }
+
+# Schema (schema feature)
+schemars = { version = "1", optional = true }
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["html_reports", "async_tokio"] }
+futures = { workspace = true }
+smallvec = { workspace = true }
+tempfile = { workspace = true }
+serial_test = { workspace = true }
+tera = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+uuid = { workspace = true }
+
+[[bench]]
+name = "mock_performance"
+harness = false
+
+[[bench]]
+name = "template_performance"
+harness = false
+
+[[bench]]
+name = "type_detection"
+harness = false
 
 [lints]
 workspace = true
