@@ -1,0 +1,579 @@
+name: Sign Client - Documents
+description: Sign-web document listing, inbox, sent documents, bulk status, shared requests with pagination
+enabled: true
+vars:
+  user_email: signer@boxdemo.com
+mocks:
+- id: sign-web-get-inbox-documents
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - GET
+    url: /app-api/sign-web/docs/inbox/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set total = store_get_or_set(key="inbox.total", default="25") | int -%}
+      {%- set page = query.page | default(value="1") | int -%}
+      {%- set limit = query.limit | default(value="10") | int -%}
+      {%- set offset = (page - 1) * limit -%}
+      {%- set remaining = total - offset -%}
+      {%- set count_on_page = remaining -%}
+      {%- if count_on_page > limit %}
+      {% set count_on_page = limit %}
+      {% endif -%}
+      {%- if count_on_page < 0 %}
+      {% set count_on_page = 0 %}
+      {% endif -%}
+      {
+        "results": [
+          {% for i in range(start=0, end=count_on_page) %}
+          {%- set doc_uuid = fake_uuid() -%}
+          {%- set signer_email = fake_email() -%}
+          {%- set short_id = fake_alphanumeric(length=8) | upper -%}
+          {%- set rand_inbox = get_random(start=0, end=2) -%}
+          {%- if rand_inbox == 0 -%}
+          {%- set inbox_status = "needs_to_sign" -%}
+          {%- elif rand_inbox == 1 -%}
+          {%- set inbox_status = "viewed" -%}
+          {%- else -%}
+          {%- set inbox_status = "sent" -%}
+          {%- endif -%}
+          {
+            "doc": {
+              "uuid": "{{ doc_uuid }}",
+              "short_id": "{{ short_id }}",
+              "name": "{{ fake_filename() }}",
+              "status": {
+                "code": "{{ inbox_status }}",
+                "name": "Needs to sign"
+              },
+              "created": "{{ fake_date() }}",
+              "signer": {
+                "public_id": "{{ fake_alphanumeric(length=8) | upper }}",
+                "email": "{{ signer_email }}",
+                "name": "{{ fake_name() }}",
+                "level": "signature",
+                "needs_to_sign": true,
+                "signed": false,
+                "status": "needs_to_sign",
+                "status_code": "needs_to_sign",
+                "is_owner": false,
+                "action_required": true
+              },
+              "signrequest": {
+                "uuid": "{{ fake_uuid() }}",
+                "from_email": "{{ fake_email() }}",
+                "subject": "Please sign: {{ fake_sentence(word_count=4) }}",
+                "message": "{{ fake_sentence(word_count=10) }}",
+                "who": "o",
+                "signers": [
+                  {
+                    "public_id": "{{ fake_alphanumeric(length=8) | upper }}",
+                    "email": "{{ signer_email }}",
+                    "level": "signature",
+                    "order": 1,
+                    "needs_to_sign": true,
+                    "signed": false,
+                    "status": "needs_to_sign",
+                    "status_code": "needs_to_sign"
+                  }
+                ]
+              },
+              "placeholders": [],
+              "sign_files": [
+                {
+                  "name": "{{ fake_filename() }}",
+                  "uuid": "{{ fake_uuid() }}",
+                  "box_file_id": "{{ fake_numeric_id() }}",
+                  "box_file_version_id": "{{ fake_numeric_id() }}",
+                  "box_folder_id": "{{ fake_numeric_id() }}",
+                  "is_main_file": true,
+                  "original_as_pdf": "{{ mock_pdf_url() }}",
+                  "not_found_in_box": false
+                }
+              ],
+              "can_be_deleted": true,
+              "can_be_cancelled": true,
+              "can_be_forwarded": true
+            }
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "count": {{ total }},
+        "netError": false,
+        "required_actions_count": {{ total }}
+      }
+- id: sign-web-get-sent-documents
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - GET
+    url: /app-api/sign-web/docs/sent-documents/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set total = store_get_or_set(key="sent.total", default="30") | int -%}
+      {%- set page = query.page | default(value="1") | int -%}
+      {%- set limit = query.limit | default(value="10") | int -%}
+      {%- set offset = (page - 1) * limit -%}
+      {%- set remaining = total - offset -%}
+      {%- set count_on_page = remaining -%}
+      {%- if count_on_page > limit %}
+      {% set count_on_page = limit %}
+      {% endif -%}
+      {%- if count_on_page < 0 %}
+      {% set count_on_page = 0 %}
+      {% endif -%}
+      {
+        "results": [
+          {% for i in range(start=0, end=count_on_page) %}
+          {%- set doc_uuid = fake_uuid() -%}
+          {%- set rand_status = get_random(start=0, end=5) -%}
+          {%- set sender_email = store_get_or_set(key="sign.user.email", default="signer@boxdemo.com") -%}
+          {%- if rand_status == 0 -%}
+          {%- set status_code = "sent" -%}
+          {%- set status_name = "Sent" -%}
+          {%- elif rand_status == 1 -%}
+          {%- set status_code = "viewed" -%}
+          {%- set status_name = "Viewed" -%}
+          {%- elif rand_status == 2 -%}
+          {%- set status_code = "signed" -%}
+          {%- set status_name = "Signed" -%}
+          {%- elif rand_status == 3 -%}
+          {%- set status_code = "declined" -%}
+          {%- set status_name = "Declined" -%}
+          {%- elif rand_status == 4 -%}
+          {%- set status_code = "cancelled" -%}
+          {%- set status_name = "Cancelled" -%}
+          {%- else -%}
+          {%- set status_code = "expired" -%}
+          {%- set status_name = "Expired" -%}
+          {%- endif -%}
+          {
+            "doc": {
+              "uuid": "{{ doc_uuid }}",
+              "short_id": "{{ fake_alphanumeric(length=8) | upper }}",
+              "name": "{{ fake_filename() }}",
+              "status": {
+                "code": "{{ status_code }}",
+                "name": "{{ status_name }}"
+              },
+              "created": "{{ fake_date() }}",
+              "signer": {
+                "public_id": "{{ fake_alphanumeric(length=8) | upper }}",
+                "email": "{{ sender_email }}",
+                "name": "{{ fake_name() }}",
+                "level": "signature",
+                "needs_to_sign": false,
+                "signed": false,
+                "status": "sent",
+                "status_code": "sent",
+                "is_owner": true,
+                "action_required": false
+              },
+              "signrequest": {
+                "uuid": "{{ fake_uuid() }}",
+                "from_email": "{{ sender_email }}",
+                "subject": "Signature request: {{ fake_sentence(word_count=3) }}",
+                "message": "{{ fake_sentence(word_count=8) }}",
+                "who": "o",
+                "signers": [
+                  {
+                    "public_id": "{{ fake_alphanumeric(length=8) | upper }}",
+                    "email": "{{ fake_email() }}",
+                    "level": "signature",
+                    "order": 1,
+                    "needs_to_sign": true,
+                    "signed": false,
+                    "status": "{{ status_code }}",
+                    "status_code": "{{ status_code }}"
+                  }
+                ]
+              },
+              "placeholders": [],
+              "sign_files": [
+                {
+                  "name": "{{ fake_filename() }}",
+                  "uuid": "{{ fake_uuid() }}",
+                  "box_file_id": "{{ fake_numeric_id() }}",
+                  "box_file_version_id": "{{ fake_numeric_id() }}",
+                  "box_folder_id": "{{ fake_numeric_id() }}",
+                  "is_main_file": true,
+                  "original_as_pdf": "{{ mock_pdf_url() }}",
+                  "not_found_in_box": false
+                }
+              ],
+              "can_be_deleted": true,
+              "can_be_cancelled": true,
+              "can_be_forwarded": false
+            }
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "count": {{ total }},
+        "netError": false
+      }
+- id: sign-web-get-shared-requests
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - GET
+    url: /app-api/sign-web/docs/shared-requests/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set total = store_get_or_set(key="shared.total", default="5") | int -%}
+      {
+        "results": [
+          {% for i in range(start=0, end=total) %}
+          {
+            "doc": {
+              "uuid": "{{ fake_uuid() }}",
+              "short_id": "{{ fake_alphanumeric(length=8) | upper }}",
+              "name": "Shared-{{ fake_filename() }}",
+              "status": {
+                "code": "sent",
+                "name": "Sent"
+              },
+              "created": "{{ fake_date() }}",
+              "signrequest": {
+                "uuid": "{{ fake_uuid() }}",
+                "from_email": "{{ fake_email() }}",
+                "subject": "Shared request: {{ fake_sentence(word_count=3) }}",
+                "who": "o"
+              },
+              "sign_files": [
+                {
+                  "name": "{{ fake_filename() }}",
+                  "uuid": "{{ fake_uuid() }}",
+                  "box_file_id": "{{ fake_numeric_id() }}",
+                  "is_main_file": true,
+                  "not_found_in_box": false
+                }
+              ],
+              "can_be_deleted": true,
+              "can_be_cancelled": true,
+              "can_be_forwarded": false
+            }
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "count": {{ total }},
+        "netError": false
+      }
+- id: sign-web-get-bulk-status-docs
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - GET
+    url: /app-api/sign-web/box/bulk-status-docs/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set doc_count = store_get_or_set(key="bulk.doc_count", default="6") | int -%}
+      {
+        "documents": [
+          {% for i in range(start=0, end=doc_count) %}
+          {%- set doc_uuid = fake_uuid() -%}
+          {%- set file_uuid = fake_uuid() -%}
+          {%- set signer_public_id = fake_alphanumeric(length=8) | upper -%}
+          {%- set mod_idx = i % 6 -%}
+          {%- if mod_idx == 0 -%}
+          {%- set status_code = "draft" -%}
+          {%- set status_name = "Draft" -%}
+          {%- elif mod_idx == 1 -%}
+          {%- set status_code = "sent" -%}
+          {%- set status_name = "Sent" -%}
+          {%- elif mod_idx == 2 -%}
+          {%- set status_code = "viewed" -%}
+          {%- set status_name = "Viewed" -%}
+          {%- elif mod_idx == 3 -%}
+          {%- set status_code = "signed" -%}
+          {%- set status_name = "Signed" -%}
+          {%- elif mod_idx == 4 -%}
+          {%- set status_code = "declined" -%}
+          {%- set status_name = "Declined" -%}
+          {%- else -%}
+          {%- set status_code = "cancelled" -%}
+          {%- set status_name = "Cancelled" -%}
+          {%- endif -%}
+          {%- set is_signed = status_code == "signed" -%}
+          {%- set is_declined = status_code == "declined" -%}
+          {%- set is_cancelled = status_code == "cancelled" -%}
+          {
+            "doc": {
+              "uuid": "{{ doc_uuid }}",
+              "short_id": "{{ fake_alphanumeric(length=8) | upper }}",
+              "name": "Contract-{{ i + 1 }}-{{ fake_word() }}.pdf",
+              "status": {
+                "code": "{{ status_code }}",
+                "name": "{{ status_name }}"
+              },
+              "created": "{{ fake_date() }}",
+              "signer": {
+                "public_id": "{{ signer_public_id }}",
+                "email": "{{ fake_email() }}",
+                "name": "{{ fake_name() }}",
+                "full_name": "{{ fake_name() }}",
+                "level": "signature",
+                "needs_to_sign": {% if is_signed or is_declined or is_cancelled %}false{% else %}true{% endif %},
+                "signed": {{ is_signed }},
+                "status": "{{ status_code }}",
+                "status_code": "{{ status_code }}",
+                "signed_on": {% if is_signed %}"{{ fake_date() }}"{% else %}null{% endif %},
+                "declined": {{ is_declined }},
+                "declined_on": {% if is_declined %}"{{ fake_date() }}"{% else %}null{% endif %},
+                "cancelled": {{ is_cancelled }},
+                "cancelled_on": {% if is_cancelled %}"{{ fake_date() }}"{% else %}null{% endif %},
+                "expired": false,
+                "is_owner": true,
+                "action_required": {% if status_code == "sent" or status_code == "viewed" %}true{% else %}false{% endif %},
+                "emailed": true
+              },
+              "signrequest": {
+                "uuid": "{{ fake_uuid() }}",
+                "from_email": "{{ vars.user_email }}",
+                "subject": "Please sign: Contract {{ i + 1 }}",
+                "message": "{{ fake_sentence(word_count=8) }}",
+                "who": "o",
+                "locked_recipients": false,
+                "locked_fields": false,
+                "locked_request_type": null,
+                "signers": [
+                  {
+                    "public_id": "{{ signer_public_id }}",
+                    "email": "{{ fake_email() }}",
+                    "level": "signature",
+                    "order": 1,
+                    "needs_to_sign": true,
+                    "signed": {{ is_signed }},
+                    "status": "{{ status_code }}",
+                    "status_code": "{{ status_code }}"
+                  }
+                ]
+              },
+              "placeholders": [],
+              "sign_files": [
+                {
+                  "name": "Contract-{{ i + 1 }}.pdf",
+                  "uuid": "{{ file_uuid }}",
+                  "box_file_id": "{{ fake_numeric_id() }}",
+                  "box_file_version_id": "{{ fake_numeric_id() }}",
+                  "box_folder_id": "{{ fake_numeric_id() }}",
+                  "box_source_file_id": "{{ fake_numeric_id() }}",
+                  "box_source_file_version_id": "{{ fake_numeric_id() }}",
+                  "is_main_file": true,
+                  "original_as_pdf": "{{ mock_pdf_url() }}",
+                  "not_found_in_box": false
+                }
+              ],
+              "sign_flow": null,
+              "can_be_deleted": true,
+              "can_be_cancelled": {% if is_signed or is_declined or is_cancelled %}false{% else %}true{% endif %},
+              "can_be_forwarded": {% if status_code == "sent" or status_code == "viewed" %}true{% else %}false{% endif %},
+              "not_found_in_box": false
+            }
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+- id: sign-web-get-request-details
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - GET
+    url: /app-api/sign-web/docs/request/details/.*
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set doc_uuid = fake_uuid() -%}
+      {
+        "uuid": "{{ doc_uuid }}",
+        "short_id": "{{ fake_alphanumeric(length=8) | upper }}",
+        "name": "{{ fake_filename() }}",
+        "status": {
+          "code": "sent",
+          "name": "Sent"
+        },
+        "created": "{{ fake_date() }}",
+        "signrequest": {
+          "uuid": "{{ fake_uuid() }}",
+          "from_email": "{{ vars.user_email }}",
+          "subject": "Please sign this document",
+          "message": "{{ fake_sentence(word_count=10) }}",
+          "who": "o",
+          "send_reminders": true,
+          "signers": [
+            {
+              "public_id": "{{ fake_alphanumeric(length=8) | upper }}",
+              "email": "{{ fake_email() }}",
+              "name": "{{ fake_name() }}",
+              "level": "signature",
+              "order": 1,
+              "needs_to_sign": true,
+              "signed": false,
+              "status": "sent",
+              "status_code": "sent",
+              "is_owner": false,
+              "action_required": true
+            }
+          ]
+        },
+        "sign_files": [
+          {
+            "name": "{{ fake_filename() }}",
+            "uuid": "{{ fake_uuid() }}",
+            "box_file_id": "{{ fake_numeric_id() }}",
+            "box_file_version_id": "{{ fake_numeric_id() }}",
+            "box_folder_id": "{{ fake_numeric_id() }}",
+            "is_main_file": true,
+            "original_as_pdf": "{{ mock_pdf_url() }}",
+            "not_found_in_box": false
+          }
+        ],
+        "can_be_deleted": true,
+        "can_be_cancelled": true,
+        "can_be_forwarded": true
+      }
+- id: sign-web-delete-docs
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - POST
+    url: /app-api/sign-web/docs/soft-delete/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: success
+- id: sign-web-cancel-doc
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - POST
+    url: /app-api/sign-web/docs/document/cancel/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "status": "success",
+        "doc": {
+          "uuid": "{{ fake_uuid() }}",
+          "status": {
+            "code": "cancelled",
+            "name": "Cancelled"
+          }
+        }
+      }
+- id: sign-web-forward-document
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - POST
+    url: /app-api/sign-web/docs/document/forward/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: success
+- id: sign-web-merge-documents
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - POST
+    url: /app-api/sign-web/docs/merge-documents/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "uuid": "{{ fake_uuid() }}",
+        "name": "merged-document.pdf",
+        "sign_files": [
+          {
+            "name": "merged-document.pdf",
+            "uuid": "{{ fake_uuid() }}",
+            "box_file_id": "{{ fake_numeric_id() }}",
+            "box_file_version_id": "{{ fake_numeric_id() }}",
+            "box_folder_id": "{{ fake_numeric_id() }}",
+            "is_main_file": true,
+            "original_as_pdf": "{{ mock_pdf_url() }}",
+            "not_found_in_box": false
+          }
+        ]
+      }
+- id: sign-web-batch-send-directory
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - POST
+    url: /app-api/sign-web/docs/batch-send-directory/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "status": "success",
+        "batch_id": "{{ fake_uuid() }}",
+        "total_documents": {{ get_random(start=5, end=50) }}
+      }
+- id: sign-web-process-template-batch-send
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - POST
+    url: /app-api/sign-web/docs/process-template-batch-send/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "status": "success",
+        "batch_id": "{{ fake_uuid() }}",
+        "processed": {{ get_random(start=5, end=20) }}
+      }
+- id: sign-web-create-document-status
+  priority: 100
+  enabled: true
+  match:
+    methods:
+    - POST
+    url: /app-api/sign-web/document-status/
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "status": "success",
+        "document_status_id": "{{ fake_avatar(initials="JohnDoe", size=200, bg_color="red", text_color="white") }}"
+      }

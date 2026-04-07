@@ -1,0 +1,214 @@
+name: OAuth 2.0 Flow Example
+description: Complete OAuth flow with state tracking and token management
+enabled: true
+mocks:
+- id: oauth-authorize-request
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: /oauth/authorize
+  response:
+    status: 302
+    headers:
+      content-type: text/html
+    template: |-
+      {%- set state_param = query.state | default(value="") -%}
+      {%- set client_id = query.client_id | default(value="unknown") -%}
+      {%- set redirect_uri = query.redirect_uri | default(value="") -%}
+      {%- set scope = query.scope | default(value="read") -%}
+      {%- set auth_code = "auth_" ~ fake_short_hash() -%}
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>OAuth Authorization</title>
+      </head>
+      <body>
+          <h1>Authorization Successful</h1>
+          <p>Redirecting to: {{ redirect_uri }}?code={{ auth_code }}&state={{ state_param }}</p>
+          <script>
+              window.location.href = "{{ redirect_uri }}?code={{ auth_code }}&state={{ state_param }}";
+          </script>
+      </body>
+      </html>
+- id: oauth-token-exchange-authorization-code
+  priority: 200
+  match:
+    methods: ["POST"]
+    url: /oauth/token
+    body:
+      "@grant_type=authorization_code": true
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+      cache-control: no-store
+      pragma: no-cache
+    template: |-
+      {%- set access_token = "at_" ~ fake_jwt() -%}
+      {%- set refresh_token = "rt_" ~ fake_short_hash() -%}
+      {%- set expires_in = 3600 -%}
+      {
+        "access_token": "{{ access_token }}",
+        "token_type": "Bearer",
+        "expires_in": {{ expires_in }},
+        "refresh_token": "{{ refresh_token }}",
+        "scope": "read write delete",
+        "issued_at": "{{ fake_iso_date() }}"
+      }
+- id: oauth-token-refresh
+  priority: 200
+  match:
+    methods: ["POST"]
+    url: /oauth/token
+    body:
+      "@grant_type=refresh_token": true
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+      cache-control: no-store
+    template: |-
+      {%- set new_access_token = "at_refreshed_" ~ fake_jwt() -%}
+      {%- set new_refresh_token = "rt_refreshed_" ~ fake_short_hash() -%}
+      {%- set expires_in = 3600 -%}
+      {
+        "access_token": "{{ new_access_token }}",
+        "token_type": "Bearer",
+        "expires_in": {{ expires_in }},
+        "refresh_token": "{{ new_refresh_token }}",
+        "scope": "read write delete",
+        "issued_at": "{{ fake_iso_date() }}"
+      }
+- id: oauth-token-introspection
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /oauth/introspect
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set auth_header = headers.authorization | default(value="") -%}
+      {%- set token = auth_header | replace(from="Bearer ", to="") -%}
+      {%- set is_valid = token | startswith(pat="at_") -%}
+      {
+        "active": {{ is_valid }},
+        {% if is_valid %}
+        "scope": "read write delete",
+        "client_id": "app_{{ fake_short_hash() }}",
+        "username": "user_{{ fake_username() }}",
+        "token_type": "Bearer",
+        "exp": {{ fake_unix_timestamp() + 3600 }},
+        "iat": {{ fake_unix_timestamp() }},
+        "sub": "{{ fake_uuid() }}"
+        {% else %}
+        "error": "invalid_token",
+        "error_description": "The access token is expired or invalid"
+        {% endif %}
+      }
+- id: oauth-token-revocation
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /oauth/revoke
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set token = body_json.token | default(value="") -%}
+      {
+        "success": true,
+        "message": "Token has been revoked",
+        "timestamp": "{{ fake_iso_date() }}"
+      }
+- id: oauth-protected-resource-valid-token
+  priority: 200
+  match:
+    methods: ["GET"]
+    url: /api/protected/profile
+    headers:
+      authorization: "~^Bearer at_.*"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set auth_header = headers.authorization | default(value="") -%}
+      {%- set token = auth_header | replace(from="Bearer ", to="") -%}
+      {%- set is_valid = token | startswith(pat="at_") -%}
+      {% if is_valid %}
+      {
+        "user": {
+          "id": "{{ fake_uuid() }}",
+          "name": "{{ fake_name() }}",
+          "email": "{{ fake_email() }}",
+          "roles": [
+            "user",
+            "admin"
+          ],
+          "permissions": [
+            "read",
+            "write",
+            "delete"
+          ],
+          "account_type": "premium",
+          "created_at": "{{ fake_iso_date() }}",
+          "last_login": "{{ fake_relative_time() }}"
+        },
+        "token_info": {
+          "ttl_seconds": 3600,
+          "scopes": [
+            "read",
+            "write",
+            "delete"
+          ]
+        }
+      }
+      {% else %}
+      {
+        "error": "invalid_token",
+        "error_description": "The access token provided is invalid or expired",
+        "status": 401
+      }
+      {% endif %}
+- id: oauth-protected-resource-no-token
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /api/protected/profile
+  response:
+    status: 401
+    headers:
+      content-type: application/json
+      www-authenticate: "Bearer realm=\"API\", error=\"invalid_token\""
+    body: |-
+      {
+        "error": "unauthorized",
+        "error_description": "No access token provided",
+        "status": 401
+      }
+- id: oauth-stats
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: /oauth/stats
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "stats": {
+          "tokens_issued": {{ fake_number(min=0, max=100) }},
+          "tokens_refreshed": {{ fake_number(min=0, max=50) }},
+          "tokens_revoked": {{ fake_number(min=0, max=10) }},
+          "active_tokens_count": {{ fake_number(min=5, max=50) }}
+        },
+        "health": {
+          "status": "healthy",
+          "uptime_seconds": {{ fake_number(min=10000, max=1000000) }},
+          "timestamp": "{{ fake_iso_date() }}"
+        }
+      }

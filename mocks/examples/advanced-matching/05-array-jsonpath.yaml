@@ -1,0 +1,67 @@
+mocks:
+- id: array-first-user-admin
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/users/bulk
+    body:
+      "$.users[0].role": admin
+  response:
+    status: 201
+    body: |-
+      {
+        "message": "Admin user created first"
+      }
+- id: array-second-tag-rust
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/projects
+    body:
+      "$.tags[1]": rust
+  response:
+    status: 201
+    body: |-
+      {
+        "message": "Rust project created"
+      }
+- id: nested-array-city
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/users
+    body:
+      "$.users[0].addresses[0].city": New York
+  response:
+    status: 201
+    body: |-
+      {
+        "message": "User from New York created"
+      }
+- id: matrix-diagonal
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/matrix
+    body:
+      "$.data[1][1]": 5
+  response:
+    status: 200
+    body: |-
+      {
+        "message": "Center value is 5"
+      }
+- id: complex-nested-structure
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: /api/orders
+    body:
+      "$.response.orders[0].items[2].sku": RUST-123
+  response:
+    status: 201
+    template: |-
+      {
+        "orderId": "{{ fake_uuid() }}",
+        "message": "Order created with RUST-123 item"
+      }

@@ -1,0 +1,15 @@
+{
+  "users": [
+    {
+      "id": "{{ fake_uuid() }}",
+      "name": "{{ fake_name() }}",
+      "email": "{{ fake_email() }}"
+    },
+    {
+      "id": "{{ fake_uuid() }}",
+      "name": "{{ fake_name() }}",
+      "email": "{{ fake_email() }}"
+    }
+  ],
+  "total": 2
+}

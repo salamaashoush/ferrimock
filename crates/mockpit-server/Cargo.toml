@@ -1,0 +1,28 @@
+[package]
+name = "mockpit-server"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Server utilities for mockpit: hot reload, graceful shutdown, and state management"
+
+[dependencies]
+mockpit-config = { path = "../mockpit-config" }
+mockpit-engine = { path = "../mockpit-engine" }
+mockpit-consolidator = { path = "../mockpit-consolidator" }
+mockpit-recorder = { path = "../mockpit-recorder" }
+mockpit-types = { path = "../mockpit-types" }
+
+anyhow = { workspace = true }
+axum = { workspace = true }
+notify = { workspace = true }
+regex = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

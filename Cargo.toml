@@ -1,0 +1,166 @@
+[workspace]
+members = [
+  "crates/mockpit-core",
+  "crates/mockpit-types",
+  "crates/mockpit-config",
+  "crates/mockpit-recorder",
+  "crates/mockpit-codegen",
+  "crates/mockpit-template",
+  "crates/mockpit-consolidator",
+  "crates/mockpit-engine",
+  "crates/mockpit-graphql",
+  "crates/mockpit-type-detector",
+  "crates/mockpit-fake-data",
+  "crates/mockpit-server",
+  "crates/mockpit-api",
+  "crates/mockpit-cli",
+]
+
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/salamaashoush/mockpit"
+description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+correctness = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+style = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Allowed lints
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+too_many_arguments = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+wildcard_imports = "allow"
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+print_stdout = "allow"
+print_stderr = "allow"
+missing_const_for_fn = "allow"
+option_if_let_else = "allow"
+or_fun_call = "allow"
+cognitive_complexity = "allow"
+use_self = "allow"
+significant_drop_tightening = "allow"
+branches_sharing_code = "allow"
+fallible_impl_from = "allow"
+useless_let_if_seq = "allow"
+impl_trait_in_params = "allow"
+cargo_common_metadata = "allow"
+multiple_crate_versions = "allow"
+
+# Restriction lints
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+clone_on_ref_ptr = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+
+[workspace.dependencies]
+# Async runtime
+futures = "0.3"
+tokio = { version = "1.50", features = ["full"] }
+
+# Web framework
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
+
+# Serialization
+base64 = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
+serde_yaml = "0.9"
+
+# Error handling and logging
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+bytes = "1.11"
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6.1"
+flate2 = "1.1"
+globset = "0.4"
+har = "0.9"
+json-patch = "4.1"
+lazy_static = "1.5"
+lean_string = { version = "0.5", features = ["serde"] }
+lru = "0.16"
+nohash-hasher = "0.2"
+notify = "8.2"
+parking_lot = "0.12"
+regex = "1.12"
+rustc-hash = "2.1"
+sha2 = "0.11"
+smallvec = { version = "1.15", features = ["serde", "union", "const_generics"] }
+url = "2.5"
+urlencoding = "2.1.3"
+uuid = { version = "1.23", features = ["v4", "serde"] }
+
+# CLI
+clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+colored = "3.1"
+comfy-table = { version = "7.2", features = ["custom_styling"] }
+dialoguer = { version = "0.12", features = ["fuzzy-select"] }
+indicatif = "0.18"
+open = "5.3"
+rpassword = "7.4"
+
+# Fake data
+fake = { version = "5.1", features = ["derive", "chrono", "http", "uuid"] }
+rand = "0.10"
+
+# Image/PDF generation
+ab_glyph = "0.2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+imageproc = "0.26.1"
+lopdf = "0.40"
+rust-embed = { version = "8.11", features = ["compression"] }
+
+# GraphQL
+graphql-parser = "0.4"
+
+# Template engine
+tera = "1.20"
+
+# Testing
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+tempfile = "3.27"
+serial_test = "3.4"
+
+# HTTP types
+http = "1"
+
+[profile.dev]
+debug = false
+
+[profile.dev.package]
+serde.opt-level = 2
+serde_json.opt-level = 2
+tokio.opt-level = 2
+regex.opt-level = 2
+regex-automata.opt-level = 2
+dashmap.opt-level = 2

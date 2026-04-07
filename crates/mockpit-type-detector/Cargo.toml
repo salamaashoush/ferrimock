@@ -1,0 +1,27 @@
+[package]
+name = "mockpit-type-detector"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Semantic type detection for field names and values using ML-like analysis"
+
+[dependencies]
+serde_json = { workspace = true }
+regex = { workspace = true }
+lazy_static = { workspace = true }
+rustc-hash = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["html_reports"] }
+
+[[bench]]
+name = "type_detection"
+harness = false
+
+[lints]
+workspace = true

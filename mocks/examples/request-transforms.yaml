@@ -1,0 +1,213 @@
+name: Request Transform Examples
+description: Demonstrates request-side modifications in passthrough (PatchUpstream) mode
+mocks:
+- id: header-add
+  match:
+    methods:
+    - GET
+    - POST
+    url: /api/2.0/users/:id
+  request:
+    headers:
+      add:
+        x-forwarded-by: box-dev-gate
+        x-internal-auth: dev-proxy-token
+        x-trace-id: "{{ fake_uuid() }}"
+- id: header-remove
+  match:
+    methods:
+    - GET
+    url: /api/2.0/files/:file_id
+  request:
+    headers:
+      remove:
+      - x-real-ip
+      - x-forwarded-for
+      - x-debug-mode
+- id: query-add
+  match:
+    methods:
+    - GET
+    url: /api/2.0/search
+  request:
+    query:
+      add:
+        debug: "true"
+        fields: id,name,type,modified_at
+        source: dev-proxy
+- id: query-remove
+  match:
+    methods:
+    - GET
+    url: /api/2.0/folders/:folder_id/items
+  request:
+    query:
+      remove:
+      - access_token
+      - internal_trace
+      - test_override
+- id: body-jsonpath-patches
+  match:
+    methods:
+    - POST
+    url: /api/2.0/files/:file_id/metadata
+  request:
+    body:
+      jsonpath:
+        $.audit.modified_by: dev-proxy
+        $.metadata.environment: development
+        $.metadata.proxied: true
+        $.metadata.proxy_version: "1.0"
+- id: pre-request-delay
+  match:
+    methods:
+    - POST
+    url: /api/2.0/files/upload
+  request:
+    delay: 750ms
+- id: path-rewrite-version-upgrade
+  priority: 150
+  match:
+    methods:
+    - GET
+    - POST
+    - PUT
+    url: /api/2.0/users/:user_id/collaborations/:collab_id
+  request:
+    rewrite_path: /api/3.0/users/{{ captures.user_id }}/collaborations/{{ captures.collab_id }}
+- id: path-rewrite-flatten
+  priority: 150
+  match:
+    methods:
+    - GET
+    url: /api/2.0/folders/:folder_id/files/:file_id/comments
+  request:
+    rewrite_path: /internal/comments?folder={{ captures.folder_id }}&file={{ captures.file_id }}
+- id: forward-to-staging
+  priority: 200
+  match:
+    methods:
+    - GET
+    - POST
+    url: /api/2.0/sign_requests/:request_id
+  request:
+    forward_to: https://staging-api.box.com
+- id: forward-to-local
+  priority: 200
+  match:
+    methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    url: /api/2.0/ai/:action
+  request:
+    forward_to: http://localhost:4000
+- id: custom-timeout-long
+  match:
+    methods:
+    - POST
+    url: /api/2.0/files/:file_id/content
+  request:
+    timeout: 120s
+- id: custom-timeout-short
+  match:
+    methods:
+    - GET
+    url: /api/2.0/healthcheck
+  request:
+    timeout: 3s
+- id: combined-request-transforms
+  priority: 200
+  match:
+    methods:
+    - POST
+    url: /api/2.0/workflows/:workflow_id/execute
+  request:
+    delay: 200ms
+    timeout: 60s
+    forward_to: https://workflow-staging.box.com
+    rewrite_path: /v2/workflows/{{ captures.workflow_id }}/run
+    headers:
+      add:
+        x-forwarded-proto: https
+        x-proxy-source: box-dev-gate
+        x-trace-id: "{{ fake_uuid() }}"
+      remove:
+      - x-debug-mode
+      - x-test-override
+    query:
+      add:
+        format: json
+        verbose: "true"
+      remove:
+      - internal_token
+    body:
+      jsonpath:
+        $.metadata.proxied: true
+        $.metadata.timestamp: auto
+        $.source: dev-proxy
+- id: request-and-response-patches
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/2.0/users/:user_id/profile
+  request:
+    headers:
+      add:
+        x-request-source: dev-proxy
+        x-trace-id: "{{ fake_uuid() }}"
+    query:
+      remove:
+      - debug
+      - verbose
+    body:
+      jsonpath:
+        $.client: box-dev-gate
+  patch:
+    jsonpath:
+      $.metadata.proxied: true
+      $.metadata.proxy_version: "1.0"
+    headers:
+      add:
+        x-proxy-cache: miss
+        x-served-by: box-dev-gate
+      remove:
+      - x-internal-debug
+      - x-backend-server
+- id: api-migration-proxy
+  priority: 300
+  match:
+    methods:
+    - POST
+    url: /api/2.0/collaborations/:collab_id
+    headers:
+      authorization: "?"
+  request:
+    timeout: 30s
+    forward_to: https://api-v3.box.com
+    rewrite_path: /api/3.0/collaborations/{{ captures.collab_id }}
+    headers:
+      add:
+        x-api-version: "3.0"
+        x-migration-source: v2-compat-proxy
+      remove:
+      - x-legacy-token
+    query:
+      add:
+        compat_mode: v2
+      remove:
+      - legacy_format
+    body:
+      jsonpath:
+        $.migration.auto: true
+        $.migration.from: v2
+        $.schema_version: "3.0"
+  patch:
+    jsonpath:
+      $.api_version: 2.0-compat
+      $.backward_compatible: true
+    headers:
+      add:
+        x-api-compat: v2

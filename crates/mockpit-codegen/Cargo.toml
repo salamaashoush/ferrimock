@@ -1,0 +1,20 @@
+[package]
+name = "mockpit-codegen"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Template code generation utilities for converting field types to template expressions"
+
+[dependencies]
+mockpit-type-detector = { path = "../mockpit-type-detector" }
+serde_json = { workspace = true }
+rustc-hash = { workspace = true }
+urlencoding = { workspace = true }
+
+[dev-dependencies]
+mockpit-template = { path = "../mockpit-template" }
+
+[lints]
+workspace = true

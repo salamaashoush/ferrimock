@@ -1,0 +1,269 @@
+name: "Sign Client - Enterprise & Admin Console"
+description: "Enterprise settings, admin console feature/branding management, and dev features"
+enabled: true
+vars:
+  enterprise_id: "1149954831"
+  enterprise_name: "TestCompanyName"
+  branding_color: "#8c09d4"
+  branding_logo: "https://example.com/logo.png"
+
+mocks:
+# ──────────────────────────────────────────────────────────────────────
+# GET /enterprise/ - Sign-web enterprise settings
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-enterprise
+  description: Returns enterprise-level signing configuration and branding
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/enterprise/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "signing_reasons": ["Business Use", "Personal Use", "Legal Requirement"],
+        "ersd_enabled": true,
+        "ersd_content": "<p>Electronic Record and Signature Disclosure</p><p>By signing electronically, you agree that your electronic signature is the legal equivalent of your manual signature.</p>",
+        "ersd_custom_content": null,
+        "sign_custom_branding_enabled": true,
+        "sign_custom_branding": {
+          "uuid": "{{ fake_uuid() }}",
+          "version": 2,
+          "company_name": "{{ vars.enterprise_name }}",
+          "logo_uri": "{{ vars.branding_logo }}",
+          "color": "{{ vars.branding_color }}",
+          "email_footer_text": "{{ fake_sentence(word_count=6) }}"
+        },
+        "has_timestamp_authority": true,
+        "timestamp_authority_info": {
+          "name": "DigiCert Timestamp Authority",
+          "uri": "https://timestamp.digicert.com"
+        }
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /enterprise/ - Save enterprise settings
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-enterprise-save
+  description: Saves enterprise signing configuration
+  priority: 100
+  match:
+    methods: ["POST", "PUT"]
+    url: "/app-api/sign-web/enterprise/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: "success"
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /admin-console/enterprise-settings/ - Admin console enterprise settings
+# ──────────────────────────────────────────────────────────────────────
+- id: admin-console-get-enterprise-settings
+  description: Returns admin console enterprise settings with ERSD and branding
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/api/admin-console/enterprise-settings/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "uuid": "{{ fake_uuid() }}",
+        "enterprise": "{{ vars.enterprise_id }}",
+        "default": true,
+        "ersd_enabled": true,
+        "ersd_content": "<p>Electronic Record and Signature Disclosure</p><p>By signing electronically, you agree that your electronic signature is the legal equivalent of your manual signature.</p>",
+        "ersd_custom_content": null,
+        "sign_custom_branding_enabled": true,
+        "latest_sign_custom_branding_version": {
+          "uuid": "{{ fake_uuid() }}",
+          "version": 2,
+          "company_name": "{{ vars.enterprise_name }}",
+          "logo_uri": "{{ vars.branding_logo }}",
+          "color": "{{ vars.branding_color }}",
+          "email_footer_text": "{{ fake_sentence(word_count=4) }}"
+        },
+        "signing_reasons": ["Business Use", "Personal Use", "Legal Requirement"],
+        "has_timestamp_authority": true,
+        "timestamp_authority_info": {
+          "name": "DigiCert Timestamp Authority",
+          "uri": "https://timestamp.digicert.com"
+        },
+        "folder": "{{ fake_numeric_id() }}"
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /admin-console/enterprise-settings/ - Save admin console settings
+# ──────────────────────────────────────────────────────────────────────
+- id: admin-console-post-enterprise-settings
+  description: Saves admin console enterprise settings
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/api/admin-console/enterprise-settings/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: "success"
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /admin-console/feature-settings/ - Feature settings (all features)
+# ──────────────────────────────────────────────────────────────────────
+- id: admin-console-get-feature-settings
+  description: Returns feature flag settings for all sign features
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/api/admin-console/feature-settings/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set feature_id = query.featureId | default(value="sign_user_enablement") -%}
+      {
+        "feature": "{{ feature_id }}",
+        "enabled": true,
+        "isConfigured": true,
+        "canConfigure": true,
+        "whitelist": [],
+        "blacklist": [],
+        "config": {}
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# PUT /admin-console/feature-settings/:id - Update feature setting
+# ──────────────────────────────────────────────────────────────────────
+- id: admin-console-put-feature-settings
+  description: Updates a specific feature setting
+  priority: 100
+  match:
+    methods: ["PUT", "POST"]
+    url: "/api/admin-console/feature-settings/:id"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "feature": "{{ captures.id }}",
+        "enabled": true,
+        "isConfigured": true,
+        "canConfigure": true,
+        "whitelist": [],
+        "blacklist": [],
+        "config": {}
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /admin-console/branding-settings/ - Branding settings
+# ──────────────────────────────────────────────────────────────────────
+- id: admin-console-get-branding-settings
+  description: Returns custom branding configuration for sign emails/pages
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/api/admin-console/branding-settings/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set branding_uuid = fake_uuid() -%}
+      {
+        "0": {
+          "uuid": "{{ branding_uuid }}",
+          "default": true,
+          "enterprise": "{{ vars.enterprise_id }}",
+          "latest_sign_custom_branding_version": {
+            "uuid": "{{ fake_uuid() }}",
+            "version": 2,
+            "company_name": "{{ vars.enterprise_name }}",
+            "logo_uri": "{{ vars.branding_logo }}",
+            "color": "{{ vars.branding_color }}",
+            "email_footer_text": "{{ fake_sentence(word_count=4) }}"
+          }
+        },
+        "folder": "{{ fake_numeric_id() }}"
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# PUT /admin-console/branding-settings/:uuid - Update branding
+# ──────────────────────────────────────────────────────────────────────
+- id: admin-console-put-branding-settings
+  description: Updates custom branding settings
+  priority: 100
+  match:
+    methods: ["PUT"]
+    url: "/api/admin-console/branding-settings/:uuid"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "uuid": "{{ captures.uuid }}",
+        "default": true,
+        "enterprise": "{{ vars.enterprise_id }}",
+        "latest_sign_custom_branding_version": {
+          "uuid": "{{ fake_uuid() }}",
+          "version": 3,
+          "company_name": "{{ vars.enterprise_name }}",
+          "logo_uri": "{{ vars.branding_logo }}",
+          "color": "{{ vars.branding_color }}",
+          "email_footer_text": "Updated branding"
+        }
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /api/dev/features/ - Development feature flags
+# ──────────────────────────────────────────────────────────────────────
+- id: dev-get-features
+  description: Returns development feature flags
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/api/dev/features/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      sign_conditional_logic: true
+      sign_recipient_groups: true
+      sign_field_restrictions: true
+      sign_ready_sign_links: true
+      sign_smart_card: true
+      sign_shared_requests: true
+      sign_text_messages: true
+      sign_workflows: true
+      sign_batch_send: true
+      sign_templates: true
+      sign_new_header: true
+      sign_cfr_11: true
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /dev-account-type-config/ - Dev account type configuration
+# ──────────────────────────────────────────────────────────────────────
+- id: dev-get-account-type-config
+  description: Returns development account type configuration
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/api/dev/account-type-config/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      account_type: "enterprise_plus"
+      sign_enabled: true
+      sign_enterprise_enabled: true

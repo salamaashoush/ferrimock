@@ -1,0 +1,136 @@
+name: Flat Syntax Examples
+description: Demonstrates all supported flat syntax features
+mocks:
+- id: flat-example-basic
+  priority: 200
+  match:
+    methods:
+    - GET
+    url: /api/users/:id
+    headers:
+      authorization: ~^Bearer.+
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "{{ captures.id }}"
+      }
+- id: ultra-flat-string-match
+  priority: 200
+  match:
+    method: GET
+    url: /api/status
+  response:
+    status: 200
+    body:
+      status: ok
+- id: method-as-key
+  priority: 200
+  match:
+    methods:
+    - GET
+    urls:
+    - /api/health
+    headers:
+      x-api-key: "?"
+  response:
+    status: 200
+    body:
+      healthy: true
+- id: multiple-methods
+  priority: 250
+  match:
+    methods:
+    - POST
+    urls:
+    - /api/users
+    headers:
+      content-type: application/json
+  response:
+    status: 201
+    headers:
+      location: /users/{{ fake_uuid() }}
+    template: |-
+      {
+        "id": "{{ fake_uuid() }}",
+        "created": true
+      }
+- id: status-as-key
+  priority: 200
+  match:
+    method: GET
+    url: /api/simple
+  response:
+    "200": |-
+      {
+        "success": true
+      }
+- id: flat-body-matcher
+  priority: 200
+  match:
+    method: POST
+    url: /api/users
+    body:
+      $.role: admin
+  response:
+    status: 201
+    json:
+      id: "{{ fake_uuid() }}"
+      permissions:
+      - read
+      - write
+      - delete
+      role: admin
+- id: flat-with-query
+  priority: 200
+  match:
+    method: GET
+    url: /api/search
+    query:
+      filter: active
+      page: \d+
+  response:
+    status: 200
+    json:
+      filter: active
+      results: []
+- id: json-shorthand
+  priority: 200
+  match:
+    method: GET
+    url: /api/config
+  response:
+    json:
+      features:
+      - auth
+      - logging
+      - metrics
+      limits:
+        maxRequests: 1000
+      version: 1.0.0
+- id: template-features
+  priority: 200
+  match:
+    method: GET
+    url: /api/users/:userId/profile
+  response:
+    status: 200
+    template: |-
+      {
+        "userId": "{{ captures.userId }}",
+        "name": "{{ fake_name() }}",
+        "email": "{{ fake_email() }}",
+        "joinedAt": "{{ now() | date(format="%Y-%m-%d") }}"
+      }
+- id: with-delay
+  priority: 200
+  match:
+    method: GET
+    url: /api/slow
+  response:
+    status: 200
+    body:
+      delayed: true
+  delay: 500ms

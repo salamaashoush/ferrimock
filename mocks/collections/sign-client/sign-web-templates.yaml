@@ -1,0 +1,448 @@
+name: "Sign Client - Templates"
+description: "Sign-web template management - get, save, delete, upload, list, and field restrictions"
+enabled: true
+
+vars:
+  user_email: "signer@boxdemo.com"
+
+mocks:
+# ──────────────────────────────────────────────────────────────────────
+# GET /docs/get-template/ - Get template details
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-template
+  description: Returns full template details with signers, placeholders, and conditions
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/docs/get-template/(?P<template_id>[^/]+)"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set template_uuid = captures.template_id | default(value=fake_uuid()) -%}
+      {%- set doc_uuid = fake_uuid() -%}
+      {%- set file_uuid = fake_uuid() -%}
+      {%- set signer1_email = fake_email() -%}
+      {%- set signer2_email = fake_email() -%}
+      {%- set signer1_public_id = fake_alphanumeric(length=8) | upper -%}
+      {%- set signer2_public_id = fake_alphanumeric(length=8) | upper -%}
+      {%- set frame_part1 = fake_alphanumeric(length=8) | upper -%}
+      {%- set frame_part2 = fake_alphanumeric(length=8) | upper -%}
+      {%- set frame_id = frame_part1 ~ "-" ~ frame_part2 -%}
+      {
+        "doc": {
+          "uuid": "{{ template_uuid }}",
+          "name": "{{ fake_filename() }}",
+          "sign_flow": null,
+          "signrequest": {
+            "uuid": "{{ fake_uuid() }}",
+            "from_email": "{{ vars.user_email }}",
+            "subject": "Template: {{ fake_sentence(word_count=3) }}",
+            "message": "{{ fake_sentence(word_count=10) }}",
+            "who": "o",
+            "send_reminders": true,
+            "locked_recipients": false,
+            "locked_fields": false,
+            "locked_request_type": null,
+            "signers": [
+              {
+                "public_id": "{{ signer1_public_id }}",
+                "email": "",
+                "name": "",
+                "full_name": "",
+                "level": "signature",
+                "needs_to_sign": true,
+                "approve_only": false,
+                "notify_only": false,
+                "in_person": false,
+                "order": 1,
+                "language": "en",
+                "force_language": false,
+                "required_attachments": [],
+                "group": null,
+                "signature_frame_id": "{{ frame_id }}",
+                "signed": false,
+                "status": "waiting",
+                "status_code": "waiting",
+                "signed_on": null,
+                "declined": false,
+                "declined_on": null,
+                "cancelled": false,
+                "cancelled_on": null,
+                "expired": false,
+                "can_be_cancelled": true,
+                "is_owner": true,
+                "action_required": true,
+                "emailed": false,
+                "last_email_sent": null,
+                "uuid": null,
+                "attachments": [],
+                "verify_phone_number": null,
+                "phone_number_verified": false,
+                "forwarded_on": null,
+                "forwarded_reason": null,
+                "forwarded_to_email": null,
+                "processing": null,
+                "replaced_on": null,
+                "replaced_by_email": null,
+                "required_password": false,
+                "required_phone_number": false,
+                "login_required": false,
+                "can_add_placeholders": true,
+                "signer_index": null
+              },
+              {
+                "public_id": "{{ signer2_public_id }}",
+                "email": "{{ signer2_email }}",
+                "name": "{{ fake_name() }}",
+                "full_name": "{{ fake_name() }}",
+                "level": "signature",
+                "needs_to_sign": true,
+                "approve_only": false,
+                "notify_only": false,
+                "in_person": false,
+                "order": 2,
+                "language": "en",
+                "force_language": false,
+                "required_attachments": [],
+                "group": null,
+                "signature_frame_id": "{{ frame_id }}",
+                "signed": false,
+                "status": "waiting",
+                "status_code": "waiting",
+                "signed_on": null,
+                "declined": false,
+                "declined_on": null,
+                "cancelled": false,
+                "cancelled_on": null,
+                "expired": false,
+                "can_be_cancelled": true,
+                "is_owner": false,
+                "action_required": true,
+                "emailed": false,
+                "last_email_sent": null,
+                "uuid": null,
+                "attachments": [],
+                "verify_phone_number": null,
+                "phone_number_verified": false,
+                "forwarded_on": null,
+                "forwarded_reason": null,
+                "forwarded_to_email": null,
+                "processing": null,
+                "replaced_on": null,
+                "replaced_by_email": null,
+                "required_password": false,
+                "required_phone_number": false,
+                "login_required": false,
+                "can_add_placeholders": true,
+                "signer_index": null
+              }
+            ]
+          },
+          "placeholders": [
+            {
+              "page_index": 0,
+              "page_uuid": null,
+              "editable": true,
+              "action_required": false,
+              "type": "s",
+              "required": true,
+              "prefill": false,
+              "uuid": "{{ fake_uuid() }}",
+              "origin": "pi",
+              "external_id": null,
+              "repeat_on_all": false,
+              "multiline": false,
+              "signer_email": "",
+              "signer_index": null,
+              "signer_order": 1,
+              "comment": "",
+              "description": null,
+              "text": null,
+              "checkbox_value": null,
+              "date_value": null,
+              "data_uri": "",
+              "x_pos": 0.063878,
+              "y_pos": 0.090668,
+              "width_p": 0.262449,
+              "height_p": 0.042909,
+              "font_family": "sans-serif",
+              "font_size": 14,
+              "document_uuid": "{{ doc_uuid }}",
+              "group_uuid": null,
+              "order_in_group": null,
+              "choices": null,
+              "signer_group": null
+            },
+            {
+              "page_index": 0,
+              "page_uuid": null,
+              "editable": true,
+              "action_required": false,
+              "type": "t",
+              "required": true,
+              "prefill": false,
+              "uuid": "{{ fake_uuid() }}",
+              "origin": "pi",
+              "external_id": null,
+              "repeat_on_all": false,
+              "multiline": false,
+              "signer_email": "{{ signer2_email }}",
+              "signer_index": null,
+              "signer_order": 2,
+              "comment": "",
+              "description": null,
+              "text": null,
+              "checkbox_value": null,
+              "date_value": null,
+              "data_uri": "",
+              "x_pos": 0.652643,
+              "y_pos": 0.232955,
+              "width_p": 0.262406,
+              "height_p": 0.021454,
+              "font_family": "sans-serif",
+              "font_size": 14,
+              "document_uuid": "{{ doc_uuid }}",
+              "group_uuid": null,
+              "order_in_group": null,
+              "choices": null,
+              "signer_group": null
+            },
+            {
+              "page_index": 0,
+              "page_uuid": null,
+              "editable": true,
+              "action_required": false,
+              "type": "c",
+              "required": true,
+              "prefill": false,
+              "uuid": "{{ fake_uuid() }}",
+              "origin": "pi",
+              "external_id": null,
+              "repeat_on_all": false,
+              "multiline": false,
+              "signer_email": "{{ signer2_email }}",
+              "signer_index": null,
+              "signer_order": 2,
+              "comment": "Please check to confirm",
+              "description": null,
+              "text": null,
+              "checkbox_value": null,
+              "date_value": null,
+              "data_uri": "",
+              "x_pos": 0.561920,
+              "y_pos": 0.161484,
+              "width_p": 0.052469,
+              "height_p": 0.040544,
+              "font_family": null,
+              "font_size": null,
+              "document_uuid": "{{ doc_uuid }}",
+              "group_uuid": null,
+              "order_in_group": null,
+              "choices": null,
+              "signer_group": null
+            },
+            {
+              "page_index": 0,
+              "page_uuid": null,
+              "editable": true,
+              "action_required": false,
+              "type": "dd",
+              "required": true,
+              "prefill": false,
+              "uuid": "{{ fake_uuid() }}",
+              "origin": "pi",
+              "external_id": null,
+              "repeat_on_all": false,
+              "multiline": false,
+              "signer_email": "{{ signer2_email }}",
+              "signer_index": null,
+              "signer_order": 2,
+              "comment": "",
+              "description": null,
+              "text": null,
+              "checkbox_value": null,
+              "date_value": null,
+              "data_uri": "",
+              "x_pos": 0.691782,
+              "y_pos": 0.267514,
+              "width_p": 0.262406,
+              "height_p": 0.021454,
+              "font_family": "sans-serif",
+              "font_size": 14,
+              "document_uuid": "{{ doc_uuid }}",
+              "group_uuid": null,
+              "order_in_group": null,
+              "choices": ["Option A", "Option B", "Option C"],
+              "signer_group": null
+            }
+          ],
+          "placeholder_groups": [],
+          "conditions": [],
+          "sign_files": [
+            {
+              "name": "{{ fake_filename() }}",
+              "uuid": "{{ file_uuid }}",
+              "box_file_id": "{{ fake_numeric_id() }}",
+              "box_file_version_id": "{{ fake_numeric_id() }}",
+              "box_folder_id": "{{ fake_numeric_id() }}",
+              "box_source_file_id": "{{ fake_numeric_id() }}",
+              "box_source_file_version_id": "{{ fake_numeric_id() }}",
+              "is_main_file": true,
+              "original_as_pdf": "{{ mock_pdf_url() }}",
+              "not_found_in_box": false
+            }
+          ],
+          "locked_fields": false,
+          "locked_recipients": false,
+          "locked_request_type": null
+        },
+        "force_reload": false
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /docs/templates/ - List templates (MDQ)
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-mdq-templates
+  description: Returns paginated list of templates
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/docs/templates/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set total = store_get_or_set(key="templates.total", default="8") | int -%}
+      {
+        "templates": [
+          {% for i in range(start=0, end=total) %}
+          {
+            "uuid": "{{ fake_uuid() }}",
+            "name": "Template-{{ i + 1 }}-{{ fake_word() }}.pdf",
+            "created": "{{ fake_date() }}",
+            "modified": "{{ fake_date() }}",
+            "signrequest": {
+              "uuid": "{{ fake_uuid() }}",
+              "from_email": "{{ vars.user_email }}",
+              "subject": "Template: {{ fake_sentence(word_count=3) }}",
+              "who": "o"
+            },
+            "sign_files": [
+              {
+                "name": "Template-{{ i + 1 }}.pdf",
+                "uuid": "{{ fake_uuid() }}",
+                "box_file_id": "{{ fake_numeric_id() }}",
+                "is_main_file": true,
+                "not_found_in_box": false
+              }
+            ]
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        "count": {{ total }},
+        "is_paginated": false
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /docs/save-template/ - Save template
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-save-template
+  description: Saves a template configuration
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/docs/save-template/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "status": "success",
+        "uuid": "{{ fake_uuid() }}",
+        "name": "{{ fake_filename() }}"
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# DELETE /docs/delete-template/ - Delete template
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-delete-template
+  description: Deletes a template
+  priority: 100
+  match:
+    methods: ["POST", "DELETE"]
+    url: "/app-api/sign-web/docs/delete-template/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: "success"
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /docs/upload-as-template/ - Upload file as template
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-upload-as-template
+  description: Uploads a file to create a new template
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/docs/upload-as-template/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "uuid": "{{ fake_uuid() }}",
+        "name": "{{ fake_filename() }}",
+        "sign_files": [
+          {
+            "name": "{{ fake_filename() }}",
+            "uuid": "{{ fake_uuid() }}",
+            "box_file_id": "{{ fake_numeric_id() }}",
+            "box_file_version_id": "{{ fake_numeric_id() }}",
+            "box_folder_id": "{{ fake_numeric_id() }}",
+            "is_main_file": true,
+            "original_as_pdf": "{{ mock_pdf_url() }}",
+            "not_found_in_box": false
+          }
+        ]
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /template/field-restrictions-checker/ - Field restrictions
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-template-field-restrictions-checker
+  description: Validates field restrictions for a template
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/template/field-restrictions-checker/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      restrictions: {}
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /template/file-limits-checker/ - File limits check
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-template-file-limits-checker
+  description: Checks file size/count limits for template operations
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/template/file-limits-checker/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      within_limits: true
+      max_file_size: 52428800
+      max_file_count: 10

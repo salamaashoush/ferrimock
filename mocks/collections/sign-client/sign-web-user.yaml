@@ -1,0 +1,190 @@
+name: "Sign Client - User & Auth"
+description: "Sign-web user session, authentication, permissions, and user management endpoints"
+enabled: true
+vars:
+  user_email: "signer@boxdemo.com"
+
+mocks:
+# ──────────────────────────────────────────────────────────────────────
+# GET /user/auth/session/ - User auth session with signatures and permissions
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-auth-session
+  description: Returns the authenticated user session with signatures and permissions
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/user/auth/session/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set user_id = store_get_or_set(key="sign.user.id", default=fake_numeric_id()) -%}
+      {%- set user_email = vars.user_email -%}
+      {%- set user_name = store_get_or_set(key="sign.user.name", default=fake_name()) -%}
+      {
+        "user": {
+          "id": "{{ user_id }}",
+          "email": "{{ user_email }}",
+          "name": "{{ user_name }}",
+          "language": "en"
+        },
+        "signatures": [
+          {
+            "uuid": "{{ fake_uuid() }}",
+            "type": "drawn",
+            "data_uri": "{{ fake_png_data_uri(width=400, height=150, color='#FFFFFF') }}",
+            "created_at": "{{ fake_date() }}",
+            "is_regeneratable": false
+          },
+          {
+            "uuid": "{{ fake_uuid() }}",
+            "type": "typed",
+            "data_uri": "{{ fake_png_data_uri(width=400, height=150, color='#FFFFFF') }}",
+            "created_at": "{{ fake_date() }}",
+            "is_regeneratable": true
+          }
+        ],
+        "email_settings": {
+          "send_reminders": true,
+          "send_emails_on_decline": true,
+          "send_emails_on_sign": true
+        },
+        "permissions": {
+          "can_create_templates": true,
+          "can_bulk_send": true,
+          "can_use_smart_card": true,
+          "can_use_conditional_logic": true,
+          "can_use_recipient_groups": true,
+          "can_use_field_restrictions": true,
+          "can_use_ready_sign_links": true,
+          "can_use_shared_requests": true,
+          "can_use_text_messages": true,
+          "can_use_workflows": true
+        }
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /users/ - User API access and permissions
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-user
+  description: Returns user API access status and feature permissions
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/users/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "api_access": {
+          "access_granted": true,
+          "expiration_time": "2030-12-31T23:59:59Z",
+          "token_type": "bearer"
+        },
+        "permissions": {
+          "templates": true,
+          "bulk_send": true,
+          "conditional_logic": true,
+          "recipient_groups": true,
+          "field_restrictions": true,
+          "ready_sign_links": true,
+          "smart_card_required": false,
+          "shared_requests": true,
+          "text_messages": true,
+          "workflows": true
+        }
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /documents/monthly-user-doc-limit/ - Monthly document limits
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-monthly-user-doc-limit
+  description: Returns the monthly document usage limits for the user
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/documents/monthly-user-doc-limit/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      monthly_limit: 100
+      docs_remaining: 87
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /documents/required-user-action-count/ - Required actions count
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-required-user-action-count
+  description: Returns the count of documents requiring user action
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/documents/required-user-action-count/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      required_actions_count: 3
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /user/contacts/ - User contacts for recipient autocomplete
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-contacts
+  description: Returns list of contacts for signer/recipient autocomplete
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/user/contacts/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      [
+        {% for i in range(start=0, end=8) %}
+        {
+          "id": "{{ fake_numeric_id() }}",
+          "name": "{{ fake_name() }}",
+          "email": "{{ fake_email() }}",
+          "type": "user",
+          "avatar_url": null
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /user/email-settings/ - Update email notification preferences
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-email-settings
+  description: Saves user email notification preferences
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/user/email-settings/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: "success"
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /track-event/ - Analytics event tracking
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-track-event
+  description: Accepts analytics/tracking events (no-op)
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/track-event/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: "success"

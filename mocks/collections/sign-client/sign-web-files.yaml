@@ -1,0 +1,306 @@
+name: "Sign Client - File Operations"
+description: "File/folder info, document upload, attachments, downloads, and signing logs with fake PDF generation"
+enabled: true
+
+vars:
+  user_email: "signer@boxdemo.com"
+
+mocks:
+# ──────────────────────────────────────────────────────────────────────
+# GET /box/file-info/ - File metadata
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-file-info
+  description: Returns Box file metadata including permissions and ownership
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/box/file-info/(?P<file_id>[^/]+)"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set file_id = captures.file_id | default(value=fake_numeric_id()) -%}
+      {%- set user_id = store_get_or_set(key="box.user.id", default=fake_numeric_id()) -%}
+      {%- set user_name = store_get_or_set(key="box.user.name", default=fake_name()) -%}
+      {%- set user_email = store_get_or_set(key="box.user.email", default=fake_email()) -%}
+      {
+        "id": "{{ file_id }}",
+        "name": "{{ fake_filename() }}",
+        "size": {{ fake_file_size(min=50000, max=10000000) }},
+        "created_at": "{{ fake_date() }}",
+        "modified_at": "{{ fake_date() }}",
+        "content_created_at": "{{ fake_date() }}",
+        "content_modified_at": "{{ fake_date() }}",
+        "created_by": {
+          "type": "user",
+          "id": "{{ user_id }}",
+          "name": "{{ user_name }}",
+          "login": "{{ user_email }}"
+        },
+        "modified_by": {
+          "type": "user",
+          "id": "{{ user_id }}",
+          "name": "{{ user_name }}",
+          "login": "{{ user_email }}"
+        },
+        "owned_by": {
+          "type": "user",
+          "id": "{{ user_id }}",
+          "name": "{{ user_name }}",
+          "login": "{{ user_email }}"
+        },
+        "trashed_at": null,
+        "purged_at": null,
+        "shared_link": null,
+        "parent": {
+          "type": "folder",
+          "id": "{{ fake_numeric_id() }}",
+          "name": "My Sign Requests"
+        },
+        "item_status": "active",
+        "version_number": "1",
+        "comment_count": 0,
+        "permissions": {
+          "can_download": true,
+          "can_preview": true,
+          "can_upload": true,
+          "can_comment": true,
+          "can_rename": true,
+          "can_delete": true,
+          "can_share": true,
+          "can_set_share_access": true,
+          "can_invite_collaborator": true,
+          "can_annotate": true
+        }
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /box/folder-info/ - Folder metadata
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-get-folder-info
+  description: Returns Box folder metadata
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/box/folder-info/(?P<folder_id>[^/]+)"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "id": "{{ fake_numeric_id() }}",
+        "type": "folder",
+        "name": "My Sign Requests",
+        "etag": "0",
+        "sequence_id": "0",
+        "created_at": "{{ fake_date() }}",
+        "modified_at": "{{ fake_date() }}",
+        "item_status": "active",
+        "permissions": {
+          "can_download": true,
+          "can_upload": true,
+          "can_rename": true,
+          "can_delete": true,
+          "can_share": true,
+          "can_invite_collaborator": true
+        }
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /docs/doc-upload/ - Document upload
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-doc-upload
+  description: Handles main document upload for sign requests
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/docs/doc-upload/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {%- set doc_uuid = fake_uuid() -%}
+      {%- set file_uuid = fake_uuid() -%}
+      {
+        "uuid": "{{ doc_uuid }}",
+        "name": "{{ fake_filename() }}",
+        "box_file_id": "{{ fake_numeric_id() }}",
+        "box_file_version_id": "{{ fake_numeric_id() }}",
+        "box_folder_id": "{{ fake_numeric_id() }}",
+        "is_main_file": true,
+        "sign_files": [
+          {
+            "name": "{{ fake_filename() }}",
+            "uuid": "{{ file_uuid }}",
+            "box_file_id": "{{ fake_numeric_id() }}",
+            "box_file_version_id": "{{ fake_numeric_id() }}",
+            "box_folder_id": "{{ fake_numeric_id() }}",
+            "box_source_file_id": "{{ fake_numeric_id() }}",
+            "box_source_file_version_id": "{{ fake_numeric_id() }}",
+            "is_main_file": true,
+            "original_as_pdf": "{{ mock_pdf_url() }}",
+            "not_found_in_box": false
+          }
+        ]
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /docs/doc-upload-extra/ - Additional document upload
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-doc-upload-extra
+  description: Handles additional document upload (attachment to sign request)
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/docs/doc-upload-extra/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "uuid": "{{ fake_uuid() }}",
+        "name": "{{ fake_filename() }}",
+        "box_file_id": "{{ fake_numeric_id() }}",
+        "box_file_version_id": "{{ fake_numeric_id() }}",
+        "box_folder_id": "{{ fake_numeric_id() }}",
+        "is_main_file": false,
+        "sign_files": [
+          {
+            "name": "{{ fake_filename() }}",
+            "uuid": "{{ fake_uuid() }}",
+            "box_file_id": "{{ fake_numeric_id() }}",
+            "box_file_version_id": "{{ fake_numeric_id() }}",
+            "box_folder_id": "{{ fake_numeric_id() }}",
+            "is_main_file": false,
+            "original_as_pdf": "{{ mock_pdf_url() }}",
+            "not_found_in_box": false
+          }
+        ]
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /docs/template-upload-extra/ - Template extra file upload
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-template-upload-extra
+  description: Handles additional file upload for templates
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/docs/template-upload-extra/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "uuid": "{{ fake_uuid() }}",
+        "name": "{{ fake_filename() }}",
+        "box_file_id": "{{ fake_numeric_id() }}",
+        "box_file_version_id": "{{ fake_numeric_id() }}",
+        "box_folder_id": "{{ fake_numeric_id() }}",
+        "is_main_file": false,
+        "sign_files": [
+          {
+            "name": "{{ fake_filename() }}",
+            "uuid": "{{ fake_uuid() }}",
+            "box_file_id": "{{ fake_numeric_id() }}",
+            "is_main_file": false,
+            "original_as_pdf": "{{ mock_pdf_url() }}",
+            "not_found_in_box": false
+          }
+        ]
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# POST /attachment/upload/ - Upload attachment
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-post-upload-attachment
+  description: Uploads a required attachment for a signer
+  priority: 100
+  match:
+    methods: ["POST"]
+    url: "/app-api/sign-web/attachment/upload/"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    template: |-
+      {
+        "uuid": "{{ fake_uuid() }}",
+        "file_name": "{{ fake_filename() }}",
+        "file_size": {{ fake_file_size(min=10000, max=5000000) }},
+        "box_file_id": "{{ fake_numeric_id() }}"
+      }
+
+# ──────────────────────────────────────────────────────────────────────
+# DELETE /attachment/delete/ - Delete attachment
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-delete-attachment
+  description: Deletes an uploaded attachment
+  priority: 100
+  match:
+    methods: ["DELETE", "POST"]
+    url: "/app-api/sign-web/attachment/delete/.*"
+  response:
+    status: 200
+    headers:
+      content-type: application/json
+    json:
+      status: "success"
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /docs/download/ - Download signed document
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-docs-download
+  description: Downloads the signed/completed document as PDF
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/docs/download/"
+  response:
+    status: 200
+    headers:
+      content-type: application/pdf
+      content-disposition: attachment; filename=signed-document.pdf
+    template: |-
+      {%- set signer = fake_name() -%}
+      {%- set ts = now() | date(format='%Y-%m-%d %H:%M:%S') -%}
+      {%- set ip = fake_ipv4() -%}
+      {%- set doc_id = fake_uuid() -%}
+      {%- set content = fake_paragraph() -%}
+      {%- set hash = fake_sha256() -%}
+      {%- set pdf_text = "SIGNED DOCUMENT -- Electronically signed by all parties. -- Signer: " ~ signer ~ " -- Date: " ~ ts ~ " -- IP: " ~ ip ~ " -- Document ID: " ~ doc_id ~ " -- " ~ content ~ " -- Verification Hash: " ~ hash -%}
+      {{ fake_pdf(text=pdf_text) }}
+
+# ──────────────────────────────────────────────────────────────────────
+# GET /docs/download-signing-log/ - Download signing audit log
+# ──────────────────────────────────────────────────────────────────────
+- id: sign-web-download-signing-log
+  description: Downloads the signing audit log as PDF
+  priority: 100
+  match:
+    methods: ["GET"]
+    url: "/app-api/sign-web/docs/download-signing-log/.*"
+  response:
+    status: 200
+    headers:
+      content-type: application/pdf
+      content-disposition: attachment; filename=signing-log.pdf
+    template: |-
+      {%- set signer1 = fake_name() -%}
+      {%- set signer2 = fake_name() -%}
+      {%- set doc_id = fake_uuid() -%}
+      {%- set word = fake_word() -%}
+      {%- set d1 = fake_date() -%}
+      {%- set d2 = fake_date() -%}
+      {%- set d3 = fake_date() -%}
+      {%- set d4 = fake_date() -%}
+      {%- set ip1 = fake_ipv4() -%}
+      {%- set ip2 = fake_ipv4() -%}
+      {%- set hash = fake_sha256() -%}
+      {%- set pdf_text = "SIGNING AUDIT LOG -- Document ID: " ~ doc_id ~ " -- Document Name: Contract-" ~ word ~ ".pdf -- TIMELINE: -- " ~ d1 ~ " - Document created by " ~ signer1 ~ " -- " ~ d2 ~ " - Sent for signature to " ~ signer2 ~ " -- " ~ d3 ~ " - Viewed by " ~ signer2 ~ " (IP: " ~ ip1 ~ ") -- " ~ d4 ~ " - Signed by " ~ signer2 ~ " (IP: " ~ ip2 ~ ") -- Verification Hash: " ~ hash -%}
+      {{ fake_pdf(text=pdf_text, pages=2) }}

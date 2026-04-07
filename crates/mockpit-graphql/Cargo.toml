@@ -1,0 +1,34 @@
+[package]
+name = "mockpit-graphql"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GraphQL schema introspection, parsing, and mock generation"
+categories = ["development-tools", "graphql"]
+keywords = ["graphql", "mock", "introspection", "testing"]
+
+[dependencies]
+# GraphQL parsing (introspection types are included in this crate)
+graphql-parser = { workspace = true }
+
+# Mock system
+mockpit-codegen = { path = "../mockpit-codegen" }
+mockpit-config = { path = "../mockpit-config" }
+mockpit-type-detector = { path = "../mockpit-type-detector" }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Utilities
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
