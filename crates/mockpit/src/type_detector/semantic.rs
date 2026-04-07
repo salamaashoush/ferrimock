@@ -30,7 +30,7 @@ pub fn ends_with_ignore_case(haystack: &str, needle: &str) -> bool {
 ///
 /// # Examples
 /// ```
-/// # use crate::type_detector::semantic::matches_field_name;
+/// # use mockpit::type_detector::semantic::matches_field_name;
 /// assert!(matches_field_name("updated_at", "updated_at"));
 /// assert!(matches_field_name("updatedAt", "updated_at"));
 /// assert!(matches_field_name("UpdatedAt", "updated_at"));
@@ -59,7 +59,7 @@ pub fn matches_field_name(field_name: &str, pattern: &str) -> bool {
 ///
 /// # Examples
 /// ```
-/// # use crate::type_detector::semantic::matches_any_field_name;
+/// # use mockpit::type_detector::semantic::matches_any_field_name;
 /// // Check for login/username fields
 /// assert!(matches_any_field_name("login", &["login", "user_name", "username"]));
 /// assert!(matches_any_field_name("userName", &["login", "user_name", "username"]));
@@ -78,7 +78,7 @@ pub fn matches_any_field_name(field_name: &str, patterns: &[&str]) -> bool {
 ///
 /// # Examples
 /// ```
-/// # use crate::type_detector::semantic::contains_field_pattern;
+/// # use mockpit::type_detector::semantic::contains_field_pattern;
 /// assert!(contains_field_pattern("created_at", "created"));
 /// assert!(contains_field_pattern("createdAt", "created"));
 /// assert!(contains_field_pattern("updated_time", "time"));
@@ -107,7 +107,7 @@ pub fn contains_field_pattern(field_name: &str, pattern: &str) -> bool {
 ///
 /// # Examples
 /// ```
-/// # use crate::type_detector::semantic::contains_any_field_pattern;
+/// # use mockpit::type_detector::semantic::contains_any_field_pattern;
 /// // Check for status-related fields
 /// assert!(contains_any_field_pattern("user_status", &["status", "state", "type"]));
 /// assert!(contains_any_field_pattern("itemType", &["status", "state", "type"]));
@@ -125,7 +125,7 @@ pub fn contains_any_field_pattern(field_name: &str, patterns: &[&str]) -> bool {
 ///
 /// # Examples
 /// ```
-/// # use crate::type_detector::semantic::ends_with_field_pattern;
+/// # use mockpit::type_detector::semantic::ends_with_field_pattern;
 /// assert!(ends_with_field_pattern("user_id", "id"));
 /// assert!(ends_with_field_pattern("userId", "id"));
 /// assert!(ends_with_field_pattern("created_at", "at"));

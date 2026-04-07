@@ -48,7 +48,7 @@ impl RecordingFilterOptions {
     ///
     /// # Examples
     /// ```
-    /// use crate::recorder::filters::RecordingFilterOptions;
+    /// use mockpit::recorder::filters::RecordingFilterOptions;
     ///
     /// let mut options = RecordingFilterOptions::default();
     /// options.exclude_patterns = RecordingFilterOptions::web_static_patterns();
@@ -82,7 +82,7 @@ impl RecordingFilterOptions {
     ///
     /// # Examples
     /// ```
-    /// use crate::recorder::filters::RecordingFilterOptions;
+    /// use mockpit::recorder::filters::RecordingFilterOptions;
     /// use regex::Regex;
     ///
     /// let mut options = RecordingFilterOptions::default();

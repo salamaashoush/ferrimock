@@ -16,7 +16,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use crate::recorder::{MockRecorder, RecordingFormat};
+//! use mockpit::recorder::{MockRecorder, RecordingFormat};
 //! use http::{Method, StatusCode, HeaderMap};
 //! use bytes::Bytes;
 //! use std::time::Duration;

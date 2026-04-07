@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"
+readme = "../../README.md"
 keywords = ["mock", "http", "testing", "api", "fake-data"]
 categories = ["development-tools", "web-programming"]
 
