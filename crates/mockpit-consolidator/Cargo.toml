@@ -6,14 +6,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Smart consolidation engine for HTTP mocks with pattern detection and template generation"
-categories = ["development-tools", "testing"]
+categories = ["development-tools"]
 keywords = ["mock", "http", "testing", "consolidation"]
 
 [dependencies]
-mockpit-codegen = { version = "0.1.0", path = "../mockpit-codegen" }
-mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
-mockpit-template = { version = "0.1.0", path = "../mockpit-template" }
-mockpit-type-detector = { version = "0.1.0", path = "../mockpit-type-detector" }
+mockpit-codegen = { version = "0.1.1", path = "../mockpit-codegen" }
+mockpit-config = { version = "0.1.1", path = "../mockpit-config" }
+mockpit-template = { version = "0.1.1", path = "../mockpit-template" }
+mockpit-type-detector = { version = "0.1.1", path = "../mockpit-type-detector" }
 anyhow = { workspace = true }
 lazy_static = { workspace = true }
 regex = { workspace = true }
@@ -22,8 +22,8 @@ serde_json = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
-mockpit-types = { version = "0.1.0", path = "../mockpit-types" }
+mockpit-config = { version = "0.1.1", path = "../mockpit-config" }
+mockpit-types = { version = "0.1.1", path = "../mockpit-types" }
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]

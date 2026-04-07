@@ -10,12 +10,12 @@ categories = ["development-tools", "web-programming"]
 keywords = ["mock", "http", "testing", "templates", "fake-data"]
 
 [dependencies]
-mockpit-core = { version = "0.1.0", path = "../mockpit-core" }
-mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
-mockpit-consolidator = { version = "0.1.0", path = "../mockpit-consolidator" }
-mockpit-recorder = { version = "0.1.0", path = "../mockpit-recorder" }
-mockpit-template = { version = "0.1.0", path = "../mockpit-template" }
-mockpit-types = { version = "0.1.0", path = "../mockpit-types" }
+mockpit-core = { version = "0.1.1", path = "../mockpit-core" }
+mockpit-config = { version = "0.1.1", path = "../mockpit-config" }
+mockpit-consolidator = { version = "0.1.1", path = "../mockpit-consolidator" }
+mockpit-recorder = { version = "0.1.1", path = "../mockpit-recorder" }
+mockpit-template = { version = "0.1.1", path = "../mockpit-template" }
+mockpit-types = { version = "0.1.1", path = "../mockpit-types" }
 lean_string = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }

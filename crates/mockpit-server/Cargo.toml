@@ -8,11 +8,11 @@ repository.workspace = true
 description = "Server utilities for mockpit: hot reload, graceful shutdown, and state management"
 
 [dependencies]
-mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
-mockpit-engine = { version = "0.1.0", path = "../mockpit-engine" }
-mockpit-consolidator = { version = "0.1.0", path = "../mockpit-consolidator" }
-mockpit-recorder = { version = "0.1.0", path = "../mockpit-recorder" }
-mockpit-types = { version = "0.1.0", path = "../mockpit-types" }
+mockpit-config = { version = "0.1.1", path = "../mockpit-config" }
+mockpit-engine = { version = "0.1.1", path = "../mockpit-engine" }
+mockpit-consolidator = { version = "0.1.1", path = "../mockpit-consolidator" }
+mockpit-recorder = { version = "0.1.1", path = "../mockpit-recorder" }
+mockpit-types = { version = "0.1.1", path = "../mockpit-types" }
 
 anyhow = { workspace = true }
 axum = { workspace = true }

@@ -8,9 +8,9 @@ repository.workspace = true
 description = "Template rendering engine for HTTP mock responses with fake data generation"
 
 [dependencies]
-mockpit-core = { version = "0.1.0", path = "../mockpit-core" }
-mockpit-fake-data = { version = "0.1.0", path = "../mockpit-fake-data" }
-mockpit-types = { version = "0.1.0", path = "../mockpit-types" }
+mockpit-core = { version = "0.1.1", path = "../mockpit-core" }
+mockpit-fake-data = { version = "0.1.1", path = "../mockpit-fake-data" }
+mockpit-types = { version = "0.1.1", path = "../mockpit-types" }
 tera = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
