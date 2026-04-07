@@ -128,35 +128,24 @@ mockpit = { git = "https://github.com/salamaashoush/mockpit", features = ["graph
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `engine` | yes | Core mock engine (types, config, matching, registry, templates) |
+| `engine` | yes | Core mock engine (includes fake-data, type-detector, codegen) |
 | `fake-data` | yes | 115+ fake data generators |
 | `type-detector` | no | Semantic type detection from field names and JSON values |
 | `codegen` | no | Template code generation from detected types |
 | `graphql` | no | GraphQL schema introspection and mock generation |
 | `server` | no | HTTP server with hot reload and graceful shutdown |
 | `api` | no | Mock management HTTP API (axum router) |
-| `cli` | no | CLI commands for mock and fake data management |
 | `schema` | no | JSON schema generation for editor validation |
 | `full` | no | Enable everything |
 
 ## Crate Structure
 
 ```
-mockpit                  - Root facade with feature-gated re-exports
-mockpit-types            - Core HTTP mock types and patterns
-mockpit-config           - YAML/JSON config parsing and HAR loading
-mockpit-recorder         - HTTP traffic recording
-mockpit-template         - Tera template rendering with fake data
-mockpit-consolidator     - Smart pattern-based mock consolidation
-mockpit-engine           - Core engine: registry, matcher, validation
-mockpit-graphql          - GraphQL introspection and mock generation
-mockpit-type-detector    - Semantic field type detection
-mockpit-fake-data        - Fake data generators (names, images, PDFs)
-mockpit-codegen          - Type-to-template code generation
-mockpit-core             - Shared utilities (PersistenceStore)
-mockpit-server           - Hot reload, graceful shutdown, state
-mockpit-api              - HTTP management API (axum router)
-mockpit-cli              - CLI commands
+mockpit          - Library: all core mock engine modules (types, config,
+                   recorder, template, consolidator, engine, graphql,
+                   type_detector, fake_data, codegen, core, server, api)
+mockpit-cli      - CLI binary + lib (commands for mock management and
+                   fake data generation)
 ```
 
 ## Documentation
