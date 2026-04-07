@@ -25,9 +25,11 @@ pub use registry::MockRegistry;
 pub use request_patcher::RequestPatcher;
 pub use scope::{ScopeInfo, ScopeManager};
 pub use types::{
-  BodyMatcher, BodySource, HeaderMatcher, MockDefinition, PatchOperation, QueryMatcher, RequestContext, RequestMatcher,
-  ResponseGenerator, ResponseGeneratorExt, ResponseMode, UrlPattern,
+    BodyMatcher, BodySource, HeaderMatcher, MockDefinition, PatchOperation, QueryMatcher,
+    RequestContext, RequestMatcher, ResponseGenerator, ResponseGeneratorExt, ResponseMode,
+    UrlPattern,
 };
 pub use validation::{
-  CodeSnippet, ErrorType, MockValidator, ValidationError, ValidationResult, ValidationWarning, WarningType,
+    CodeSnippet, ErrorType, MockValidator, ValidationError, ValidationResult, ValidationWarning,
+    WarningType,
 };

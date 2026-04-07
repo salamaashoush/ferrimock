@@ -17,7 +17,7 @@
 /// The query includes deprecated fields and enum values by using
 /// `includeDeprecated: true` parameter.
 pub fn get_introspection_query() -> &'static str {
-  r"
+    r"
     query IntrospectionQuery {
       __schema {
         queryType { name }
@@ -116,24 +116,24 @@ pub fn get_introspection_query() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn test_introspection_query_contains_required_fields() {
-    let query = get_introspection_query();
-    assert!(query.contains("IntrospectionQuery"));
-    assert!(query.contains("__schema"));
-    assert!(query.contains("queryType"));
-    assert!(query.contains("mutationType"));
-    assert!(query.contains("subscriptionType"));
-    assert!(query.contains("includeDeprecated"));
-  }
+    #[test]
+    fn test_introspection_query_contains_required_fields() {
+        let query = get_introspection_query();
+        assert!(query.contains("IntrospectionQuery"));
+        assert!(query.contains("__schema"));
+        assert!(query.contains("queryType"));
+        assert!(query.contains("mutationType"));
+        assert!(query.contains("subscriptionType"));
+        assert!(query.contains("includeDeprecated"));
+    }
 
-  #[test]
-  fn test_introspection_query_has_fragments() {
-    let query = get_introspection_query();
-    assert!(query.contains("fragment FullType"));
-    assert!(query.contains("fragment InputValue"));
-    assert!(query.contains("fragment TypeRef"));
-  }
+    #[test]
+    fn test_introspection_query_has_fragments() {
+        let query = get_introspection_query();
+        assert!(query.contains("fragment FullType"));
+        assert!(query.contains("fragment InputValue"));
+        assert!(query.contains("fragment TypeRef"));
+    }
 }

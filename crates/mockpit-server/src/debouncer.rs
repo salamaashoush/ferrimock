@@ -3,9 +3,9 @@
 use crate::file_watcher::FileEvent;
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use std::sync::Arc;
 use tokio::time::sleep;
 use tracing::debug;
 
@@ -37,7 +37,11 @@ impl EventDebouncer {
     pub async fn add_event(&self, event: FileEvent) {
         let mut pending = self.pending_events.lock().await;
         let path = event.path().to_path_buf();
-        debug!("Debouncer: added event for {} ({:?})", path.display(), event);
+        debug!(
+            "Debouncer: added event for {} ({:?})",
+            path.display(),
+            event
+        );
         // Last event wins for deduplication
         pending.insert(path, event);
     }

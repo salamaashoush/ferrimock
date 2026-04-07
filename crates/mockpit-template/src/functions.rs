@@ -4,29 +4,29 @@ use tera::Tera;
 
 /// Register custom Tera functions for mock templates
 pub(super) fn register_custom_functions(tera: &mut Tera) {
-  // ============================================================================
-  // REGISTER CUSTOM FILTERS
-  // ============================================================================
-  super::filters::register_all_filters(tera);
+    // ============================================================================
+    // REGISTER CUSTOM FILTERS
+    // ============================================================================
+    super::filters::register_all_filters(tera);
 
-  // ============================================================================
-  // FAKE DATA GENERATORS (using shared fake_data module)
-  // ============================================================================
+    // ============================================================================
+    // FAKE DATA GENERATORS (using shared fake_data module)
+    // ============================================================================
 
-  // Register all fake data generation functions
-  super::fake_data::register_all_functions(tera);
+    // Register all fake data generation functions
+    super::fake_data::register_all_functions(tera);
 
-  // ============================================================================
-  // PERSISTENCE API (store functions)
-  // ============================================================================
+    // ============================================================================
+    // PERSISTENCE API (store functions)
+    // ============================================================================
 
-  // Register all persistence store functions
-  super::store::register_all_functions(tera);
+    // Register all persistence store functions
+    super::store::register_all_functions(tera);
 
-  // ============================================================================
-  // GRAPHQL HELPERS
-  // ============================================================================
+    // ============================================================================
+    // GRAPHQL HELPERS
+    // ============================================================================
 
-  // Register all GraphQL helper functions
-  super::graphql_helpers::register_all_functions(tera);
+    // Register all GraphQL helper functions
+    super::graphql_helpers::register_all_functions(tera);
 }

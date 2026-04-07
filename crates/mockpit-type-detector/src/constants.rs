@@ -69,4 +69,11 @@ pub(super) const MIN_MATCH_RATIO_FILE_PATH: f64 = 0.7;
 /// Common pagination parameter keys
 pub(super) const PAGE_KEYS: &[&str] = &["page", "page_number", "p", "offset", "skip"];
 pub(super) const LIMIT_KEYS: &[&str] = &["limit", "per_page", "page_size", "size", "l", "count"];
-pub(super) const CURSOR_KEYS: &[&str] = &["cursor", "next_token", "continuation_token", "after", "before", "start"];
+pub(super) const CURSOR_KEYS: &[&str] = &[
+    "cursor",
+    "next_token",
+    "continuation_token",
+    "after",
+    "before",
+    "start",
+];
