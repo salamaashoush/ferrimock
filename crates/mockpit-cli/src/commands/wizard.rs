@@ -731,7 +731,7 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
     println!(
         "{}",
         ui::dim(&format!(
-            "Tip: Test with: the internal gateway mock test -m {} {}",
+            "Tip: Test with: mockpit mock test -m {} {}",
             state.methods.first().unwrap_or(&"GET".to_string()),
             state
                 .url_pattern

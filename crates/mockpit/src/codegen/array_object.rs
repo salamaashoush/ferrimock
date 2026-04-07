@@ -115,7 +115,7 @@ pub(super) fn generate_tera_object_with_extension(
                         file_extension.as_deref(),
                     )
                 }
-                // Handle URLs that should be download URLs in Box file objects (e.g., authenticated_download_url)
+                // Handle URLs that should be download URLs in file objects
                 FieldType::Url
                     if file_extension.is_some()
                         && (field.contains("download_url") || field.contains("download")) =>

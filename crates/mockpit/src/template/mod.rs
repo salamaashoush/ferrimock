@@ -27,11 +27,13 @@ mod fake_data;
 mod filters;
 mod functions;
 pub mod graphql_helpers;
+pub mod plugin;
 pub mod store;
 
 // Re-export public APIs
 pub use engine::hash_template;
 pub use error::TemplateError;
+pub use plugin::{TemplateFunction, register_template_function};
 pub use renderer::{
     render_patch_template, render_template, render_template_with_hash, render_template_with_id,
     validate_template,

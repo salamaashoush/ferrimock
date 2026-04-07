@@ -1,6 +1,6 @@
-//! Box Mock Engine - A high-performance HTTP mocking system
+//! Core mock engine for HTTP request matching and response generation
 //!
-//! This crate provides the core mocking engine for the internal gateway, enabling:
+//! Core mocking engine providing:
 //! - Pattern-based request matching
 //! - Static response generation
 //! - Priority-based mock selection

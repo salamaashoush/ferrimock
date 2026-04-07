@@ -22,7 +22,7 @@ pub mod response;
 pub mod template_formatter;
 
 // Re-export commonly used types
-pub use har::{HarLoadOptions, HarLoader};
+pub use har::{DomainFilter, HarLoadOptions, HarLoader};
 pub use matcher::{
     BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig,
 };

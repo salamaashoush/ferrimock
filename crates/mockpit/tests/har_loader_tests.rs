@@ -1144,9 +1144,12 @@ async fn test_export_single_mock_to_har() {
         Spec::V1_2(log) => {
             assert_eq!(log.entries.len(), 1);
             assert_eq!(log.entries[0].request.method, "GET");
-            assert_eq!(log.entries[0].request.url, "https://api.example.com/users/123");
+            assert_eq!(
+                log.entries[0].request.url,
+                "https://api.example.com/users/123"
+            );
             assert_eq!(log.entries[0].response.status, 200);
-            assert_eq!(log.creator.name, "the internal gateway");
+            assert_eq!(log.creator.name, mockpit::core::app_name());
         }
         Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
@@ -1496,7 +1499,7 @@ async fn test_export_empty_mocks_list() {
     match &har.log {
         Spec::V1_2(log) => {
             assert_eq!(log.entries.len(), 0);
-            assert_eq!(log.creator.name, "the internal gateway");
+            assert_eq!(log.creator.name, mockpit::core::app_name());
         }
         Spec::V1_3(_) => panic!("Expected HAR v1.2"),
     }
@@ -1702,7 +1705,11 @@ async fn test_mocks_enabled_by_default() {
             },
             browser: None,
             pages: None,
-            entries: vec![create_test_entry("GET", "https://api.example.com/test", 200)],
+            entries: vec![create_test_entry(
+                "GET",
+                "https://api.example.com/test",
+                200,
+            )],
             comment: None,
         }),
     };
@@ -1724,7 +1731,11 @@ async fn test_mocks_no_scope_by_default() {
             },
             browser: None,
             pages: None,
-            entries: vec![create_test_entry("GET", "https://api.example.com/test", 200)],
+            entries: vec![create_test_entry(
+                "GET",
+                "https://api.example.com/test",
+                200,
+            )],
             comment: None,
         }),
     };

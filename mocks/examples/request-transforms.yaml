@@ -10,7 +10,7 @@ mocks:
   request:
     headers:
       add:
-        x-forwarded-by: the internal gateway
+        x-forwarded-by: mockpit
         x-internal-auth: dev-proxy-token
         x-trace-id: "{{ fake_uuid() }}"
 - id: header-remove
@@ -131,7 +131,7 @@ mocks:
     headers:
       add:
         x-forwarded-proto: https
-        x-proxy-source: the internal gateway
+        x-proxy-source: mockpit
         x-trace-id: "{{ fake_uuid() }}"
       remove:
       - x-debug-mode
@@ -164,7 +164,7 @@ mocks:
       - verbose
     body:
       jsonpath:
-        $.client: the internal gateway
+        $.client: mockpit
   patch:
     jsonpath:
       $.metadata.proxied: true
@@ -172,7 +172,7 @@ mocks:
     headers:
       add:
         x-proxy-cache: miss
-        x-served-by: the internal gateway
+        x-served-by: mockpit
       remove:
       - x-internal-debug
       - x-backend-server
