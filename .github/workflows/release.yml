@@ -113,7 +113,7 @@ jobs:
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" ${{ env.ARCHIVE }} ${{ env.ARCHIVE }}.sha256
+        run: gh release upload "$GITHUB_REF_NAME" ${{ env.ARCHIVE }} ${{ env.ARCHIVE }}.sha256 --clobber
         shell: bash
 
   # ---------------------------------------------------------------------------
