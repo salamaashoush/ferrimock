@@ -9,7 +9,7 @@ generation, HAR recording, smart consolidation, GraphQL mock generation, and fak
 
 ## Workspace Structure
 
-Cargo workspace with 2 crates (consolidated from 16).
+Cargo workspace with 2 crates.
 
 ### mockpit (library)
 
