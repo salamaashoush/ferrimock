@@ -10,12 +10,17 @@ keywords = ["mock", "http", "testing", "api", "fake-data"]
 categories = ["development-tools", "web-programming"]
 
 [features]
-default = ["engine", "fake-data"]
+default = ["engine"]
 
-# Core mock engine (types + config + matching + registry + templates)
-engine = []
+# Core mock engine (types + config + matching + registry + templates + consolidator)
+# Includes fake-data (template needs it), type-detector and codegen (consolidator needs them)
+engine = [
+  "fake-data",
+  "type-detector",
+  "codegen",
+]
 
-# Fake data generators
+# Fake data generators (images, PDFs, identity, etc.)
 fake-data = [
   "dep:fake",
   "dep:rand",
@@ -33,7 +38,7 @@ type-detector = []
 codegen = ["type-detector"]
 
 # GraphQL schema introspection and mock generation
-graphql = ["engine", "codegen", "dep:graphql-parser", "dep:thiserror"]
+graphql = ["engine", "dep:graphql-parser", "dep:thiserror"]
 
 # HTTP server with hot reload and graceful shutdown
 server = ["engine", "dep:notify"]
@@ -45,7 +50,7 @@ api = ["server"]
 schema = ["dep:schemars"]
 
 # Everything
-full = ["engine", "fake-data", "type-detector", "codegen", "graphql", "server", "api", "schema"]
+full = ["engine", "graphql", "server", "api", "schema"]
 
 [dependencies]
 # ---- Always required (engine feature) ----
