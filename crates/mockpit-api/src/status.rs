@@ -25,7 +25,7 @@ pub async fn get_status(State(app_state): State<MockApiState>) -> impl IntoRespo
   };
 
   let recording_count = registry.recordings_count();
-  let recording_enabled = recording_count > 0;
+  let recording_enabled = app_state.config.recording_enabled;
   let recording = if recording_count > 0 {
     Some(RecordingStatus {
       enabled: recording_enabled,
