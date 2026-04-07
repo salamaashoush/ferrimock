@@ -1,12 +1,12 @@
 //! Mock matching engine for finding the appropriate mock for a request
 
 use super::registry::MockRegistry;
+use crate::engine::types::LeanString;
 use crate::engine::types::{
     MockDefinition, PatchOperation, RequestPatch, ResponseGeneratorExt, UpstreamOptions,
 };
 use http::{HeaderMap, Method, StatusCode};
 use lru::LruCache;
-use crate::engine::types::LeanString;
 use nohash_hasher::BuildNoHashHasher;
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHasher};
@@ -759,7 +759,9 @@ impl MockMatcher {
 )]
 mod tests {
     use super::*;
-    use crate::engine::types::{BodySource, HeaderMatcher, RequestMatcher, ResponseGenerator, UrlPattern};
+    use crate::engine::types::{
+        BodySource, HeaderMatcher, RequestMatcher, ResponseGenerator, UrlPattern,
+    };
     use http::StatusCode;
     use http::header::{HeaderName, HeaderValue};
     use smallvec::smallvec;

@@ -147,8 +147,8 @@ fn get_field_value<'a>(mock: &'a MockDefinition, field: &str) -> Cow<'a, str> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use axum::http::{Method, StatusCode};
     use crate::engine::types::{BodySource, RequestMatcher, ResponseGenerator};
+    use axum::http::{Method, StatusCode};
     use smallvec::smallvec;
 
     fn create_test_mock(

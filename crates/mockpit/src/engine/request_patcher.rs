@@ -1,10 +1,10 @@
 //! Request patcher - applies request-side patches before forwarding to upstream
 
+use super::types::RequestPatch;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use http::HeaderMap;
 use http::header::{HeaderName, HeaderValue};
-use super::types::RequestPatch;
 
 /// Applies request-side patches before forwarding to upstream
 pub struct RequestPatcher {

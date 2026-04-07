@@ -2,10 +2,10 @@
 
 use super::MockApiState;
 use super::types::{CallTrackingStatus, RecordingStatus, ScopeStatus, StatusResponse};
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use crate::consolidator::ConsolidatorOptions;
 use crate::engine::MockRecorderConsolidationExt;
 use crate::recorder::{MockRecorder, RecordingFormat};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use std::sync::Arc;
 
 /// Get mock system status

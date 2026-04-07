@@ -3,9 +3,9 @@
 //! This module extends `crate::recorder::MockRecorder` with consolidation capabilities,
 //! allowing recordings to be automatically consolidated after finalization.
 
-use anyhow::Result;
 use crate::consolidator::{ConsolidationStats, ConsolidatorOptions, MockConsolidator};
 use crate::recorder::{MockRecorder, RecordingFormat};
+use anyhow::Result;
 use std::path::PathBuf;
 
 /// Extension trait for MockRecorder that adds consolidation functionality

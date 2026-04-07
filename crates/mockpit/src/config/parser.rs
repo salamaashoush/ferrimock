@@ -6,9 +6,9 @@ use super::request_transform::RequestTransformConfig;
 use super::response::{
     ResponseConfig, ResponsePatchesConfig, parse_duration, parse_patches_config,
 };
+use crate::types::MockDefinition;
 use anyhow::Result;
 use lean_string::LeanString;
-use crate::types::MockDefinition;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -305,8 +305,7 @@ impl MockConfig {
         // enter PatchUpstream mode with empty operations for upstream passthrough
         let entered_patch_mode = matches!(response.mode, crate::types::ResponseMode::Patch { .. });
         if self.delay.is_some() && !is_full_mock && !entered_patch_mode && !has_request_transforms {
-            response =
-                response.with_mode(crate::types::ResponseMode::Patch { operations: vec![] });
+            response = response.with_mode(crate::types::ResponseMode::Patch { operations: vec![] });
         }
 
         // Build request transforms if present

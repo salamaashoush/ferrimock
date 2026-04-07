@@ -6,9 +6,9 @@ use super::har;
 use super::session;
 
 // Re-export public types
+pub use super::types::{RecordedInteraction, RecordingSession};
 pub use filters::RecordingFilterOptions;
 pub use formats::RecordingFormat;
-pub use super::types::{RecordedInteraction, RecordingSession};
 
 use anyhow::Result;
 use bytes::Bytes;
