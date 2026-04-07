@@ -12,7 +12,7 @@ name = "mockpit"
 path = "src/main.rs"
 
 [dependencies]
-mockpit-commands = { path = "../mockpit-commands" }
+mockpit-commands = { version = "0.1.0", path = "../mockpit-commands" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }

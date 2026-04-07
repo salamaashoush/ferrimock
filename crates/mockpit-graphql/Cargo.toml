@@ -14,9 +14,9 @@ keywords = ["graphql", "mock", "introspection", "testing"]
 graphql-parser = { workspace = true }
 
 # Mock system
-mockpit-codegen = { path = "../mockpit-codegen" }
-mockpit-config = { path = "../mockpit-config" }
-mockpit-type-detector = { path = "../mockpit-type-detector" }
+mockpit-codegen = { version = "0.1.0", path = "../mockpit-codegen" }
+mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
+mockpit-type-detector = { version = "0.1.0", path = "../mockpit-type-detector" }
 
 # Error handling
 anyhow = { workspace = true }

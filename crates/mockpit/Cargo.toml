@@ -51,20 +51,20 @@ schema = ["engine", "mockpit-config/schema"]
 full = ["engine", "fake-data", "type-detector", "codegen", "graphql", "server", "api", "commands", "schema"]
 
 [dependencies]
-mockpit-core = { path = "../mockpit-core", optional = true }
-mockpit-types = { path = "../mockpit-types", optional = true }
-mockpit-config = { path = "../mockpit-config", optional = true }
-mockpit-recorder = { path = "../mockpit-recorder", optional = true }
-mockpit-codegen = { path = "../mockpit-codegen", optional = true }
-mockpit-template = { path = "../mockpit-template", optional = true }
-mockpit-consolidator = { path = "../mockpit-consolidator", optional = true }
-mockpit-engine = { path = "../mockpit-engine", optional = true }
-mockpit-graphql = { path = "../mockpit-graphql", optional = true }
-mockpit-type-detector = { path = "../mockpit-type-detector", optional = true }
-mockpit-fake-data = { path = "../mockpit-fake-data", optional = true }
-mockpit-server = { path = "../mockpit-server", optional = true }
-mockpit-api = { path = "../mockpit-api", optional = true }
-mockpit-commands = { path = "../mockpit-commands", optional = true }
+mockpit-core = { version = "0.1.0", path = "../mockpit-core", optional = true }
+mockpit-types = { version = "0.1.0", path = "../mockpit-types", optional = true }
+mockpit-config = { version = "0.1.0", path = "../mockpit-config", optional = true }
+mockpit-recorder = { version = "0.1.0", path = "../mockpit-recorder", optional = true }
+mockpit-codegen = { version = "0.1.0", path = "../mockpit-codegen", optional = true }
+mockpit-template = { version = "0.1.0", path = "../mockpit-template", optional = true }
+mockpit-consolidator = { version = "0.1.0", path = "../mockpit-consolidator", optional = true }
+mockpit-engine = { version = "0.1.0", path = "../mockpit-engine", optional = true }
+mockpit-graphql = { version = "0.1.0", path = "../mockpit-graphql", optional = true }
+mockpit-type-detector = { version = "0.1.0", path = "../mockpit-type-detector", optional = true }
+mockpit-fake-data = { version = "0.1.0", path = "../mockpit-fake-data", optional = true }
+mockpit-server = { version = "0.1.0", path = "../mockpit-server", optional = true }
+mockpit-api = { version = "0.1.0", path = "../mockpit-api", optional = true }
+mockpit-commands = { version = "0.1.0", path = "../mockpit-commands", optional = true }
 
 [lints]
 workspace = true

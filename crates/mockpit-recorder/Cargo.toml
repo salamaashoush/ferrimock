@@ -10,7 +10,7 @@ categories = ["development-tools", "web-programming"]
 keywords = ["mock", "http", "recording", "har"]
 
 [dependencies]
-mockpit-config = { path = "../mockpit-config" }
+mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
 tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
 bytes = { workspace = true }
 http = { workspace = true }

@@ -8,13 +8,13 @@ repository.workspace = true
 description = "Mock and fake data command implementations for the mockpit CLI"
 
 [dependencies]
-mockpit-config = { path = "../mockpit-config" }
-mockpit-consolidator = { path = "../mockpit-consolidator" }
-mockpit-engine = { path = "../mockpit-engine" }
-mockpit-fake-data = { path = "../mockpit-fake-data" }
-mockpit-template = { path = "../mockpit-template" }
-mockpit-types = { path = "../mockpit-types" }
-mockpit-server = { path = "../mockpit-server" }
+mockpit-config = { version = "0.1.0", path = "../mockpit-config" }
+mockpit-consolidator = { version = "0.1.0", path = "../mockpit-consolidator" }
+mockpit-engine = { version = "0.1.0", path = "../mockpit-engine" }
+mockpit-fake-data = { version = "0.1.0", path = "../mockpit-fake-data" }
+mockpit-template = { version = "0.1.0", path = "../mockpit-template" }
+mockpit-types = { version = "0.1.0", path = "../mockpit-types" }
+mockpit-server = { version = "0.1.0", path = "../mockpit-server" }
 
 anyhow = { workspace = true }
 axum = { workspace = true }
