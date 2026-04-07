@@ -1,0 +1,11 @@
+[default.extend-words]
+# Common false positives in mock/fake data context
+ags = "ags"
+hel = "hel"
+nto = "nto"
+
+[files]
+extend-exclude = [
+  "Cargo.lock",
+  "*.ttf",
+]
