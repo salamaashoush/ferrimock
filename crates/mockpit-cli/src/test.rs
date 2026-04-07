@@ -310,12 +310,12 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
                     }
 
                     // Show header overrides if any
-                    if let Some(ref headers) = dynamic_response.headers {
-                        if !headers.is_empty() {
-                            println!("{}", ui::emphasis("Header Overrides:"));
-                            for (key, value) in headers {
-                                println!("  {key}: {value}");
-                            }
+                    if let Some(ref headers) = dynamic_response.headers
+                        && !headers.is_empty()
+                    {
+                        println!("{}", ui::emphasis("Header Overrides:"));
+                        for (key, value) in headers {
+                            println!("  {key}: {value}");
                         }
                     }
 
@@ -459,69 +459,67 @@ async fn test_mock_match_json(
     });
 
     // Render response if requested
-    if render {
-        if let Some(mock_match) = &mock_result {
-            let response_generator = &mock_match.mock.response;
+    if render && let Some(mock_match) = &mock_result {
+        let response_generator = &mock_match.mock.response;
 
-            match response_generator
-                .generate_dynamic(
-                    method.as_str(),
-                    path,
-                    query.as_deref(),
-                    &header_map,
-                    body_bytes.as_deref(),
-                    mock_match.captures.clone(),
-                    mock_match.mock.vars.as_ref(),
-                )
-                .await
-            {
-                Ok(dynamic_response) => {
-                    // Detect content type from headers
-                    let headers = dynamic_response
-                        .headers
-                        .clone()
-                        .unwrap_or_else(|| response_generator.headers.clone());
+        match response_generator
+            .generate_dynamic(
+                method.as_str(),
+                path,
+                query.as_deref(),
+                &header_map,
+                body_bytes.as_deref(),
+                mock_match.captures.clone(),
+                mock_match.mock.vars.as_ref(),
+            )
+            .await
+        {
+            Ok(dynamic_response) => {
+                // Detect content type from headers
+                let headers = dynamic_response
+                    .headers
+                    .clone()
+                    .unwrap_or_else(|| response_generator.headers.clone());
 
-                    let content_type = headers
-                        .iter()
-                        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
-                        .map_or("text/plain", |(_, v)| v.as_str());
+                let content_type = headers
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                    .map_or("text/plain", |(_, v)| v.as_str());
 
-                    // Determine if content is binary based on content-type
-                    let is_binary = is_binary_content_type(content_type);
+                // Determine if content is binary based on content-type
+                let is_binary = is_binary_content_type(content_type);
 
-                    let (body_value, is_base64) = if is_binary {
-                        // Binary content: base64 encode
-                        (
-                            json!(
-                                base64::engine::general_purpose::STANDARD
-                                    .encode(&dynamic_response.body)
-                            ),
-                            true,
-                        )
-                    } else {
-                        // Text content: try to parse as JSON, otherwise use string
-                        let body_str = String::from_utf8_lossy(&dynamic_response.body);
-                        let body_val = serde_json::from_str::<serde_json::Value>(&body_str)
-                            .unwrap_or_else(|_| serde_json::Value::String(body_str.to_string()));
-                        (body_val, false)
-                    };
+                let (body_value, is_base64) = if is_binary {
+                    // Binary content: base64 encode
+                    (
+                        json!(
+                            base64::engine::general_purpose::STANDARD
+                                .encode(&dynamic_response.body)
+                        ),
+                        true,
+                    )
+                } else {
+                    // Text content: try to parse as JSON, otherwise use string
+                    let body_str = String::from_utf8_lossy(&dynamic_response.body);
+                    let body_val = serde_json::from_str::<serde_json::Value>(&body_str)
+                        .unwrap_or_else(|_| serde_json::Value::String(body_str.to_string()));
+                    (body_val, false)
+                };
 
-                    #[allow(clippy::indexing_slicing)]
-                    {
-                        output["rendered"] = json!({
-                          "status": dynamic_response.status.map(|s| s.as_u16()).or(Some(mock_match.mock.response.status.as_u16())),
-                          "headers": headers,
-                          "body": body_value,
-                          "body_base64": is_base64,
-                        });
-                    }
+                #[allow(clippy::indexing_slicing)]
+                {
+                    output["rendered"] = json!({
+                      "status": dynamic_response.status.map(|s| s.as_u16()).or(Some(mock_match.mock.response.status.as_u16())),
+                      "headers": headers,
+                      "body": body_value,
+                      "body_base64": is_base64,
+                    });
                 }
-                Err(e) => {
-                    #[allow(clippy::indexing_slicing)]
-                    {
-                        output["render_error"] = json!(e.to_string());
-                    }
+            }
+            Err(e) => {
+                #[allow(clippy::indexing_slicing)]
+                {
+                    output["render_error"] = json!(e.to_string());
                 }
             }
         }

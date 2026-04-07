@@ -36,6 +36,7 @@ pub fn fake_amount() -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

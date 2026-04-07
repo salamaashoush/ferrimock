@@ -70,7 +70,7 @@ pub fn dim(msg: &str) -> String {
 }
 
 pub fn step(step_num: usize, total: usize, msg: &str) -> String {
-    format!("[{}/{}] {msg}", step_num, total)
+    format!("[{step_num}/{total}] {msg}")
 }
 
 // --- Dividers ---
@@ -83,11 +83,9 @@ pub fn divider() {
 
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::with_template("{spinner:.cyan} {msg}")
-            .expect("valid template")
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
+    if let Ok(style) = ProgressStyle::with_template(concat!("{spinner:.cyan}", " {msg}")) {
+        pb.set_style(style.tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]));
+    }
     pb.set_message(msg.to_string());
     pb.enable_steady_tick(Duration::from_millis(80));
     pb
@@ -150,11 +148,17 @@ pub fn format_bytes(bytes: u64) -> String {
     const GB: u64 = MB * 1024;
 
     if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
+        let whole = bytes / GB;
+        let frac = (bytes % GB) * 10 / GB;
+        format!("{whole}.{frac} GB")
     } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
+        let whole = bytes / MB;
+        let frac = (bytes % MB) * 10 / MB;
+        format!("{whole}.{frac} MB")
     } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
+        let whole = bytes / KB;
+        let frac = (bytes % KB) * 10 / KB;
+        format!("{whole}.{frac} KB")
     } else {
         format!("{bytes} B")
     }

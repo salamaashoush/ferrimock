@@ -51,7 +51,7 @@ impl ScopeManager {
     pub fn create_scope(&self, id: LeanString, ttl: Option<Duration>) -> Result<ScopeInfo, String> {
         // Check if scope already exists
         if self.scopes.contains_key(&id) {
-            return Err(format!("Scope '{}' already exists", id));
+            return Err(format!("Scope '{id}' already exists"));
         }
 
         let created_at = Utc::now();
@@ -82,7 +82,7 @@ impl ScopeManager {
         if self.scopes.remove(scope_id).is_some() {
             Ok(())
         } else {
-            Err(format!("Scope '{}' not found", scope_id))
+            Err(format!("Scope '{scope_id}' not found"))
         }
     }
 
@@ -121,10 +121,10 @@ impl ScopeManager {
         // Find expired scopes
         for entry in self.scopes.iter() {
             let data = entry.value();
-            if let Some(expires_at) = data.expires_at {
-                if now >= expires_at {
-                    expired.push(data.id.clone());
-                }
+            if let Some(expires_at) = data.expires_at
+                && now >= expires_at
+            {
+                expired.push(data.id.clone());
             }
         }
 
@@ -149,6 +149,12 @@ impl Default for ScopeManager {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -166,7 +172,7 @@ mod tests {
     fn test_create_scope_with_ttl() {
         let manager = ScopeManager::new();
 
-        let ttl = Duration::from_secs(3600);
+        let ttl = Duration::from_hours(1);
         let info = manager
             .create_scope("test-scope".into(), Some(ttl))
             .unwrap();
@@ -286,7 +292,7 @@ mod tests {
 
         manager.create_scope("scope1".into(), None).unwrap();
         manager
-            .create_scope("scope2".into(), Some(Duration::from_secs(3600)))
+            .create_scope("scope2".into(), Some(Duration::from_hours(1)))
             .unwrap();
 
         let expired = manager.cleanup_expired();

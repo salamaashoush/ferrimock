@@ -7,6 +7,17 @@ pub mod analysis;
 pub mod pattern;
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::needless_collect
+)]
 mod tests;
 
 use analysis::{ResponseAnalysis, ResponseAnalyzer};
@@ -135,11 +146,12 @@ impl MockConsolidator {
             .await
             .context("Failed to load mock collection")?;
 
-        self.consolidate(collection).await
+        self.consolidate(collection)
     }
 
     /// Consolidate a mock collection in memory
-    pub async fn consolidate(
+    #[allow(clippy::cast_precision_loss)] // Mock counts are small enough for f64 to be exact
+    pub fn consolidate(
         &mut self,
         collection: MockCollectionConfig,
     ) -> Result<MockCollectionConfig> {
@@ -155,7 +167,7 @@ impl MockConsolidator {
 
         let mut consolidated_mocks = Vec::new();
         for (group_id, group) in groups.iter().enumerate() {
-            let processed = self.process_mock_group(group_id, group).await?;
+            let processed = self.process_mock_group(group_id, group)?;
             consolidated_mocks.extend(processed);
         }
 
@@ -165,7 +177,7 @@ impl MockConsolidator {
 
         let consolidated_name = collection
             .name
-            .map(|n| format!("{} (Consolidated)", n))
+            .map(|n| format!("{n} (Consolidated)"))
             .or_else(|| Some("Consolidated Mocks".to_string()));
 
         Ok(MockCollectionConfig {
@@ -182,7 +194,8 @@ impl MockConsolidator {
     }
 
     /// Process a group of similar mocks using generic data-driven algorithm
-    async fn process_mock_group(
+    #[allow(clippy::indexing_slicing)] // `group[0]` guarded by `group.len() == 1` early return above
+    fn process_mock_group(
         &mut self,
         group_id: usize,
         group: &[MockConfig],
@@ -239,10 +252,7 @@ impl MockConsolidator {
 
         if response_analysis.varying_fields.is_empty() {
             self.stats.patterns_detected += 1;
-            println!(
-                "      ↳ Identical responses -> single mock with pattern: {}",
-                url_pattern
-            );
+            println!("      ↳ Identical responses -> single mock with pattern: {url_pattern}");
             let mut consolidated = group[0].clone();
             consolidated.id = format!("{}-consolidated", group[0].id).into();
             if let Some(ref mut match_config) = consolidated.match_config {
@@ -258,30 +268,29 @@ impl MockConsolidator {
                 url_pattern
             );
             self.stats.templates_created += 1;
-            self.create_smart_template_mock(
+            Ok(self.create_smart_template_mock(
                 group,
                 &url_pattern,
                 &response_analysis,
                 &graphql_analysis,
-            )
-            .await
+            ))
         } else {
             println!(
-                "      ↳ Keeping mocks separate (non-JSON or templates disabled) (pattern: {})",
-                url_pattern
+                "      ↳ Keeping mocks separate (non-JSON or templates disabled) (pattern: {url_pattern})"
             );
             Ok(group.to_vec())
         }
     }
 
     /// Create a smart template-based mock using Tera templates
-    async fn create_smart_template_mock(
+    #[allow(clippy::indexing_slicing)] // `group[0]` guarded by callers ensuring non-empty group
+    fn create_smart_template_mock(
         &self,
         group: &[MockConfig],
         pattern: &str,
         analysis: &ResponseAnalysis,
         graphql_analysis: &crate::analysis::GraphQLVariableAnalysis,
-    ) -> Result<Vec<MockConfig>> {
+    ) -> Vec<MockConfig> {
         let base_path = PatternDetector::extract_base_path(&group[0]);
 
         // Convert consolidator types to codegen types
@@ -296,12 +305,12 @@ impl MockConsolidator {
 
         if let Err(e) = mockpit_template::validate_template(&template_body) {
             eprintln!("  Warning: Generated template has validation errors:");
-            eprintln!("{}", e);
-            eprintln!("Template content:\n{}", template_body);
+            eprintln!("{e}");
+            eprintln!("Template content:\n{template_body}");
             println!(
                 "      ↳ Falling back to keeping mocks separate due to template validation error"
             );
-            return Ok(group.to_vec());
+            return group.to_vec();
         }
 
         let mut template_mock = group[0].clone();
@@ -330,7 +339,7 @@ impl MockConsolidator {
             analysis.varying_fields.len()
         );
 
-        Ok(vec![template_mock])
+        vec![template_mock]
     }
 
     /// Get consolidation statistics
@@ -339,22 +348,30 @@ impl MockConsolidator {
     }
 
     /// Extract common status code from a group of mocks (if all are the same)
+    #[allow(clippy::indexing_slicing)] // `group[0]` safe: `group.is_empty()` returns early
     fn extract_common_status(group: &[MockConfig]) -> Option<u16> {
         if group.is_empty() {
             return None;
         }
 
-        let first_status = group[0].response_config.as_ref().and_then(|r| r.status());
+        let first_status = group[0]
+            .response_config
+            .as_ref()
+            .and_then(mockpit_config::ResponseConfig::status);
 
         // Check if all mocks have the same status
-        let all_same = group
-            .iter()
-            .all(|mock| mock.response_config.as_ref().and_then(|r| r.status()) == first_status);
+        let all_same = group.iter().all(|mock| {
+            mock.response_config
+                .as_ref()
+                .and_then(mockpit_config::ResponseConfig::status)
+                == first_status
+        });
 
         if all_same { first_status } else { None }
     }
 
     /// Extract common headers from a group of mocks
+    #[allow(clippy::indexing_slicing)] // `group[0]` safe: `group.is_empty()` returns early
     fn extract_common_headers(group: &[MockConfig]) -> FxHashMap<String, String> {
         if group.is_empty() {
             return FxHashMap::default();
@@ -371,14 +388,13 @@ impl MockConsolidator {
         // Find headers that are common across all mocks (same key and value)
         let mut common_headers = FxHashMap::default();
 
-        for (key, value) in first_headers.iter() {
+        for (key, value) in &first_headers {
             let is_common = group.iter().all(|mock| {
                 mock.response_config
                     .as_ref()
                     .and_then(|r| r.headers())
                     .and_then(|h| h.get(key))
-                    .map(|v| v == value)
-                    .unwrap_or(false)
+                    .is_some_and(|v| v == value)
             });
 
             if is_common {

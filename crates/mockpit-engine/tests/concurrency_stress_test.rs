@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 //! Concurrency stress tests for PersistenceStore
 //!
 //! These tests verify that the persistence store handles high-concurrency scenarios
@@ -34,7 +40,7 @@ fn test_high_concurrency_increments() {
     }
 
     // Verify final count is exactly correct (no lost updates)
-    let expected = (NUM_THREADS * INCREMENTS_PER_THREAD) as i64;
+    let expected = i64::try_from(NUM_THREADS * INCREMENTS_PER_THREAD).unwrap();
     let actual = store.get("shared_counter").unwrap().as_i64().unwrap();
 
     assert_eq!(
@@ -57,7 +63,7 @@ fn test_mixed_operations_concurrent() {
 
     // Initialize some data
     for i in 0..10 {
-        store.set(format!("counter_{}", i), json!(0));
+        store.set(format!("counter_{i}"), json!(0));
     }
 
     // Spawn threads doing mixed operations
@@ -84,7 +90,7 @@ fn test_mixed_operations_concurrent() {
                     4 => {
                         let _ = store_clone.exists(&key);
                     }
-                    _ => unreachable!(),
+                    5.. => {}
                 }
             }
         });
@@ -98,11 +104,10 @@ fn test_mixed_operations_concurrent() {
 
     // Verify all keys still exist (no corruption)
     for i in 0..10 {
-        let key = format!("counter_{}", i);
+        let key = format!("counter_{i}");
         assert!(
             store.exists(&key),
-            "Key {} should still exist after concurrent ops",
-            key
+            "Key {key} should still exist after concurrent ops"
         );
     }
 }
@@ -128,7 +133,7 @@ fn test_concurrent_get_set_same_key() {
                     .unwrap_or(0);
 
                 // Write new value based on thread_id and iteration
-                let new_value = (thread_id * 1000 + i) as i64;
+                let new_value = i64::try_from(thread_id * 1000 + i).unwrap();
                 store_clone.set("shared_key".to_string(), json!(new_value));
 
                 // Small random delay to increase contention
@@ -167,7 +172,7 @@ fn test_concurrent_delete_and_recreate() {
                 let _ = store_clone.delete(&key);
 
                 // Immediately recreate with thread-specific key to avoid conflicts
-                let thread_key = format!("{}_{}", key, thread_id);
+                let thread_key = format!("{key}_{thread_id}");
                 store_clone.set(thread_key.clone(), json!({"thread": thread_id, "iter": i}));
 
                 // Verify our thread's key exists
@@ -206,7 +211,7 @@ fn test_concurrent_keys_operation() {
         let store_clone = Arc::clone(&store);
         let handle = thread::spawn(move || {
             for i in 0..OPERATIONS {
-                let key = format!("key_{}_{}", thread_id, i);
+                let key = format!("key_{thread_id}_{i}");
                 store_clone.set(key.clone(), json!(i));
 
                 if i % 2 == 0 {
@@ -280,8 +285,7 @@ fn test_concurrent_increment_decrement_balance() {
     let final_balance = store.get("balance").unwrap().as_i64().unwrap();
     assert_eq!(
         final_balance, 0,
-        "Balance should be 0 but was {}. Race condition detected!",
-        final_balance
+        "Balance should be 0 but was {final_balance}. Race condition detected!"
     );
 }
 
@@ -302,7 +306,7 @@ fn test_no_deadlock_with_clear() {
                     store_clone.clear();
                 } else {
                     // Others keep adding data
-                    store_clone.set(format!("key_{}_{}", thread_id, i), json!({"value": i}));
+                    store_clone.set(format!("key_{thread_id}_{i}"), json!({"value": i}));
                     let _ = store_clone.keys();
                 }
             }

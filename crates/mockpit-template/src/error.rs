@@ -3,15 +3,14 @@
 use mockpit_core::levenshtein_distance;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 /// Compiled regexes for extracting line/column/function from error messages
-static LINE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"line (\d+)").expect("valid regex"));
-static COLUMN_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"column (\d+)").expect("valid regex"));
-static FUNCTION_NAME_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"function ['`](\w+)['`]").expect("valid regex"));
+static LINE_REGEX: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"line (\d+)").ok());
+static COLUMN_REGEX: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"column (\d+)").ok());
+static FUNCTION_NAME_REGEX: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"function ['`](\w+)['`]").ok());
 
 /// Structured error type for template rendering
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +46,7 @@ impl TemplateError {
     }
 
     /// Add template excerpt
+    #[must_use]
     pub fn with_excerpt(mut self, template: &str, line: Option<usize>) -> Self {
         if let Some(line_num) = line {
             // Show 2 lines before and after the error
@@ -55,12 +55,14 @@ impl TemplateError {
             let end = (line_num + 3).min(lines.len());
 
             let mut excerpt = String::new();
-            for (i, line) in lines[start..end].iter().enumerate() {
-                let actual_line = start + i + 1;
-                if actual_line == line_num {
-                    excerpt.push_str(&format!("→ {}: {}\n", actual_line, line));
-                } else {
-                    excerpt.push_str(&format!("  {}: {}\n", actual_line, line));
+            if let Some(slice) = lines.get(start..end) {
+                for (i, line) in slice.iter().enumerate() {
+                    let actual_line = start + i + 1;
+                    if actual_line == line_num {
+                        let _ = writeln!(excerpt, "→ {actual_line}: {line}");
+                    } else {
+                        let _ = writeln!(excerpt, "  {actual_line}: {line}");
+                    }
                 }
             }
             self.template_excerpt = Some(excerpt);
@@ -74,25 +76,28 @@ impl TemplateError {
     }
 
     /// Add column information
+    #[must_use]
     pub fn with_column(mut self, column: usize) -> Self {
         self.column = Some(column);
         self
     }
 
     /// Add mock ID
+    #[must_use]
     pub fn with_mock_id(mut self, mock_id: impl Into<String>) -> Self {
         self.mock_id = Some(mock_id.into());
         self
     }
 
     /// Add suggestions
+    #[must_use]
     pub fn with_suggestions(mut self, suggestions: Vec<String>) -> Self {
         self.suggestions = suggestions;
         self
     }
 
     /// Parse a Tera error and extract useful information
-    pub fn from_tera_error(error: tera::Error, template: &str) -> Self {
+    pub fn from_tera_error(error: &tera::Error, template: &str) -> Self {
         let message = error.to_string();
 
         // Try to extract line/column from error message
@@ -122,19 +127,19 @@ impl std::fmt::Display for TemplateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Template {} Error", self.error_type)?;
         if let Some(mock_id) = &self.mock_id {
-            writeln!(f, "Mock ID: {}", mock_id)?;
+            writeln!(f, "Mock ID: {mock_id}")?;
         }
         writeln!(f, "Message: {}", self.message)?;
 
         if let Some(excerpt) = &self.template_excerpt {
             writeln!(f, "\nTemplate excerpt:")?;
-            writeln!(f, "{}", excerpt)?;
+            writeln!(f, "{excerpt}")?;
         }
 
         if !self.suggestions.is_empty() {
             writeln!(f, "\nSuggestions:")?;
             for suggestion in &self.suggestions {
-                writeln!(f, "  • {}", suggestion)?;
+                writeln!(f, "  • {suggestion}")?;
             }
         }
 
@@ -148,12 +153,14 @@ impl std::error::Error for TemplateError {}
 fn extract_line_column(message: &str) -> (Option<usize>, Option<usize>) {
     // Try to match patterns like "line 5" or "at line 5, column 10"
     let line: Option<usize> = LINE_REGEX
-        .captures(message)
+        .as_ref()
+        .and_then(|re| re.captures(message))
         .and_then(|caps| caps.get(1))
         .and_then(|m| m.as_str().parse().ok());
 
     let column: Option<usize> = COLUMN_REGEX
-        .captures(message)
+        .as_ref()
+        .and_then(|re| re.captures(message))
         .and_then(|caps| caps.get(1))
         .and_then(|m| m.as_str().parse().ok());
 
@@ -258,7 +265,8 @@ fn generate_template_suggestions(message: &str) -> Vec<String> {
 /// Extract function name from error message
 fn extract_function_name(message: &str) -> Option<String> {
     FUNCTION_NAME_REGEX
-        .captures(message)
+        .as_ref()
+        .and_then(|re| re.captures(message))
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_string())
 }
@@ -425,7 +433,7 @@ fn find_similar_function(name: &str) -> Vec<String> {
         .iter()
         .filter(|&func| levenshtein_distance(name, func) <= 2)
         .take(3)
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect()
 }
 
@@ -444,13 +452,11 @@ mod tests {
         );
         assert!(
             suggestions.iter().any(|s| s.contains("get_random")),
-            "Should mention get_random: {:?}",
-            suggestions
+            "Should mention get_random: {suggestions:?}"
         );
         assert!(
             suggestions.iter().any(|s| s.contains("start < end")),
-            "Should explain start < end requirement: {:?}",
-            suggestions
+            "Should explain start < end requirement: {suggestions:?}"
         );
     }
 
@@ -463,8 +469,7 @@ mod tests {
         // Should suggest fake_name as it's similar to fake_nme
         assert!(
             suggestions.iter().any(|s| s.contains("fake_name")),
-            "Should suggest similar function names: {:?}",
-            suggestions
+            "Should suggest similar function names: {suggestions:?}"
         );
     }
 
@@ -478,8 +483,7 @@ mod tests {
             suggestions
                 .iter()
                 .any(|s| s.contains("method") || s.contains("path")),
-            "Should list available variables: {:?}",
-            suggestions
+            "Should list available variables: {suggestions:?}"
         );
     }
 
@@ -496,7 +500,7 @@ mod tests {
             .with_mock_id("test-mock")
             .with_suggestions(vec!["Check for missing {{ }}".to_string()]);
 
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("test-mock"));
         assert!(display.contains("Missing closing brace"));
         assert!(display.contains("Check for missing"));

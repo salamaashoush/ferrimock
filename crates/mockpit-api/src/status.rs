@@ -3,10 +3,10 @@
 use crate::MockApiState;
 use crate::types::{CallTrackingStatus, RecordingStatus, ScopeStatus, StatusResponse};
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use mockpit_consolidator::{ConsolidatorOptions, MockConsolidator};
+use mockpit_consolidator::ConsolidatorOptions;
+use mockpit_engine::MockRecorderConsolidationExt;
 use mockpit_recorder::{MockRecorder, RecordingFormat};
 use std::sync::Arc;
-use tracing::error;
 
 /// Get mock system status
 ///
@@ -106,20 +106,20 @@ pub async fn clear_recordings(State(app_state): State<MockApiState>) -> impl Int
 pub async fn finalize_recordings(State(app_state): State<MockApiState>) -> impl IntoResponse {
     // Finalize the recording (waits for pending writes and closes file)
     let recorder_guard = app_state.mock.mock_recorder.read().await;
-    if let Some(recorder) = recorder_guard.as_ref() {
-        if let Err(e) = recorder.finalize_file().await {
-            let mut error_response = serde_json::Map::new();
-            error_response.insert("success".to_string(), serde_json::Value::Bool(false));
-            error_response.insert(
-                "error".to_string(),
-                serde_json::Value::String(format!("Failed to finalize recording: {e}")),
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::Value::Object(error_response)),
-            )
-                .into_response();
-        }
+    if let Some(recorder) = recorder_guard.as_ref()
+        && let Err(e) = recorder.finalize_file().await
+    {
+        let mut error_response = serde_json::Map::new();
+        error_response.insert("success".to_string(), serde_json::Value::Bool(false));
+        error_response.insert(
+            "error".to_string(),
+            serde_json::Value::String(format!("Failed to finalize recording: {e}")),
+        );
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::Value::Object(error_response)),
+        )
+            .into_response();
     }
 
     let mut success_response = serde_json::Map::new();
@@ -176,7 +176,7 @@ pub struct SetModeRequest {
 /// POST /__mockpit/mode
 /// Body: { "mode": "hybrid" | "selective" | "full" }
 pub async fn set_mode(
-    State(app_state): State<MockApiState>,
+    State(_app_state): State<MockApiState>,
     Json(request): Json<SetModeRequest>,
 ) -> impl IntoResponse {
     let mode = request.mode.to_lowercase();
@@ -241,7 +241,7 @@ pub struct RecordingOptions {
     pub consolidate: Option<bool>,
     /// Enable template extraction during consolidation
     pub enable_templates: Option<bool>,
-    /// Keep original file before consolidation
+    /// Keep original recording file before overwriting with consolidated version
     pub keep_original: Option<bool>,
     /// Minimum pattern threshold for consolidation
     pub min_pattern: Option<usize>,
@@ -315,7 +315,7 @@ pub async fn stop_recording(
     State(app_state): State<MockApiState>,
     axum::Json(options): axum::Json<RecordingOptions>,
 ) -> impl IntoResponse {
-    // Stop recording inline
+    // Take the recorder out of the shared state
     let mut recorder_guard = app_state.mock.mock_recorder.write().await;
     let Some(recorder) = recorder_guard.take() else {
         let mut response = serde_json::Map::new();
@@ -332,71 +332,89 @@ pub async fn stop_recording(
     };
     drop(recorder_guard);
 
-    // Finalize the recording
-    if let Err(e) = recorder.finalize_file().await {
-        let mut response = serde_json::Map::new();
-        response.insert("success".to_string(), serde_json::Value::Bool(false));
-        response.insert(
-            "error".to_string(),
-            serde_json::Value::String(format!("Failed to finalize: {e}")),
-        );
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::Value::Object(response)),
-        )
-            .into_response();
-    }
+    let should_consolidate = options.consolidate.unwrap_or(false);
 
-    let mut response = serde_json::Map::new();
-    response.insert("success".to_string(), serde_json::Value::Bool(true));
-    response.insert(
-        "message".to_string(),
-        serde_json::Value::String("Recording stopped".to_string()),
-    );
+    if should_consolidate {
+        // Use finalize_and_consolidate: finalizes, backs up original if requested, then consolidates
+        let consolidator_opts = ConsolidatorOptions {
+            enable_templates: options.enable_templates.unwrap_or(true),
+            min_pattern_threshold: options.min_pattern.unwrap_or(3),
+            ..ConsolidatorOptions::default()
+        };
+        let keep_original = options.keep_original.unwrap_or(false);
 
-    // Optionally consolidate
-    if options.consolidate.unwrap_or(false) {
-        if let Some(ref recordings_dir) = app_state.config.recordings_dir {
-            let consolidator_opts = ConsolidatorOptions {
-                enable_templates: options.enable_templates.unwrap_or(true),
-                min_pattern_threshold: options.min_pattern.unwrap_or(3),
-                ..ConsolidatorOptions::default()
-            };
-            let mut consolidator = MockConsolidator::with_options(consolidator_opts);
-            // Try to find the recording file and consolidate
-            let recording_path = recordings_dir.to_path_buf();
-            if recording_path.exists() {
-                match consolidator.consolidate_file(&recording_path).await {
-                    Ok(_collection) => {
-                        let stats = consolidator.stats();
-                        let mut stats_obj = serde_json::Map::new();
-                        stats_obj.insert(
-                            "original_count".to_string(),
-                            serde_json::Value::Number(stats.original_count.into()),
-                        );
-                        stats_obj.insert(
-                            "consolidated_count".to_string(),
-                            serde_json::Value::Number(stats.consolidated_count.into()),
-                        );
-                        stats_obj.insert(
-                            "reduction_percent".to_string(),
-                            serde_json::Value::Number(
-                                serde_json::Number::from_f64(stats.reduction_ratio * 100.0)
-                                    .unwrap_or(serde_json::Number::from(0)),
-                            ),
-                        );
-                        response.insert(
-                            "consolidation".to_string(),
-                            serde_json::Value::Object(stats_obj),
-                        );
-                    }
-                    Err(e) => {
-                        error!("Consolidation failed: {e}");
-                    }
+        match recorder
+            .finalize_and_consolidate(consolidator_opts, keep_original)
+            .await
+        {
+            Ok((file_path, stats)) => {
+                let mut response = serde_json::Map::new();
+                response.insert("success".to_string(), serde_json::Value::Bool(true));
+                response.insert(
+                    "message".to_string(),
+                    serde_json::Value::String("Recording stopped and consolidated".to_string()),
+                );
+                response.insert(
+                    "file".to_string(),
+                    serde_json::Value::String(file_path.display().to_string()),
+                );
+                let mut stats_obj = serde_json::Map::new();
+                stats_obj.insert(
+                    "original_count".to_string(),
+                    serde_json::Value::Number(stats.original_count.into()),
+                );
+                stats_obj.insert(
+                    "consolidated_count".to_string(),
+                    serde_json::Value::Number(stats.consolidated_count.into()),
+                );
+                if let Some(pct) = serde_json::Number::from_f64(stats.reduction_ratio * 100.0) {
+                    stats_obj.insert(
+                        "reduction_percent".to_string(),
+                        serde_json::Value::Number(pct),
+                    );
                 }
+                response.insert(
+                    "consolidation".to_string(),
+                    serde_json::Value::Object(stats_obj),
+                );
+                (StatusCode::OK, Json(serde_json::Value::Object(response))).into_response()
+            }
+            Err(e) => {
+                let mut response = serde_json::Map::new();
+                response.insert("success".to_string(), serde_json::Value::Bool(false));
+                response.insert(
+                    "error".to_string(),
+                    serde_json::Value::String(format!("Failed to stop recording: {e}")),
+                );
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::Value::Object(response)),
+                )
+                    .into_response()
             }
         }
-    }
+    } else {
+        // Just finalize without consolidation
+        if let Err(e) = recorder.finalize_file().await {
+            let mut response = serde_json::Map::new();
+            response.insert("success".to_string(), serde_json::Value::Bool(false));
+            response.insert(
+                "error".to_string(),
+                serde_json::Value::String(format!("Failed to finalize: {e}")),
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::Value::Object(response)),
+            )
+                .into_response();
+        }
 
-    (StatusCode::OK, Json(serde_json::Value::Object(response))).into_response()
+        let mut response = serde_json::Map::new();
+        response.insert("success".to_string(), serde_json::Value::Bool(true));
+        response.insert(
+            "message".to_string(),
+            serde_json::Value::String("Recording stopped".to_string()),
+        );
+        (StatusCode::OK, Json(serde_json::Value::Object(response))).into_response()
+    }
 }

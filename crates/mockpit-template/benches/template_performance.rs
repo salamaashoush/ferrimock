@@ -35,12 +35,12 @@ fn bench_render_cache_hit(c: &mut Criterion) {
 
     // Simple variable interpolation (most common case)
     group.bench_function("simple_variable", |b| {
-        b.iter(|| render_template(black_box(r#"{"id": "{{ captures.id }}"}"#), black_box(&ctx)))
+        b.iter(|| render_template(black_box(r#"{"id": "{{ captures.id }}"}"#), black_box(&ctx)));
     });
 
     // Static template (no variables)
     group.bench_function("static_no_vars", |b| {
-        b.iter(|| render_template(black_box(r#"{"status": "ok"}"#), black_box(&ctx)))
+        b.iter(|| render_template(black_box(r#"{"status": "ok"}"#), black_box(&ctx)));
     });
 
     // Multiple variables
@@ -50,7 +50,7 @@ fn bench_render_cache_hit(c: &mut Criterion) {
         black_box(r#"{"method": "{{ method }}", "path": "{{ path }}", "id": "{{ captures.id }}"}"#),
         black_box(&ctx),
       )
-    })
+    });
     });
 
     group.finish();
@@ -73,12 +73,12 @@ fn bench_render_fake_data(c: &mut Criterion) {
                 black_box(r#"{"name": "{{ fake_name() }}"}"#),
                 black_box(&ctx),
             )
-        })
+        });
     });
 
     // UUID generation
     group.bench_function("uuid_generation", |b| {
-        b.iter(|| render_template(black_box(r#"{"id": "{{ uuid() }}"}"#), black_box(&ctx)))
+        b.iter(|| render_template(black_box(r#"{"id": "{{ uuid() }}"}"#), black_box(&ctx)));
     });
 
     // Multiple fake functions in one template
@@ -90,7 +90,7 @@ fn bench_render_fake_data(c: &mut Criterion) {
         ),
         black_box(&ctx),
       )
-    })
+    });
   });
 
     group.finish();
@@ -125,7 +125,7 @@ fn bench_render_control_flow(c: &mut Criterion) {
         ),
         black_box(&ctx),
       )
-    })
+    });
   });
 
     // Conditional logic
@@ -135,7 +135,7 @@ fn bench_render_control_flow(c: &mut Criterion) {
                 black_box(r#"{"type": "{% if method == "GET" %}read{% else %}write{% endif %}"}"#),
                 black_box(&ctx),
             )
-        })
+        });
     });
 
     group.finish();
@@ -145,12 +145,13 @@ fn bench_render_control_flow(c: &mut Criterion) {
 // Benchmark 4: Validation (used by MockValidator)
 // ============================================================================
 
+#[allow(clippy::result_large_err)]
 fn bench_validate_template(c: &mut Criterion) {
     let mut group = c.benchmark_group("validate_template");
     group.significance_level(0.05).sample_size(1000);
 
     group.bench_function("valid_simple", |b| {
-        b.iter(|| validate_template(black_box(r#"{"id": "{{ captures.id }}"}"#)))
+        b.iter(|| validate_template(black_box(r#"{"id": "{{ captures.id }}"}"#)));
     });
 
     group.bench_function("valid_complex", |b| {
@@ -158,11 +159,11 @@ fn bench_validate_template(c: &mut Criterion) {
       validate_template(black_box(
         r#"{"id": "{{ fake_uuid() }}", "items": [{% for i in range(end=3) %}{"name": "{{ fake_name() }}"}{% if not loop.last %},{% endif %}{% endfor %}]}"#,
       ))
-    })
+    });
   });
 
     group.bench_function("invalid_syntax", |b| {
-        b.iter(|| validate_template(black_box(r#"{"id": "{{ bad_syntax"}"#)))
+        b.iter(|| validate_template(black_box(r#"{"id": "{{ bad_syntax"}"#)));
     });
 
     group.finish();
@@ -183,12 +184,10 @@ fn bench_render_cache_miss(c: &mut Criterion) {
     group.bench_function("unique_template_compile", |b| {
         b.iter(|| {
             counter += 1;
-            let template = format!(
-                r#"{{"id": "unique_{}", "name": "{{{{ fake_name() }}}}"}}"#,
-                counter
-            );
+            let template =
+                format!(r#"{{"id": "unique_{counter}", "name": "{{{{ fake_name() }}}}"}}"#);
             render_template(black_box(&template), black_box(&ctx))
-        })
+        });
     });
 
     group.finish();
@@ -211,7 +210,7 @@ fn bench_new_features(c: &mut Criterion) {
                 black_box(r#"{"expires": "{{ now_plus(days=30) }}"}"#),
                 black_box(&ctx),
             )
-        })
+        });
     });
 
     group.bench_function("now_minus_hours", |b| {
@@ -220,7 +219,7 @@ fn bench_new_features(c: &mut Criterion) {
                 black_box(r#"{"created": "{{ now_minus(hours=2) }}"}"#),
                 black_box(&ctx),
             )
-        })
+        });
     });
 
     group.bench_function("iso_date_offset", |b| {
@@ -229,7 +228,7 @@ fn bench_new_features(c: &mut Criterion) {
                 black_box(r#"{"due_date": "{{ fake_iso_date_offset(days=14) }}"}"#),
                 black_box(&ctx),
             )
-        })
+        });
     });
 
     // Array generation
@@ -239,7 +238,7 @@ fn bench_new_features(c: &mut Criterion) {
                 black_box(r#"{"users": {{ fake_array(type="name", count=5) }}}"#),
                 black_box(&ctx),
             )
-        })
+        });
     });
 
     group.bench_function("fake_array_10_emails", |b| {
@@ -248,7 +247,7 @@ fn bench_new_features(c: &mut Criterion) {
                 black_box(r#"{"emails": {{ fake_array(type="email", count=10) }}}"#),
                 black_box(&ctx),
             )
-        })
+        });
     });
 
     group.finish();
@@ -282,13 +281,13 @@ fn bench_precomputed_hash(c: &mut Criterion) {
     let hash = hash_template(template);
 
     group.bench_function("runtime_hash", |b| {
-        b.iter(|| render_template(black_box(template), black_box(&ctx)))
+        b.iter(|| render_template(black_box(template), black_box(&ctx)));
     });
 
     group.bench_function("precomputed_hash", |b| {
         b.iter(|| {
             render_template_with_hash(black_box(template), black_box(hash), black_box(&ctx), None)
-        })
+        });
     });
 
     group.finish();

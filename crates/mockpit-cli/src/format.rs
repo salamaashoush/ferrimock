@@ -287,27 +287,27 @@ fn format_external_references(
 
     for mock in &config.mocks {
         if let Some(ref response_config) = mock.response_config {
-            if let Some(ref_path) = response_config.template_file_ref() {
-                if let Err(e) = format_external_file(mock_dir, ref_path, true, check) {
-                    let mock_id = &mock.id;
-                    println!(
-                        "  {} formatting template for mock {}: {}",
-                        ui::warning("warn"),
-                        mock_id,
-                        e
-                    );
-                }
+            if let Some(ref_path) = response_config.template_file_ref()
+                && let Err(e) = format_external_file(mock_dir, ref_path, true, check)
+            {
+                let mock_id = &mock.id;
+                println!(
+                    "  {} formatting template for mock {}: {}",
+                    ui::warning("warn"),
+                    mock_id,
+                    e
+                );
             }
-            if let Some(ref_path) = response_config.file_ref() {
-                if let Err(e) = format_external_file(mock_dir, ref_path, false, check) {
-                    let mock_id = &mock.id;
-                    println!(
-                        "  {} formatting file for mock {}: {}",
-                        ui::warning("warn"),
-                        mock_id,
-                        e
-                    );
-                }
+            if let Some(ref_path) = response_config.file_ref()
+                && let Err(e) = format_external_file(mock_dir, ref_path, false, check)
+            {
+                let mock_id = &mock.id;
+                println!(
+                    "  {} formatting file for mock {}: {}",
+                    ui::warning("warn"),
+                    mock_id,
+                    e
+                );
             }
         }
     }
@@ -391,16 +391,16 @@ fn expand_json_body_values(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             // Check if this object has a "body" key with a string value that is valid JSON
-            if let Some(body_val) = map.get_mut("body") {
-                if let Some(body_str) = body_val.as_str() {
-                    // Only expand if it's valid JSON object or array (not a template or plain text)
-                    if !body_str.contains("{{") && !body_str.contains("{%") {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body_str) {
-                            if parsed.is_object() || parsed.is_array() {
-                                *body_val = parsed;
-                            }
-                        }
-                    }
+            if let Some(body_val) = map.get_mut("body")
+                && let Some(body_str) = body_val.as_str()
+            {
+                // Only expand if it's valid JSON object or array (not a template or plain text)
+                if !body_str.contains("{{")
+                    && !body_str.contains("{%")
+                    && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body_str)
+                    && (parsed.is_object() || parsed.is_array())
+                {
+                    *body_val = parsed;
                 }
             }
             // Recurse into all values
@@ -436,18 +436,18 @@ fn expand_yaml_body_values(value: &mut serde_yaml::Value) {
     match value {
         serde_yaml::Value::Mapping(map) => {
             let body_key = serde_yaml::Value::String("body".to_string());
-            if let Some(body_val) = map.get_mut(&body_key) {
-                if let Some(body_str) = body_val.as_str() {
-                    // Only expand if it's valid JSON (not a template or plain text)
-                    if !body_str.contains("{{") && !body_str.contains("{%") {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body_str) {
-                            if parsed.is_object() || parsed.is_array() {
-                                // Convert serde_json::Value to serde_yaml::Value
-                                if let Ok(yaml_val) = serde_yaml::to_value(&parsed) {
-                                    *body_val = yaml_val;
-                                }
-                            }
-                        }
+            if let Some(body_val) = map.get_mut(&body_key)
+                && let Some(body_str) = body_val.as_str()
+            {
+                // Only expand if it's valid JSON (not a template or plain text)
+                if !body_str.contains("{{")
+                    && !body_str.contains("{%")
+                    && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body_str)
+                    && (parsed.is_object() || parsed.is_array())
+                {
+                    // Convert serde_json::Value to serde_yaml::Value
+                    if let Ok(yaml_val) = serde_yaml::to_value(&parsed) {
+                        *body_val = yaml_val;
                     }
                 }
             }

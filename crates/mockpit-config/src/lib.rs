@@ -42,6 +42,13 @@ pub type PatchesConfig = ResponsePatchesConfig;
 pub use template_formatter::format_body;
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 mod patch_tests {
     use super::*;
 

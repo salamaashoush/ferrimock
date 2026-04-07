@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 //! Edge case tests for config.rs to improve coverage from 68.71% to 90%+
 
 use mockpit_config::{
@@ -86,14 +92,14 @@ async fn test_from_file_yaml() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.yaml");
 
-    let content = r#"
+    let content = r"
 mocks:
   - id: test
     match:
       url: /test
     response:
       status: 200
-"#;
+";
 
     std::fs::write(&file_path, content).unwrap();
 
@@ -108,14 +114,14 @@ async fn test_from_file_yml_extension() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.yml");
 
-    let content = r#"
+    let content = r"
 mocks:
   - id: test
     match:
       url: /test
     response:
       status: 200
-"#;
+";
 
     std::fs::write(&file_path, content).unwrap();
 
@@ -2094,8 +2100,7 @@ mocks:
     let err = result.unwrap_err();
     assert!(
         err.contains("Cannot combine full mock body"),
-        "Error should mention conflicting modes, got: {}",
-        err
+        "Error should mention conflicting modes, got: {err}"
     );
 }
 

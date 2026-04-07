@@ -1,6 +1,7 @@
 //! URL pattern parsing utilities
 
 use mockpit_types::UrlPattern;
+use std::fmt::Write;
 
 /// Check if pattern contains regex escape sequences
 ///
@@ -42,17 +43,14 @@ pub fn parse_url_pattern(pattern: &str) -> Result<UrlPattern, String> {
     if pattern.contains("/:") || pattern.contains("/{") {
         let regex_pattern = convert_express_to_regex(pattern);
         return UrlPattern::regex(&regex_pattern).map_err(|e| {
-            format!(
-                "Failed to convert Express-style pattern '{}' to regex: {}",
-                pattern, e
-            )
+            format!("Failed to convert Express-style pattern '{pattern}' to regex: {e}")
         });
     }
 
     // Check for glob patterns (**/ or *)
     if pattern.contains("**") || (pattern.contains('*') && !pattern.starts_with('^')) {
         return UrlPattern::glob(pattern)
-            .map_err(|e| format!("Invalid glob pattern '{}': {}", pattern, e));
+            .map_err(|e| format!("Invalid glob pattern '{pattern}': {e}"));
     }
 
     // Check for regex patterns (starts with ^ or ends with $, or contains regex special chars)
@@ -74,7 +72,7 @@ pub fn parse_url_pattern(pattern: &str) -> Result<UrlPattern, String> {
         || pattern.contains('|')
     {
         return UrlPattern::regex(pattern)
-            .map_err(|e| format!("Invalid regex pattern '{}': {}", pattern, e));
+            .map_err(|e| format!("Invalid regex pattern '{pattern}': {e}"));
     }
 
     // Default to exact match for simple paths
@@ -109,18 +107,16 @@ pub fn convert_express_to_regex(pattern: &str) -> String {
                         chars.next(); // consume '}'
                         break;
                     } else if next_ch.is_alphanumeric() || next_ch == '_' {
-                        param_name.push(
-                            chars
-                                .next()
-                                .expect("Character should exist after peek confirmed it"),
-                        );
+                        if let Some(c) = chars.next() {
+                            param_name.push(c);
+                        }
                     } else {
                         break;
                     }
                 }
 
                 if !param_name.is_empty() {
-                    regex.push_str(&format!("(?P<{}>[^/]+)", param_name));
+                    let _ = write!(regex, "(?P<{param_name}>[^/]+)");
                 }
             }
             ':' => {
@@ -131,11 +127,9 @@ pub fn convert_express_to_regex(pattern: &str) -> String {
                 // Collect parameter name
                 while let Some(&next_ch) = chars.peek() {
                     if next_ch.is_alphanumeric() || next_ch == '_' {
-                        param_name.push(
-                            chars
-                                .next()
-                                .expect("Character should exist after peek confirmed it"),
-                        );
+                        if let Some(c) = chars.next() {
+                            param_name.push(c);
+                        }
                     } else if next_ch == '?' {
                         // Optional parameter
                         is_optional = true;
@@ -151,12 +145,12 @@ pub fn convert_express_to_regex(pattern: &str) -> String {
                     // Remove last character from regex if it's /
                     if regex.ends_with('/') {
                         regex.pop();
-                        regex.push_str(&format!("(/(?P<{}>[^/]+))?", param_name));
+                        let _ = write!(regex, "(/(?P<{param_name}>[^/]+))?");
                     } else {
-                        regex.push_str(&format!("(?P<{}>[^/]+)?", param_name));
+                        let _ = write!(regex, "(?P<{param_name}>[^/]+)?");
                     }
                 } else {
-                    regex.push_str(&format!("(?P<{}>[^/]+)", param_name));
+                    let _ = write!(regex, "(?P<{param_name}>[^/]+)");
                 }
             }
             '*' => {
@@ -193,6 +187,13 @@ pub fn is_valid_http_method(s: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 mod tests {
     use super::*;
 
@@ -436,8 +437,8 @@ mod tests {
         ];
 
         for url in &urls {
-            let pattern = parse_url_pattern(url)
-                .unwrap_or_else(|e| panic!("Failed to parse '{}': {}", url, e));
+            let pattern =
+                parse_url_pattern(url).unwrap_or_else(|e| panic!("Failed to parse '{url}': {e}"));
             assert!(
                 matches!(pattern, UrlPattern::Exact(_)),
                 "Recorded URL '{}' should be exact match, got {:?}",

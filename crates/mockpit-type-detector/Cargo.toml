@@ -10,7 +10,6 @@ description = "Semantic type detection for field names and values using ML-like 
 [dependencies]
 serde_json = { workspace = true }
 regex = { workspace = true }
-lazy_static = { workspace = true }
 rustc-hash = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }

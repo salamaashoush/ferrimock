@@ -32,9 +32,9 @@ impl RequestPatcher {
             match op {
                 RequestPatch::HeaderAdd { name, value } => {
                     let header_name = HeaderName::try_from(name.as_str())
-                        .with_context(|| format!("Invalid header name: {}", name))?;
+                        .with_context(|| format!("Invalid header name: {name}"))?;
                     let header_value = HeaderValue::try_from(value.as_str())
-                        .with_context(|| format!("Invalid header value for {}: {}", name, value))?;
+                        .with_context(|| format!("Invalid header value for {name}: {value}"))?;
                     headers.insert(header_name, header_value);
                 }
                 RequestPatch::HeaderRemove { name } => {
@@ -59,11 +59,11 @@ impl RequestPatcher {
                         raw_body
                             .as_ref()
                             .and_then(|b| serde_json::from_slice(b).ok())
-                            .unwrap_or(serde_json::Value::Object(Default::default()))
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::default()))
                     });
                     // Use a simple JSONPath setter (navigates dotted paths)
                     set_jsonpath_value(body_val, path, value.clone()).with_context(|| {
-                        format!("Failed to set JSONPath '{}' on request body", path)
+                        format!("Failed to set JSONPath '{path}' on request body")
                     })?;
                 }
                 RequestPatch::JsonPatch(patch) => {
@@ -71,7 +71,7 @@ impl RequestPatcher {
                         raw_body
                             .as_ref()
                             .and_then(|b| serde_json::from_slice(b).ok())
-                            .unwrap_or(serde_json::Value::Object(Default::default()))
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::default()))
                     });
                     json_patch::patch(body_val, patch)
                         .context("Failed to apply JSON Patch to request body")?;
@@ -207,13 +207,18 @@ fn set_value_at_path(
         return Ok(());
     }
 
-    let segment = segments[0];
-    let remaining = &segments[1..];
+    let Some(&segment) = segments.first() else {
+        *current = value;
+        return Ok(());
+    };
+    let remaining = segments.get(1..).unwrap_or_default();
 
     // Check for array index notation: field[0], field[*]
     if let Some(bracket_pos) = segment.find('[') {
-        let field_name = &segment[..bracket_pos];
-        let index_str = &segment[bracket_pos + 1..segment.len() - 1]; // strip [ and ]
+        let field_name = segment.get(..bracket_pos).unwrap_or_default();
+        let index_str = segment
+            .get(bracket_pos + 1..segment.len().saturating_sub(1))
+            .unwrap_or_default(); // strip [ and ]
 
         // Navigate to the field first
         let field = if field_name.is_empty() {
@@ -221,14 +226,14 @@ fn set_value_at_path(
         } else {
             current
                 .as_object_mut()
-                .ok_or_else(|| anyhow::anyhow!("Expected object at '{}'", field_name))?
+                .ok_or_else(|| anyhow::anyhow!("Expected object at '{field_name}'"))?
                 .entry(field_name)
                 .or_insert(serde_json::Value::Array(vec![]))
         };
 
         let arr = field
             .as_array_mut()
-            .ok_or_else(|| anyhow::anyhow!("Expected array at '{}'", segment))?;
+            .ok_or_else(|| anyhow::anyhow!("Expected array at '{segment}'"))?;
 
         if index_str == "*" {
             // Apply to all elements
@@ -238,9 +243,9 @@ fn set_value_at_path(
         } else {
             let idx: usize = index_str
                 .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid array index: {}", index_str))?;
-            if idx < arr.len() {
-                set_value_at_path(&mut arr[idx], remaining, value)?;
+                .map_err(|_| anyhow::anyhow!("Invalid array index: {index_str}"))?;
+            if let Some(elem) = arr.get_mut(idx) {
+                set_value_at_path(elem, remaining, value)?;
             } else {
                 return Err(anyhow::anyhow!(
                     "Array index {} out of bounds (length {})",
@@ -253,7 +258,7 @@ fn set_value_at_path(
         // Simple field navigation
         let obj = current
             .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("Expected object at '{}'", segment))?;
+            .ok_or_else(|| anyhow::anyhow!("Expected object at '{segment}'"))?;
 
         if remaining.is_empty() {
             // Set the value
@@ -262,7 +267,7 @@ fn set_value_at_path(
             // Navigate deeper
             let next = obj
                 .entry(segment)
-                .or_insert(serde_json::Value::Object(Default::default()));
+                .or_insert(serde_json::Value::Object(serde_json::Map::default()));
             set_value_at_path(next, remaining, value)?;
         }
     }
@@ -271,6 +276,12 @@ fn set_value_at_path(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use http::HeaderMap;

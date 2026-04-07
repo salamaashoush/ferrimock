@@ -53,6 +53,7 @@ impl RecordingFilterOptions {
     /// let mut options = RecordingFilterOptions::default();
     /// options.exclude_patterns = RecordingFilterOptions::web_static_patterns();
     /// ```
+    #[allow(clippy::expect_used)] // Static regex literals -- panic on invalid pattern is correct
     pub fn web_static_patterns() -> Vec<Regex> {
         vec![
             // JavaScript files

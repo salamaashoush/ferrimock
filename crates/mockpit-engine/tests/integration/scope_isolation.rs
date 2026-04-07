@@ -240,17 +240,17 @@ fn test_scope_info_queries() {
 
     // Create multiple scopes
     registry
-        .create_scope("api-tests".into(), Some(Duration::from_secs(3600)))
+        .create_scope("api-tests".into(), Some(Duration::from_hours(1)))
         .unwrap();
     registry.create_scope("ui-tests".into(), None).unwrap();
     registry
-        .create_scope("integration-tests".into(), Some(Duration::from_secs(7200)))
+        .create_scope("integration-tests".into(), Some(Duration::from_hours(2)))
         .unwrap();
 
     // Add mocks to different scopes
     for i in 0..3 {
         let mock = MockDefinition {
-            id: format!("api-mock-{}", i).into(),
+            id: format!("api-mock-{i}").into(),
             priority: 100,
             enabled: true,
             source_file: None,
@@ -258,7 +258,7 @@ fn test_scope_info_queries() {
             request_transforms: None,
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
-                url_patterns: smallvec![UrlPattern::exact(format!("/api/endpoint{}", i))],
+                url_patterns: smallvec![UrlPattern::exact(format!("/api/endpoint{i}"))],
                 ..Default::default()
             },
             response: ResponseGenerator::new(
@@ -272,7 +272,7 @@ fn test_scope_info_queries() {
 
     for i in 0..2 {
         let mock = MockDefinition {
-            id: format!("ui-mock-{}", i).into(),
+            id: format!("ui-mock-{i}").into(),
             priority: 100,
             enabled: true,
             source_file: None,
@@ -280,7 +280,7 @@ fn test_scope_info_queries() {
             request_transforms: None,
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
-                url_patterns: smallvec![UrlPattern::exact(format!("/ui/page{}", i))],
+                url_patterns: smallvec![UrlPattern::exact(format!("/ui/page{i}"))],
                 ..Default::default()
             },
             response: ResponseGenerator::new(
@@ -463,7 +463,7 @@ fn test_realistic_test_suite_workflow() {
     {
         let scope_id = "test-user-login";
         registry
-            .create_scope(LeanString::from(scope_id), Some(Duration::from_secs(60)))
+            .create_scope(LeanString::from(scope_id), Some(Duration::from_mins(1)))
             .unwrap();
 
         // Setup mocks for login test
@@ -518,7 +518,7 @@ fn test_realistic_test_suite_workflow() {
     {
         let scope_id = "test-file-upload";
         registry
-            .create_scope(LeanString::from(scope_id), Some(Duration::from_secs(60)))
+            .create_scope(LeanString::from(scope_id), Some(Duration::from_mins(1)))
             .unwrap();
 
         registry.add_mock(MockDefinition {
@@ -563,9 +563,9 @@ fn test_realistic_test_suite_workflow() {
 
         // Each test has its own mocks
         for i in 1..=3 {
-            let scope = format!("parallel-test-{}", i);
+            let scope = format!("parallel-test-{i}");
             registry.add_mock(MockDefinition {
-                id: format!("mock-test-{}", i).into(),
+                id: format!("mock-test-{i}").into(),
                 priority: 100,
                 enabled: true,
                 source_file: None,
@@ -573,12 +573,12 @@ fn test_realistic_test_suite_workflow() {
                 request_transforms: None,
                 request: RequestMatcher {
                     methods: smallvec![Method::GET],
-                    url_patterns: smallvec![UrlPattern::exact(format!("/api/test{}", i))],
+                    url_patterns: smallvec![UrlPattern::exact(format!("/api/test{i}"))],
                     ..Default::default()
                 },
                 response: ResponseGenerator::new(
                     StatusCode::OK,
-                    BodySource::inline(format!(r#"{{"test":{}}}"#, i)),
+                    BodySource::inline(format!(r#"{{"test":{i}}}"#)),
                 ),
                 vars: None,
             });

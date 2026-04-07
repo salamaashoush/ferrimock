@@ -1,3 +1,10 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
 use mockpit_config::{MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig};
 use mockpit_engine::validation::{ErrorType, MockValidator, WarningType};
 use rustc_hash::FxHashMap;
@@ -9,7 +16,7 @@ async fn test_validate_valid_yaml_file() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("valid.yaml");
 
-    let valid_config = r#"
+    let valid_config = r"
 mocks:
   - id: test-mock
     enabled: true
@@ -19,7 +26,7 @@ mocks:
     response:
       status: 200
       body: OK
-"#;
+";
 
     fs::write(&file_path, valid_config).unwrap();
 
@@ -35,7 +42,7 @@ async fn test_validate_custom_method() {
     let file_path = temp_dir.path().join("custom_method.yaml");
 
     // HTTP spec allows custom methods, so CUSTOM_METHOD should be valid
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -43,7 +50,7 @@ mocks:
       url: /api/test
     response:
       status: 200
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -88,7 +95,7 @@ async fn test_validate_invalid_status_code() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("invalid_status.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -96,7 +103,7 @@ mocks:
       url: /test
     response:
       status: 999
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -178,7 +185,7 @@ async fn test_validate_missing_file_reference() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("missing_file.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -187,7 +194,7 @@ mocks:
     response:
       status: 200
       file: nonexistent.txt
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -208,7 +215,7 @@ async fn test_validate_missing_template_file() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("missing_template.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -217,7 +224,7 @@ mocks:
     response:
       status: 200
       template_file: nonexistent.txt
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -242,7 +249,7 @@ async fn test_validate_template_file_with_syntax_error() {
     // Write invalid template file
     fs::write(&template_path, "{{ unclosed").unwrap();
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -251,7 +258,7 @@ mocks:
     response:
       status: 200
       template_file: template.txt
-"#;
+";
 
     fs::write(&config_path, config).unwrap();
 
@@ -272,13 +279,13 @@ async fn test_validate_missing_match_config() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("missing_match.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     response:
       status: 200
       body: OK
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -299,13 +306,13 @@ async fn test_validate_missing_response_config() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("missing_response.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
       method: GET
       url: /test
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -327,7 +334,7 @@ async fn test_validate_duplicate_mock_ids() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("duplicate_ids.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: duplicate
     match:
@@ -341,7 +348,7 @@ mocks:
       url: /test2
     response:
       status: 200
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -362,7 +369,7 @@ async fn test_validate_disabled_mock_warning() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("disabled.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: disabled-mock
     enabled: false
@@ -371,7 +378,7 @@ mocks:
       url: /test
     response:
       status: 200
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -438,7 +445,7 @@ async fn test_validate_yaml_file() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -447,7 +454,7 @@ mocks:
     response:
       status: 200
       body: OK
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -497,7 +504,7 @@ async fn test_validate_directory() {
     let valid_path = temp_dir.path().join("valid.yaml");
     fs::write(
         &valid_path,
-        r#"
+        r"
 mocks:
   - id: test
     match:
@@ -505,7 +512,7 @@ mocks:
       url: /test
     response:
       status: 200
-"#,
+",
     )
     .unwrap();
 
@@ -513,7 +520,7 @@ mocks:
     let invalid_path = temp_dir.path().join("invalid.yaml");
     fs::write(
         &invalid_path,
-        r#"
+        r"
 mocks:
   - id: test
     match:
@@ -521,7 +528,7 @@ mocks:
       url: /test
     response:
       status: 999
-"#,
+",
     )
     .unwrap();
 
@@ -533,7 +540,11 @@ mocks:
 
     assert_eq!(results.len(), 2); // Only the 2 yaml files
     assert!(results.iter().any(|r| !r.has_errors()));
-    assert!(results.iter().any(|r| r.has_errors()));
+    assert!(
+        results
+            .iter()
+            .any(mockpit_engine::ValidationResult::has_errors)
+    );
 }
 
 #[tokio::test]
@@ -604,7 +615,7 @@ async fn test_validate_multiple_methods() {
     let file_path = temp_dir.path().join("multi_method.yaml");
 
     // HTTP spec allows custom methods, so this should be valid
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -615,7 +626,7 @@ mocks:
       url: /test
     response:
       status: 200
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -717,18 +728,17 @@ async fn test_valid_status_codes() {
     let temp_dir = TempDir::new().unwrap();
 
     for status in [100, 200, 301, 404, 500, 599] {
-        let file_path = temp_dir.path().join(format!("status_{}.yaml", status));
+        let file_path = temp_dir.path().join(format!("status_{status}.yaml"));
         let config = format!(
-            r#"
+            r"
 mocks:
   - id: test
     match:
       method: GET
       url: /test
     response:
-      status: {}
-"#,
-            status
+      status: {status}
+"
         );
 
         fs::write(&file_path, config).unwrap();
@@ -736,7 +746,7 @@ mocks:
         let validator = MockValidator::new();
         let result = validator.validate_file(&file_path).await;
 
-        assert!(!result.has_errors(), "Status {} should be valid", status);
+        assert!(!result.has_errors(), "Status {status} should be valid");
     }
 }
 
@@ -746,18 +756,17 @@ async fn test_edge_case_status_codes() {
 
     // Test invalid status codes
     for status in [99, 600, 700, 1000] {
-        let file_path = temp_dir.path().join(format!("status_{}.yaml", status));
+        let file_path = temp_dir.path().join(format!("status_{status}.yaml"));
         let config = format!(
-            r#"
+            r"
 mocks:
   - id: test
     match:
       method: GET
       url: /test
     response:
-      status: {}
-"#,
-            status
+      status: {status}
+"
         );
 
         fs::write(&file_path, config).unwrap();
@@ -765,7 +774,7 @@ mocks:
         let validator = MockValidator::new();
         let result = validator.validate_file(&file_path).await;
 
-        assert!(result.has_errors(), "Status {} should be invalid", status);
+        assert!(result.has_errors(), "Status {status} should be invalid");
     }
 }
 #[tokio::test]
@@ -839,13 +848,14 @@ mocks:
     let result = validator.validate_file(&file_path).await;
 
     assert!(result.has_errors());
-    let regex_errors: Vec<_> = result
-        .errors
-        .iter()
-        .filter(|e| matches!(e.error_type, ErrorType::InvalidRegex))
-        .collect();
-
-    assert!(regex_errors.len() >= 2);
+    assert!(
+        result
+            .errors
+            .iter()
+            .filter(|e| matches!(e.error_type, ErrorType::InvalidRegex))
+            .count()
+            >= 2
+    );
 }
 
 #[tokio::test]
@@ -873,13 +883,14 @@ mocks:
     let result = validator.validate_file(&file_path).await;
 
     assert!(result.has_errors());
-    let header_errors: Vec<_> = result
-        .errors
-        .iter()
-        .filter(|e| matches!(e.error_type, ErrorType::InvalidHeaderName))
-        .collect();
-
-    assert!(header_errors.len() >= 2);
+    assert!(
+        result
+            .errors
+            .iter()
+            .filter(|e| matches!(e.error_type, ErrorType::InvalidHeaderName))
+            .count()
+            >= 2
+    );
 }
 
 #[tokio::test]
@@ -887,11 +898,11 @@ async fn test_mock_with_missing_both_configs() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("missing_both.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     enabled: true
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -932,18 +943,17 @@ async fn test_status_code_boundary_values() {
     ];
 
     for (status, should_error) in test_cases {
-        let file_path = temp_dir.path().join(format!("status_{}.yaml", status));
+        let file_path = temp_dir.path().join(format!("status_{status}.yaml"));
         let config = format!(
-            r#"
+            r"
 mocks:
   - id: test
     match:
       method: GET
       url: /test
     response:
-      status: {}
-"#,
-            status
+      status: {status}
+"
         );
 
         fs::write(&file_path, config).unwrap();
@@ -992,11 +1002,10 @@ mocks:
   - id: test
     match:
       method: GET
-      url: "{}"
+      url: "{yaml_pattern}"
     response:
       status: 200
-"#,
-            yaml_pattern
+"#
         );
 
         fs::write(&file_path, config).unwrap();
@@ -1013,8 +1022,7 @@ mocks:
         }
         assert!(
             !result.has_errors(),
-            "Pattern '{}' should not error when valid",
-            pattern
+            "Pattern '{pattern}' should not error when valid"
         );
     }
 }
@@ -1036,11 +1044,10 @@ mocks:
   - id: test
     match:
       method: GET
-      url: "{}"
+      url: "{pattern}"
     response:
       status: 200
-"#,
-            pattern
+"#
         );
 
         fs::write(&file_path, config).unwrap();
@@ -1049,12 +1056,11 @@ mocks:
         let result = validator.validate_file(&file_path).await;
 
         if !result.has_errors() {
-            eprintln!("Pattern '{}' did not error as expected", pattern);
+            eprintln!("Pattern '{pattern}' did not error as expected");
         }
         assert!(
             result.has_errors(),
-            "Pattern '{}' should trigger regex validation error",
-            pattern
+            "Pattern '{pattern}' should trigger regex validation error"
         );
         assert!(
             result
@@ -1128,7 +1134,7 @@ async fn test_file_reference_valid() {
     // Create the referenced file
     fs::write(&data_path, r#"{"test": "data"}"#).unwrap();
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -1137,7 +1143,7 @@ mocks:
     response:
       status: 200
       file: data.json
-"#;
+";
 
     fs::write(&config_path, config).unwrap();
 
@@ -1156,7 +1162,7 @@ async fn test_template_reference_valid() {
     // Create the referenced template file
     fs::write(&template_path, "{{ fake_name() }}").unwrap();
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -1165,7 +1171,7 @@ mocks:
     response:
       status: 200
       template_file: template.txt
-"#;
+";
 
     fs::write(&config_path, config).unwrap();
 
@@ -1184,7 +1190,7 @@ async fn test_template_reference_invalid_syntax() {
     // Create template file with invalid syntax
     fs::write(&template_path, "{{ unclosed").unwrap();
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -1193,7 +1199,7 @@ mocks:
     response:
       status: 200
       template_file: template.txt
-"#;
+";
 
     fs::write(&config_path, config).unwrap();
 
@@ -1254,11 +1260,11 @@ async fn test_parse_error_yaml_syntax() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("invalid.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test
     invalid indentation
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -1426,7 +1432,7 @@ async fn test_validate_directory_mixed_files() {
     let valid_yaml = temp_dir.path().join("valid.yaml");
     fs::write(
         &valid_yaml,
-        r#"
+        r"
 mocks:
   - id: test1
     match:
@@ -1434,7 +1440,7 @@ mocks:
       url: /test
     response:
       status: 200
-"#,
+",
     )
     .unwrap();
 
@@ -1442,7 +1448,7 @@ mocks:
     let invalid_yaml = temp_dir.path().join("invalid.yaml");
     fs::write(
         &invalid_yaml,
-        r#"
+        r"
 mocks:
   - id: test2
     match:
@@ -1450,7 +1456,7 @@ mocks:
       url: /test
     response:
       status: 999
-"#,
+",
     )
     .unwrap();
 
@@ -1495,7 +1501,7 @@ async fn test_validate_directory_with_subdirs() {
     let main_file = temp_dir.path().join("main.yaml");
     fs::write(
         &main_file,
-        r#"
+        r"
 mocks:
   - id: test1
     match:
@@ -1503,7 +1509,7 @@ mocks:
       url: /test
     response:
       status: 200
-"#,
+",
     )
     .unwrap();
 
@@ -1511,7 +1517,7 @@ mocks:
     let sub_file = sub_dir.join("sub.yaml");
     fs::write(
         &sub_file,
-        r#"
+        r"
 mocks:
   - id: test2
     match:
@@ -1519,7 +1525,7 @@ mocks:
       url: /test
     response:
       status: 200
-"#,
+",
     )
     .unwrap();
 
@@ -1539,7 +1545,7 @@ async fn test_validate_yml_extension() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("test.yml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -1548,7 +1554,7 @@ mocks:
     response:
       status: 200
       body: OK
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -1567,7 +1573,7 @@ async fn test_method_and_methods_combination() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("method_combo.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: test-mock
     match:
@@ -1578,7 +1584,7 @@ mocks:
       url: /test
     response:
       status: 200
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -1657,10 +1663,10 @@ async fn test_empty_mocks_collection() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("empty.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - {}
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -1676,10 +1682,10 @@ async fn test_no_mocks() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("no_mocks.yaml");
 
-    let config = r#"
+    let config = r"
 name: Test Collection
 description: A test collection
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -1715,8 +1721,7 @@ mocks:
     let err = result.unwrap_err();
     assert!(
         err.contains("Invalid duration"),
-        "Error should mention invalid duration, got: {}",
-        err
+        "Error should mention invalid duration, got: {err}"
     );
 }
 
@@ -1744,8 +1749,7 @@ mocks:
     let err = result.unwrap_err();
     assert!(
         err.contains("Invalid regex") || err.contains("regex"),
-        "Error should mention invalid regex, got: {}",
-        err
+        "Error should mention invalid regex, got: {err}"
     );
 }
 
@@ -1804,8 +1808,7 @@ mocks:
     let err = result.unwrap_err();
     assert!(
         err.contains("Cannot combine full mock body"),
-        "Error should mention conflicting modes, got: {}",
-        err
+        "Error should mention conflicting modes, got: {err}"
     );
 }
 
@@ -1858,7 +1861,7 @@ async fn test_validate_invalid_forward_to() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("bad_forward.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: bad-forward
     match:
@@ -1866,7 +1869,7 @@ mocks:
       url: /test
     request:
       forward_to: not-a-url
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -2045,7 +2048,7 @@ async fn test_validate_passthrough_mock_no_response_valid() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("passthrough.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: passthrough
     match:
@@ -2055,7 +2058,7 @@ mocks:
       headers:
         add:
           x-trace-id: abc-123
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 
@@ -2074,7 +2077,7 @@ async fn test_validate_empty_request_transform_warning() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("empty_request.yaml");
 
-    let config = r#"
+    let config = r"
 mocks:
   - id: empty-request
     match:
@@ -2083,7 +2086,7 @@ mocks:
     request: {}
     response:
       status: 200
-"#;
+";
 
     fs::write(&file_path, config).unwrap();
 

@@ -58,7 +58,7 @@ pub fn render_template_with_id(
         engine
             .render(template, &tera_context)
             .map_err(|e| match mock_id {
-                Some(id) => format!("[Mock: {}] {}", id, e),
+                Some(id) => format!("[Mock: {id}] {e}"),
                 None => e,
             })
     })
@@ -78,7 +78,7 @@ pub fn render_template_with_hash(
         engine
             .render_with_hash(template, hash, &tera_context)
             .map_err(|e| match mock_id {
-                Some(id) => format!("[Mock: {}] {}", id, e),
+                Some(id) => format!("[Mock: {id}] {e}"),
                 None => e,
             })
     })
@@ -112,7 +112,7 @@ pub fn render_patch_template(
         engine
             .render(template, &tera_context)
             .map_err(|e| match mock_id {
-                Some(id) => format!("[Mock: {}] {}", id, e),
+                Some(id) => format!("[Mock: {id}] {e}"),
                 None => e,
             })
     })

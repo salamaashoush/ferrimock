@@ -48,6 +48,7 @@ pub fn fake_relative_time() -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

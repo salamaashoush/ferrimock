@@ -26,6 +26,8 @@
 
 pub mod analyzers;
 pub mod checkers;
+#[allow(clippy::expect_used)]
+// Static regex initialization - panics are appropriate for invalid compile-time patterns
 pub mod constants;
 pub mod features;
 pub mod semantic;
@@ -120,69 +122,68 @@ impl TypeDetector {
             let features = extract_features(&strs);
 
             // Run priority-ordered pattern detection
-            self.detect_from_patterns(values, &features)
+            detect_from_patterns(values, &features)
         } else {
             (FieldType::RandomString, 0.5)
         }
     }
+}
 
-    /// Layer 3 & 4: Priority-ordered pattern matching with multi-sample validation
-    /// Now uses weighted scoring to collect all potential types
-    fn detect_from_patterns(
-        &self,
-        values: &[&JsonValue],
-        features: &features::TypeFeatures,
-    ) -> (FieldType, f64) {
-        let strings: Vec<&str> = values.iter().filter_map(|v| v.as_str()).collect();
+/// Layer 3 & 4: Priority-ordered pattern matching with multi-sample validation
+/// Now uses weighted scoring to collect all potential types
+fn detect_from_patterns(
+    values: &[&JsonValue],
+    features: &features::TypeFeatures,
+) -> (FieldType, f64) {
+    let strings: Vec<&str> = values.iter().filter_map(|v| v.as_str()).collect();
 
-        if strings.is_empty() {
-            return (FieldType::RandomString, 0.5);
-        }
-
-        // Collect all potential types with their scores
-        let mut potential_types: Vec<(FieldType, f64)> = Vec::new();
-
-        for checker in get_checkers() {
-            if let Some(confidence) = (checker.checker_fn)(&strings, features) {
-                if confidence >= checker.threshold {
-                    potential_types.push((checker.field_type.clone(), confidence));
-                }
-            }
-        }
-
-        // If no types passed threshold, return default
-        if potential_types.is_empty() {
-            return (FieldType::RandomString, 0.5);
-        }
-
-        // Return the type with highest confidence
-        let (field_type, confidence) = potential_types
-            .into_iter()
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap_or((FieldType::RandomString, 0.5));
-
-        // For DownloadUrl, add sample URL for file type detection
-        if matches!(field_type, FieldType::DownloadUrl { .. }) {
-            let sample_url = strings
-                .iter()
-                .find(|s| s.len() > 100)
-                .map(|s| (*s).to_string());
-            return (FieldType::DownloadUrl { sample_url }, confidence);
-        }
-
-        // For DataUri, extract mime type for smart generation
-        if matches!(field_type, FieldType::DataUri { .. }) {
-            let mime_type = strings.iter().find_map(|s| {
-                DATA_URI_REGEX
-                    .captures(s)
-                    .and_then(|caps| caps.get(1))
-                    .map(|m| m.as_str().to_string())
-            });
-            return (FieldType::DataUri { mime_type }, confidence);
-        }
-
-        (field_type, confidence)
+    if strings.is_empty() {
+        return (FieldType::RandomString, 0.5);
     }
+
+    // Collect all potential types with their scores
+    let mut potential_types: Vec<(FieldType, f64)> = Vec::new();
+
+    for checker in get_checkers() {
+        if let Some(confidence) = (checker.checker_fn)(&strings, features)
+            && confidence >= checker.threshold
+        {
+            potential_types.push((checker.field_type.clone(), confidence));
+        }
+    }
+
+    // If no types passed threshold, return default
+    if potential_types.is_empty() {
+        return (FieldType::RandomString, 0.5);
+    }
+
+    // Return the type with highest confidence
+    let (field_type, confidence) = potential_types
+        .into_iter()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or((FieldType::RandomString, 0.5));
+
+    // For DownloadUrl, add sample URL for file type detection
+    if matches!(field_type, FieldType::DownloadUrl { .. }) {
+        let sample_url = strings
+            .iter()
+            .find(|s| s.len() > 100)
+            .map(|s| (*s).to_string());
+        return (FieldType::DownloadUrl { sample_url }, confidence);
+    }
+
+    // For DataUri, extract mime type for smart generation
+    if matches!(field_type, FieldType::DataUri { .. }) {
+        let mime_type = strings.iter().find_map(|s| {
+            DATA_URI_REGEX
+                .captures(s)
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+        });
+        return (FieldType::DataUri { mime_type }, confidence);
+    }
+
+    (field_type, confidence)
 }
 
 impl Default for TypeDetector {
@@ -192,4 +193,13 @@ impl Default for TypeDetector {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::uninlined_format_args,
+    clippy::float_cmp,
+    clippy::match_wildcard_for_single_variants,
+    clippy::manual_string_new
+)]
 mod tests;

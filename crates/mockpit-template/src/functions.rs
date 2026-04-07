@@ -3,7 +3,7 @@
 use tera::Tera;
 
 /// Register custom Tera functions for mock templates
-pub(super) fn register_custom_functions(tera: &mut Tera) {
+pub fn register_custom_functions(tera: &mut Tera) {
     // ============================================================================
     // REGISTER CUSTOM FILTERS
     // ============================================================================

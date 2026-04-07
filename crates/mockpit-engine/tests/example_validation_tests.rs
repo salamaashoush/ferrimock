@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 //! Tests that validate ALL mock example files pass the MockValidator.
 //!
 //! This ensures that schema changes don't break existing examples and that
@@ -15,18 +21,17 @@ fn collect_example_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
-    let read_dir = match std::fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(_) => return,
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
     };
 
-    for entry in read_dir.filter_map(|e| e.ok()) {
+    for entry in read_dir.filter_map(std::result::Result::ok) {
         let path = entry.path();
         if path.is_dir() {
             collect_files_recursive(&path, files);
         } else if path.is_file() {
             let ext = path.extension().and_then(|e| e.to_str());
-            if matches!(ext, Some("json") | Some("yaml") | Some("yml")) {
+            if matches!(ext, Some("json" | "yaml" | "yml")) {
                 files.push(path);
             }
         }
@@ -37,18 +42,14 @@ fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
 async fn test_all_example_files_pass_validation() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let examples_dir = manifest_dir.join("../../mocks/examples");
-    let examples_dir = examples_dir.canonicalize().unwrap_or_else(|e| {
-        panic!(
-            "Failed to find examples directory at {:?}: {}",
-            examples_dir, e
-        )
-    });
+    let examples_dir = examples_dir
+        .canonicalize()
+        .unwrap_or_else(|e| panic!("Failed to find examples directory at {examples_dir:?}: {e}"));
 
     let files = collect_example_files(&examples_dir);
     assert!(
         !files.is_empty(),
-        "No example files found in {:?}",
-        examples_dir
+        "No example files found in {examples_dir:?}"
     );
 
     // Known-broken example files with pre-existing issues:
@@ -83,25 +84,21 @@ async fn test_all_example_files_pass_validation() {
         }
     }
 
-    if !failures.is_empty() {
-        panic!(
-            "Validation errors in {} example file(s):{}\n",
-            failures.len(),
-            failures.join("")
-        );
-    }
+    assert!(
+        failures.is_empty(),
+        "Validation errors in {} example file(s):{}\n",
+        failures.len(),
+        failures.join("")
+    );
 }
 
 #[tokio::test]
 async fn test_minimum_example_file_count() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let examples_dir = manifest_dir.join("../../mocks/examples");
-    let examples_dir = examples_dir.canonicalize().unwrap_or_else(|e| {
-        panic!(
-            "Failed to find examples directory at {:?}: {}",
-            examples_dir, e
-        )
-    });
+    let examples_dir = examples_dir
+        .canonicalize()
+        .unwrap_or_else(|e| panic!("Failed to find examples directory at {examples_dir:?}: {e}"));
 
     let files = collect_example_files(&examples_dir);
 

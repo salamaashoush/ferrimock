@@ -42,9 +42,9 @@ pub fn b64decode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraR
     let s = try_get_value!("b64decode", "value", String, value);
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(s.as_bytes())
-        .map_err(|e| tera::Error::msg(format!("Base64 decode error: {}", e)))?;
+        .map_err(|e| tera::Error::msg(format!("Base64 decode error: {e}")))?;
     let result = String::from_utf8(decoded)
-        .map_err(|e| tera::Error::msg(format!("UTF-8 decode error: {}", e)))?;
+        .map_err(|e| tera::Error::msg(format!("UTF-8 decode error: {e}")))?;
     Ok(to_value(result)?)
 }
 
@@ -76,9 +76,9 @@ pub fn b64decode_urlsafe(
     let s = try_get_value!("b64decode_urlsafe", "value", String, value);
     let decoded = base64::engine::general_purpose::URL_SAFE
         .decode(s.as_bytes())
-        .map_err(|e| tera::Error::msg(format!("Base64 decode error: {}", e)))?;
+        .map_err(|e| tera::Error::msg(format!("Base64 decode error: {e}")))?;
     let result = String::from_utf8(decoded)
-        .map_err(|e| tera::Error::msg(format!("UTF-8 decode error: {}", e)))?;
+        .map_err(|e| tera::Error::msg(format!("UTF-8 decode error: {e}")))?;
     Ok(to_value(result)?)
 }
 
@@ -98,8 +98,8 @@ pub fn b64decode_urlsafe(
 /// ```
 pub fn json_parse(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraResult<TeraValue> {
     let s = try_get_value!("json_parse", "value", String, value);
-    let parsed: Value = serde_json::from_str(&s)
-        .map_err(|e| tera::Error::msg(format!("JSON parse error: {}", e)))?;
+    let parsed: Value =
+        serde_json::from_str(&s).map_err(|e| tera::Error::msg(format!("JSON parse error: {e}")))?;
     Ok(to_value(parsed)?)
 }
 
@@ -117,8 +117,8 @@ pub fn json_parse(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> Tera
 /// ```
 pub fn urldecode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraResult<TeraValue> {
     let s = try_get_value!("urldecode", "value", String, value);
-    let decoded = urlencoding::decode(&s)
-        .map_err(|e| tera::Error::msg(format!("URL decode error: {}", e)))?;
+    let decoded =
+        urlencoding::decode(&s).map_err(|e| tera::Error::msg(format!("URL decode error: {e}")))?;
     Ok(to_value(decoded.to_string())?)
 }
 
@@ -151,7 +151,7 @@ pub fn random_choice(
 
     // Select random element
     let index = rand::rng().random_range(0..values.len());
-    Ok(values[index].clone())
+    Ok(values.get(index).cloned().unwrap_or(Value::Null))
 }
 
 // ============================================================================
@@ -181,6 +181,7 @@ pub fn register_all_filters(tera: &mut tera::Tera) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

@@ -437,7 +437,7 @@ pub fn fake_image_checkerboard(
     let img = ImageBuffer::from_fn(width, height, |x, y| {
         let checker_x = (x / square_size) % 2;
         let checker_y = (y / square_size) % 2;
-        if (checker_x + checker_y) % 2 == 0 {
+        if (checker_x + checker_y).is_multiple_of(2) {
             color1
         } else {
             color2
@@ -525,7 +525,7 @@ pub fn fake_image_stripes(
             "vertical" => x,
             _ => y,
         };
-        if (pos / stripe_width) % 2 == 0 {
+        if (pos / stripe_width).is_multiple_of(2) {
             color1
         } else {
             color2
@@ -655,6 +655,7 @@ fn parse_color(hex: &str) -> image::Rgba<u8> {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -65,7 +65,7 @@ impl MockRecorderConsolidationExt for MockRecorder {
         let consolidated = consolidator
             .consolidate_file(&file_path)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to consolidate recording: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to consolidate recording: {e}"))?;
 
         // Backup original file if requested
         if keep_original {
@@ -78,8 +78,8 @@ impl MockRecorderConsolidationExt for MockRecorder {
         let content = match format {
             RecordingFormat::Json => serde_json::to_string_pretty(&consolidated)?,
             RecordingFormat::Yaml => serde_yaml::to_string(&consolidated)
-                .map_err(|e| anyhow::anyhow!("YAML serialization error: {}", e))?,
-            RecordingFormat::Har => unreachable!("HAR format already handled above"),
+                .map_err(|e| anyhow::anyhow!("YAML serialization error: {e}"))?,
+            RecordingFormat::Har => anyhow::bail!("HAR format already handled above"),
         };
 
         tokio::fs::write(&file_path, content).await?;

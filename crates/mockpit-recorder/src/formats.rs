@@ -24,7 +24,7 @@ impl RecordingFormat {
             "json" => Ok(RecordingFormat::Json),
             "yaml" | "yml" => Ok(RecordingFormat::Yaml),
             "har" => Ok(RecordingFormat::Har),
-            _ => Err(anyhow::anyhow!("Invalid recording format: {}", s)),
+            _ => Err(anyhow::anyhow!("Invalid recording format: {s}")),
         }
     }
 }

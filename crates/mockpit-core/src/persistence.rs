@@ -206,7 +206,7 @@ impl PersistenceStore {
         entry.ttl.and_then(|ttl| {
             let elapsed = entry.created_at.elapsed();
             if elapsed < ttl {
-                Some(ttl - elapsed)
+                ttl.checked_sub(elapsed)
             } else {
                 None
             }

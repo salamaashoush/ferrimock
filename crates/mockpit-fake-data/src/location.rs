@@ -69,6 +69,7 @@ pub fn fake_secondary_address() -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

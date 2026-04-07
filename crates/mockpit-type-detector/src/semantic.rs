@@ -54,7 +54,7 @@ pub fn matches_field_name(field_name: &str, pattern: &str) -> bool {
 /// Check if field name matches ANY of the provided patterns in ANY naming convention
 ///
 /// This is the main helper to use for field name checking. It handles:
-/// - Multiple pattern alternatives (e.g., ["login", "user_name", "username"])
+/// - Multiple pattern alternatives (e.g., `["login", "user_name", "username"]`)
 /// - All naming conventions for each pattern
 ///
 /// # Examples
@@ -142,8 +142,8 @@ pub fn ends_with_field_pattern(field_name: &str, pattern: &str) -> bool {
     }
 
     // Check suffix with common separators
-    if normalized_field.ends_with(&format!("_{}", normalized_pattern))
-        || normalized_field.ends_with(&format!("-{}", normalized_pattern))
+    if normalized_field.ends_with(&format!("_{normalized_pattern}"))
+        || normalized_field.ends_with(&format!("-{normalized_pattern}"))
     {
         return true;
     }
@@ -284,6 +284,7 @@ pub fn detect_from_field_name_only(field_name: &str) -> Option<(FieldType, f64)>
 }
 
 /// Layer 1: Detect from semantic context (field names)
+#[allow(clippy::cast_precision_loss)]
 pub fn detect_from_semantic_context(
     field_name: &str,
     values: &[&JsonValue],
@@ -293,36 +294,20 @@ pub fn detect_from_semantic_context(
     // This works with both numeric JSON values and string values
     if ends_with_field_pattern(field_name, "id") || matches_field_name(field_name, "id") {
         // Check if values are large integers (either as JSON numbers or as numeric strings)
+        // A number has >= 10 digits if its absolute value >= 1_000_000_000
+        const MIN_10_DIGIT: i64 = 1_000_000_000;
+        const MIN_10_DIGIT_U: u64 = 1_000_000_000;
+        const MIN_10_DIGIT_F: f64 = 1_000_000_000.0;
+
         let all_large_integers = values.iter().all(|v| {
             if let Some(num) = v.as_i64() {
-                // JSON integer - check if it has at least 10 digits (format and count)
-                // Use absolute value to handle negative numbers
-                let digits = if num == 0 {
-                    1
-                } else {
-                    (num.abs() as f64).log10().floor() as usize + 1
-                };
-                digits >= 10
+                num.abs() >= MIN_10_DIGIT
             } else if let Some(num) = v.as_u64() {
-                // JSON unsigned integer - check digit count
-                let digits = if num == 0 {
-                    1
-                } else {
-                    (num as f64).log10().floor() as usize + 1
-                };
-                digits >= 10
+                num >= MIN_10_DIGIT_U
             } else if let Some(num) = v.as_f64() {
                 // JSON float that might represent a large integer
                 let abs = num.abs();
-                if abs.fract() != 0.0 {
-                    return false; // Not an integer
-                }
-                let digits = if abs == 0.0 {
-                    1
-                } else {
-                    abs.log10().floor() as usize + 1
-                };
-                digits >= 10
+                abs.fract() == 0.0 && abs >= MIN_10_DIGIT_F
             } else if let Some(s) = v.as_str() {
                 // String value - check if it's a long numeric string
                 s.len() >= 10 && s.chars().all(|c| c.is_ascii_digit())
@@ -438,7 +423,7 @@ pub fn detect_from_semantic_context(
             } else if let Some(num) = v.as_f64() {
                 num >= 1000.0 && num.fract() == 0.0
             } else if let Some(s) = v.as_str() {
-                s.parse::<i64>().map(|n| n >= 1000).unwrap_or(false)
+                s.parse::<i64>().is_ok_and(|n| n >= 1000)
             } else {
                 false
             }
@@ -498,12 +483,13 @@ pub fn detect_from_semantic_context(
             if looks_sequential {
                 // Try to detect if actually sequential (for high confidence)
                 if nums.len() >= 2 {
-                    let mut sorted_nums = nums.clone();
-                    sorted_nums.sort();
-                    let is_sequential = sorted_nums.windows(2).all(|w| w[1] - w[0] == 1);
+                    let mut sorted_nums = nums;
+                    sorted_nums.sort_unstable();
+                    let is_sequential = sorted_nums
+                        .windows(2)
+                        .all(|w| matches!((w.first(), w.get(1)), (Some(a), Some(b)) if b - a == 1));
 
-                    if is_sequential {
-                        let start = sorted_nums[0];
+                    if is_sequential && let Some(&start) = sorted_nums.first() {
                         return Some((FieldType::SequentialNumber { start, step: 1 }, 0.95));
                     }
                 }
@@ -524,12 +510,13 @@ pub fn detect_from_semantic_context(
 
     if suggests_constant && values.len() >= 2 {
         // Check if all values are identical (using JSON comparison)
-        let first = values[0];
-        let all_same = values.iter().all(|v| v == &first);
+        if let Some(first) = values.first() {
+            let all_same = values.iter().all(|v| v == first);
 
-        if all_same {
-            // All values are identical - return as Constant
-            return Some((FieldType::Constant(first.clone()), 0.95));
+            if all_same {
+                // All values are identical - return as Constant
+                return Some((FieldType::Constant((*first).clone()), 0.95));
+            }
         }
     }
 
@@ -547,7 +534,7 @@ pub fn detect_from_semantic_context(
             let looks_like_etag = strs.iter().any(|s| {
                 // Quoted 32-char hex string (MD5) or 40-char (SHA1) or 64-char (SHA256)
                 if s.starts_with('"') && s.ends_with('"') {
-                    let inner = &s[1..s.len() - 1];
+                    let inner = s.get(1..s.len() - 1).unwrap_or_default();
                     (inner.len() == 32 || inner.len() == 40 || inner.len() == 64)
                         && inner.chars().all(|c| c.is_ascii_hexdigit())
                 } else {
@@ -582,8 +569,11 @@ pub fn detect_from_semantic_context(
             // Locale codes: 2-letter language code, optionally followed by -XX country code
             let looks_like_locale = strs.iter().all(|s| {
                 let parts: Vec<&str> = s.split('-').collect();
-                (parts.len() == 1 && parts[0].len() == 2) // "en"
-          || (parts.len() == 2 && parts[0].len() == 2 && parts[1].len() == 2) // "en-US"
+                match (parts.first(), parts.get(1)) {
+                    (Some(lang), None) => lang.len() == 2, // "en"
+                    (Some(lang), Some(region)) => lang.len() == 2 && region.len() == 2, // "en-US"
+                    _ => false,
+                }
             });
 
             if looks_like_locale {
@@ -640,11 +630,7 @@ pub fn detect_from_semantic_context(
         if suggests_timezone {
             // Timezone format: Area/Location (e.g., "America/New_York", "Europe/London")
             let looks_like_timezone = strs.iter().any(|s| {
-                s.contains('/')
-                    && s.chars()
-                        .next()
-                        .map(|c| c.is_ascii_uppercase())
-                        .unwrap_or(false)
+                s.contains('/') && s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
             });
 
             if looks_like_timezone {
@@ -711,37 +697,36 @@ pub fn detect_from_semantic_context(
             // Field name suggests pagination or navigation
             if contains_any_field_pattern(field_name, &["next", "prev", "page", "link"]) {
                 // Create a simple pattern from the first URL
-                if let Some(first_url) = strs.first() {
-                    if let Ok(parsed) = Url::parse(first_url) {
-                        // Include port if present
-                        let host_with_port = if let Some(port) = parsed.port() {
-                            format!("{}:{}", parsed.host_str().unwrap_or("example.com"), port)
-                        } else {
-                            parsed.host_str().unwrap_or("example.com").to_string()
-                        };
-                        let base_url =
-                            format!("{}://{}{}", parsed.scheme(), host_with_port, parsed.path());
-                        let static_params: Vec<(String, String)> = parsed
-                            .query_pairs()
-                            .filter(|(k, _)| {
-                                !PAGE_KEYS.contains(&k.as_ref())
-                                    && !LIMIT_KEYS.contains(&k.as_ref())
-                            })
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
-                            .collect();
+                if let Some(first_url) = strs.first()
+                    && let Ok(parsed) = Url::parse(first_url)
+                {
+                    // Include port if present
+                    let host_with_port = if let Some(port) = parsed.port() {
+                        format!("{}:{}", parsed.host_str().unwrap_or("example.com"), port)
+                    } else {
+                        parsed.host_str().unwrap_or("example.com").to_string()
+                    };
+                    let base_url =
+                        format!("{}://{}{}", parsed.scheme(), host_with_port, parsed.path());
+                    let static_params: Vec<(String, String)> = parsed
+                        .query_pairs()
+                        .filter(|(k, _)| {
+                            !PAGE_KEYS.contains(&k.as_ref()) && !LIMIT_KEYS.contains(&k.as_ref())
+                        })
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
 
-                        let fallback_pattern = PaginationUrlPattern {
-                            base_url,
-                            static_params,
-                            pagination_scheme: PaginationScheme::PageBased {
-                                page_key: "page".to_string(),
-                                limit_key: Some("limit".to_string()),
-                                sample_page: 1,
-                                sample_limit: Some(10),
-                            },
-                        };
-                        return Some((FieldType::PaginationUrl(Box::new(fallback_pattern)), 0.80));
-                    }
+                    let fallback_pattern = PaginationUrlPattern {
+                        base_url,
+                        static_params,
+                        pagination_scheme: PaginationScheme::PageBased {
+                            page_key: "page".to_string(),
+                            limit_key: Some("limit".to_string()),
+                            sample_page: 1,
+                            sample_limit: Some(10),
+                        },
+                    };
+                    return Some((FieldType::PaginationUrl(Box::new(fallback_pattern)), 0.80));
                 }
             }
         }
@@ -1077,15 +1062,12 @@ pub fn detect_from_semantic_context(
                 s.contains(' ') && !s.starts_with("data:") && !s.starts_with("http")
             });
 
-            if !looks_like_natural_text {
-                // Skip Sentence/Paragraph detection for non-text content (random strings, data URIs, etc.)
-                // Let other detection rules handle these
-            } else {
+            if looks_like_natural_text {
                 // Calculate average text length
-                let avg_length = if !strs.is_empty() {
-                    strs.iter().map(|s| s.len()).sum::<usize>() as f64 / strs.len() as f64
-                } else {
+                let avg_length = if strs.is_empty() {
                     0.0
+                } else {
+                    strs.iter().map(|s| s.len()).sum::<usize>() as f64 / strs.len() as f64
                 };
 
                 // Short text (< 100 chars avg) = Sentence, Long text (>= 150 chars) = Paragraph
@@ -1096,6 +1078,8 @@ pub fn detect_from_semantic_context(
                     return Some((FieldType::Sentence, 0.90));
                 }
             }
+            // else: Skip Sentence/Paragraph detection for non-text content (random strings, data URIs, etc.)
+            // Let other detection rules handle these
         }
 
         // CurrencyCode detection - MUST come before CountryCode since both are 3-letter codes
@@ -1159,7 +1143,7 @@ pub fn detect_from_semantic_context(
             let numeric_postal = values.iter().all(|v| {
                 if let Some(num) = v.as_i64() {
                     // US zip codes are 5 digits (10000-99999)
-                    (10000..=999999).contains(&num)
+                    (10_000..=999_999).contains(&num)
                 } else {
                     false
                 }

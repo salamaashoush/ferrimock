@@ -120,14 +120,15 @@ impl MockMatcher {
 
         // FAST PATH 1: Exact-match index for simple requests (no query/body/conditional mocks)
         // This is O(1) and avoids all lock contention on the LRU cache.
-        if query.is_none() && body.is_none() && !self.registry.has_conditional_mocks() {
-            if let Some(mock) = self.registry.try_exact_match(method, path) {
-                if mock.enabled {
-                    self.record_call_if_needed(&mock, method, path, query, headers, body);
-                    let captures = self.extract_url_captures(&mock, path);
-                    return Some(MockMatch { mock, captures });
-                }
-            }
+        if query.is_none()
+            && body.is_none()
+            && !self.registry.has_conditional_mocks()
+            && let Some(mock) = self.registry.try_exact_match(method, path)
+            && mock.enabled
+        {
+            self.record_call_if_needed(&mock, method, path, query, headers, body);
+            let captures = self.extract_url_captures(&mock, path);
+            return Some(MockMatch { mock, captures });
         }
 
         // Cache eligibility: we can cache results for requests without query/body.
@@ -235,7 +236,7 @@ impl MockMatcher {
             let call = crate::registry::MockCall::new(
                 method.to_string(),
                 path.to_string(),
-                query.map(|s| s.to_string()),
+                query.map(std::string::ToString::to_string),
                 headers_map,
                 body,
             );
@@ -245,6 +246,7 @@ impl MockMatcher {
     }
 
     /// Extract URL captures from the mock's URL patterns
+    #[allow(clippy::unused_self)]
     fn extract_url_captures(&self, mock: &MockDefinition, path: &str) -> FxHashMap<String, String> {
         // Try each URL pattern until we find one with captures
         for pattern in &mock.request.url_patterns {
@@ -256,6 +258,7 @@ impl MockMatcher {
     }
 
     /// Check if the mock's method criteria matches the request method
+    #[allow(clippy::unused_self)]
     fn matches_method(&self, mock: &MockDefinition, method: &Method) -> bool {
         // Empty methods list means match all methods
         if mock.request.methods.is_empty() {
@@ -266,6 +269,7 @@ impl MockMatcher {
     }
 
     /// Check if the mock's URL patterns match the request path
+    #[allow(clippy::unused_self)]
     fn matches_url(&self, mock: &MockDefinition, path: &str, query: Option<&str>) -> bool {
         // Empty URL patterns means match all URLs
         if mock.request.url_patterns.is_empty() {
@@ -287,7 +291,7 @@ impl MockMatcher {
         // This is needed for exact-match patterns from recordings that include query params.
         // Only allocate the format string if the fast path didn't match.
         if let Some(q) = query {
-            let full_url = format!("{}?{}", path, q);
+            let full_url = format!("{path}?{q}");
             return mock
                 .request
                 .url_patterns
@@ -299,6 +303,7 @@ impl MockMatcher {
     }
 
     /// Check if the mock's header matchers match the request headers
+    #[allow(clippy::unused_self)]
     fn matches_headers(&self, mock: &MockDefinition, headers: &HeaderMap) -> bool {
         // Empty header matchers means match all
         if mock.request.header_matchers.is_empty() {
@@ -325,9 +330,8 @@ impl MockMatcher {
         };
 
         // Parse body as JSON
-        let json = match serde_json::from_slice::<serde_json::Value>(body_bytes) {
-            Ok(j) => j,
-            Err(_) => return false,
+        let Ok(json) = serde_json::from_slice::<serde_json::Value>(body_bytes) else {
+            return false;
         };
 
         // Wildcard match - any GraphQL operation
@@ -336,10 +340,10 @@ impl MockMatcher {
         }
 
         // Check introspection matcher if specified
-        if let Some(introspection_matcher) = &graphql_matcher.introspection_matcher {
-            if !self.matches_introspection(introspection_matcher, &json) {
-                return false;
-            }
+        if let Some(introspection_matcher) = &graphql_matcher.introspection_matcher
+            && !self.matches_introspection(introspection_matcher, &json)
+        {
+            return false;
         }
 
         // Check operation name if specified
@@ -387,15 +391,15 @@ impl MockMatcher {
     }
 
     /// Match introspection queries
+    #[allow(clippy::unused_self)]
     fn matches_introspection(
         &self,
         matcher: &crate::types::IntrospectionMatcher,
         json: &serde_json::Value,
     ) -> bool {
         // Get the query string
-        let query = match json.get("query").and_then(|v| v.as_str()) {
-            Some(q) => q,
-            None => return false,
+        let Some(query) = json.get("query").and_then(|v| v.as_str()) else {
+            return false;
         };
 
         // Check if query contains introspection fields
@@ -463,6 +467,7 @@ impl MockMatcher {
     }
 
     /// Check if the mock's body matcher matches the request body
+    #[allow(clippy::unused_self)]
     fn matches_body(&self, mock: &MockDefinition, body: Option<&[u8]>) -> bool {
         // If no body matcher is specified, match all
         let Some(body_matcher) = &mock.request.body_matcher else {
@@ -480,6 +485,7 @@ impl MockMatcher {
 
     /// Check if the mock's query matchers match
     /// Uses pre-parsed query params to avoid re-parsing for each matcher
+    #[allow(clippy::unused_self)]
     fn matches_query(
         &self,
         mock: &MockDefinition,
@@ -493,12 +499,11 @@ impl MockMatcher {
 
         // Parse query once if not already parsed
         let owned_params;
-        let query_params = match parsed_query {
-            Some(params) => params,
-            None => {
-                owned_params = crate::types::QueryMatcher::parse_query(query);
-                &owned_params
-            }
+        let query_params = if let Some(params) = parsed_query {
+            params
+        } else {
+            owned_params = crate::types::QueryMatcher::parse_query(query);
+            &owned_params
         };
 
         // All query matchers must match using pre-parsed params
@@ -634,13 +639,19 @@ impl MockMatcher {
                   "details": format!("{}", e)
                 });
 
-                let error_response = Response::builder()
+                let error_response = match Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .header("Content-Type", "application/json")
                     .header("X-Mock-Id", mock_def.id.as_str())
                     .header("X-Mock-Error", "true")
                     .body(Bytes::from(error_body.to_string()))
-                    .unwrap();
+                {
+                    Ok(resp) => resp,
+                    Err(build_err) => {
+                        tracing::error!("Failed to build error response: {build_err}");
+                        return None;
+                    }
+                };
 
                 return Some(MockAction::FullMock(error_response));
             }
@@ -683,7 +694,7 @@ impl MockMatcher {
     /// If `request_context` is provided, template expressions in patch values (e.g.
     /// `{{ captures.id }}`, `{{ response.body_json.name }}`) will be rendered with
     /// both request and upstream response data.
-    pub async fn apply_patches(
+    pub fn apply_patches(
         patches: Vec<PatchOperation>,
         mock_id: impl AsRef<str>,
         upstream_response: http::Response<bytes::Bytes>,
@@ -717,16 +728,14 @@ impl MockMatcher {
 
         // Apply patches to the upstream response
         let patcher = crate::patcher::ResponsePatcher::new(patches);
-        let patched_response = patcher
-            .apply(patchable_response, patch_context.as_ref())
-            .await?;
+        let patched_response = patcher.apply(patchable_response, patch_context.as_ref())?;
 
         // Extract patched components and add mock ID header
         let (patched_parts, patched_body) = patched_response.into_parts();
 
         let mut final_builder = Response::builder().status(patched_parts.status);
         // Copy headers but skip Content-Length (we'll set it correctly below)
-        for (key, value) in patched_parts.headers.iter() {
+        for (key, value) in &patched_parts.headers {
             if key != http::header::CONTENT_LENGTH {
                 final_builder = final_builder.header(key, value);
             }
@@ -742,6 +751,12 @@ impl MockMatcher {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::types::{BodySource, HeaderMatcher, RequestMatcher, ResponseGenerator, UrlPattern};

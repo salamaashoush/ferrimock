@@ -2,7 +2,6 @@
 
 /// Calculate Levenshtein distance between two strings
 /// Used for fuzzy string matching and typo detection
-#[allow(clippy::needless_range_loop)]
 pub fn levenshtein_distance(a: &str, b: &str) -> usize {
     let a_len = a.chars().count();
     let b_len = b.chars().count();
@@ -14,13 +13,23 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
         return a_len;
     }
 
-    let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+    // Use a single flat vector instead of Vec<Vec<>> to avoid indexing lint.
+    // Layout: row-major, (a_len + 1) rows x (b_len + 1) columns.
+    let cols = b_len + 1;
+    let mut matrix = vec![0_usize; (a_len + 1) * cols];
+
+    // Helper closures for safe access via .get()/.get_mut()
+    let idx = |r: usize, c: usize| -> usize { r * cols + c };
 
     for i in 0..=a_len {
-        matrix[i][0] = i;
+        if let Some(cell) = matrix.get_mut(idx(i, 0)) {
+            *cell = i;
+        }
     }
     for j in 0..=b_len {
-        matrix[0][j] = j;
+        if let Some(cell) = matrix.get_mut(idx(0, j)) {
+            *cell = j;
+        }
     }
 
     let a_chars: Vec<char> = a.chars().collect();
@@ -28,15 +37,21 @@ pub fn levenshtein_distance(a: &str, b: &str) -> usize {
 
     for (i, a_char) in a_chars.iter().enumerate() {
         for (j, b_char) in b_chars.iter().enumerate() {
-            let cost = if a_char == b_char { 0 } else { 1 };
-            matrix[i + 1][j + 1] = std::cmp::min(
-                std::cmp::min(matrix[i][j + 1] + 1, matrix[i + 1][j] + 1),
-                matrix[i][j] + cost,
-            );
+            let cost = usize::from(a_char != b_char);
+
+            let delete = matrix.get(idx(i, j + 1)).unwrap_or(&0) + 1;
+            let insert = matrix.get(idx(i + 1, j)).unwrap_or(&0) + 1;
+            let substitute = matrix.get(idx(i, j)).unwrap_or(&0) + cost;
+
+            let min_val = std::cmp::min(std::cmp::min(delete, insert), substitute);
+
+            if let Some(cell) = matrix.get_mut(idx(i + 1, j + 1)) {
+                *cell = min_val;
+            }
         }
     }
 
-    matrix[a_len][b_len]
+    matrix.get(idx(a_len, b_len)).copied().unwrap_or(0)
 }
 
 #[cfg(test)]

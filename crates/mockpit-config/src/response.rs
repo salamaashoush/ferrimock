@@ -90,50 +90,51 @@ impl schemars::JsonSchema for ResponseConfig {
     }
 
     fn json_schema(_schema_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        serde_json::json!({
-      "description": "Response configuration. Supports: bare string, status shortcuts, or structured object with explicit body type fields.",
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Static inline body string"
-        },
-        {
-          "type": "object",
-          "description": "Status code as key with body as value (e.g., {\"200\": \"body\"})",
-          "patternProperties": {
-            "^[1-5][0-9]{2}$": { "type": "string" }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "description": "Structured response with explicit body type fields. Only one of body, template, file, template_file, json may be set.",
-          "properties": {
-            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
-            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
-            "body": {
-              "description": "Static inline body (never templated). Can be a string, object, array, number, or boolean. Non-string values are automatically serialized to JSON.",
-              "oneOf": [
-                { "type": "string" },
-                { "type": "object" },
-                { "type": "array" },
-                { "type": "number" },
-                { "type": "boolean" }
-              ]
+        let value = serde_json::json!({
+          "description": "Response configuration. Supports: bare string, status shortcuts, or structured object with explicit body type fields.",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Static inline body string"
             },
-            "template": { "type": "string", "description": "Inline Tera template (always processed by template engine)" },
-            "file": { "type": "string", "description": "Path to file for static body content" },
-            "template_file": { "type": "string", "description": "Path to file containing a Tera template (alias: templateFile)" },
-            "templateFile": { "type": "string", "description": "Alias for template_file" },
-            "json": { "description": "Structured JSON body (static, no template processing)" }
-          }
+            {
+              "type": "object",
+              "description": "Status code as key with body as value (e.g., {\"200\": \"body\"})",
+              "patternProperties": {
+                "^[1-5][0-9]{2}$": { "type": "string" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "description": "Structured response with explicit body type fields. Only one of body, template, file, template_file, json may be set.",
+              "properties": {
+                "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+                "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+                "body": {
+                  "description": "Static inline body (never templated). Can be a string, object, array, number, or boolean. Non-string values are automatically serialized to JSON.",
+                  "oneOf": [
+                    { "type": "string" },
+                    { "type": "object" },
+                    { "type": "array" },
+                    { "type": "number" },
+                    { "type": "boolean" }
+                  ]
+                },
+                "template": { "type": "string", "description": "Inline Tera template (always processed by template engine)" },
+                "file": { "type": "string", "description": "Path to file for static body content" },
+                "template_file": { "type": "string", "description": "Path to file containing a Tera template (alias: templateFile)" },
+                "templateFile": { "type": "string", "description": "Alias for template_file" },
+                "json": { "description": "Structured JSON body (static, no template processing)" }
+              }
+            }
+          ]
+        });
+        if let serde_json::Value::Object(map) = value {
+            map.into()
+        } else {
+            serde_json::Map::new().into()
         }
-      ]
-    })
-    .as_object()
-    .unwrap()
-    .clone()
-    .into()
     }
 }
 
@@ -284,17 +285,16 @@ impl<'de> serde::Deserialize<'de> for ResponseConfig {
 
                 for (key, value) in extra {
                     // Check if key is a valid status code (100-599)
-                    if let Ok(status_code) = key.parse::<u16>() {
-                        if (100..=599).contains(&status_code) {
-                            // This is a status shortcut
-                            if let Some(body_str) = value.as_str() {
-                                status_shortcuts.insert(status_code, body_str.to_string());
-                            } else {
-                                return Err(D::Error::custom(format!(
-                                    "Status shortcut value must be a string, got: {:?}",
-                                    value
-                                )));
-                            }
+                    if let Ok(status_code) = key.parse::<u16>()
+                        && (100..=599).contains(&status_code)
+                    {
+                        // This is a status shortcut
+                        if let Some(body_str) = value.as_str() {
+                            status_shortcuts.insert(status_code, body_str.to_string());
+                        } else {
+                            return Err(D::Error::custom(format!(
+                                "Status shortcut value must be a string, got: {value:?}"
+                            )));
                         }
                     }
                 }
@@ -426,8 +426,7 @@ impl ResponseConfig {
     /// Get the headers field (for validation)
     pub fn headers(&self) -> Option<&FxHashMap<String, String>> {
         match self {
-            ResponseConfig::Template(_) => None,
-            ResponseConfig::StatusShortcuts(_) => None,
+            ResponseConfig::Template(_) | ResponseConfig::StatusShortcuts(_) => None,
             ResponseConfig::Structured { headers, .. } => Some(headers),
         }
     }
@@ -435,8 +434,7 @@ impl ResponseConfig {
     /// Returns true if this config defines a full mock (has body content of any type)
     pub fn is_full_mock(&self) -> bool {
         match self {
-            ResponseConfig::Template(_) => true,
-            ResponseConfig::StatusShortcuts(_) => true,
+            ResponseConfig::Template(_) | ResponseConfig::StatusShortcuts(_) => true,
             ResponseConfig::Structured {
                 body,
                 template,
@@ -641,8 +639,8 @@ impl ResolvedResponse {
                         Err(e) => {
                             // Fall back to on-demand loading if file can't be read at config time
                             eprintln!(
-                                "Warning: Failed to pre-load file {:?}: {}. Will load on demand.",
-                                path, e
+                                "Warning: Failed to pre-load file {}: {e}. Will load on demand.",
+                                path.display()
                             );
                             BodySource::File(path)
                         }
@@ -662,7 +660,7 @@ impl ResolvedResponse {
 
                 let template = tokio::fs::read_to_string(&path)
                     .await
-                    .map_err(|e| format!("Failed to read template file {:?}: {}", path, e))?;
+                    .map_err(|e| format!("Failed to read template file {}: {e}", path.display()))?;
 
                 BodySource::template(template)
             }
@@ -683,9 +681,9 @@ pub fn parse_patches_config(config: ResponsePatchesConfig) -> Result<Vec<PatchOp
     // Parse JSON Patch operations (RFC 6902)
     if !config.operations.is_empty() {
         let json_patch_str = serde_json::to_string(&config.operations)
-            .map_err(|e| format!("Failed to serialize JSON Patch operations: {}", e))?;
+            .map_err(|e| format!("Failed to serialize JSON Patch operations: {e}"))?;
         let json_patch: json_patch::Patch = serde_json::from_str(&json_patch_str)
-            .map_err(|e| format!("Failed to parse JSON Patch operations: {}", e))?;
+            .map_err(|e| format!("Failed to parse JSON Patch operations: {e}"))?;
         operations.push(PatchOperation::JsonPatch(json_patch));
     }
 
@@ -726,24 +724,23 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
         let value: u64 = us
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {}", s))?;
+            .map_err(|_| format!("Invalid duration: {s}"))?;
         Ok(Duration::from_micros(value))
     } else if let Some(ms) = s.strip_suffix("ms") {
         let value: u64 = ms
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {}", s))?;
+            .map_err(|_| format!("Invalid duration: {s}"))?;
         Ok(Duration::from_millis(value))
     } else if let Some(s_val) = s.strip_suffix('s') {
         let value: u64 = s_val
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {}", s))?;
+            .map_err(|_| format!("Invalid duration: {s}"))?;
         Ok(Duration::from_secs(value))
     } else {
         Err(format!(
-            "Invalid duration format: {}. Expected format: '100ms', '1s', '500us'",
-            s
+            "Invalid duration format: {s}. Expected format: '100ms', '1s', '500us'"
         ))
     }
 }
@@ -753,6 +750,13 @@ fn default_status() -> u16 {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
 mod tests {
     use super::*;
 

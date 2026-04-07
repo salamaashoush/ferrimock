@@ -167,10 +167,10 @@ impl ParsedSchema {
             OperationType::Subscription => &self.subscription_type,
         };
 
-        if let Some(name) = type_name {
-            if let Some(type_def) = self.types.get(name) {
-                return type_def.fields.iter().collect();
-            }
+        if let Some(name) = type_name
+            && let Some(type_def) = self.types.get(name)
+        {
+            return type_def.fields.iter().collect();
         }
 
         vec![]
@@ -196,6 +196,7 @@ impl ParsedSchema {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use serde_json::json;

@@ -185,6 +185,7 @@ pub(super) fn get_checkers() -> Vec<TypeChecker> {
 // Individual Type Checkers with Multi-Sample Validation
 // ============================================================================
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_download_url(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     if values.is_empty() {
         return None;
@@ -205,12 +206,13 @@ pub(super) fn check_download_url(values: &[&str], _features: &TypeFeatures) -> O
     let match_ratio = matches as f64 / values.len() as f64;
 
     if match_ratio > MIN_MATCH_RATIO_DOWNLOAD_URL {
-        Some((match_ratio * 0.8) + 0.2)
+        Some(match_ratio.mul_add(0.8, 0.2))
     } else {
         None
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_data_uri(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     if values.is_empty() {
         return None;
@@ -233,6 +235,7 @@ pub(super) fn check_data_uri(values: &[&str], features: &TypeFeatures) -> Option
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_url(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     if !features.has_protocol {
         return None;
@@ -249,7 +252,7 @@ pub(super) fn check_url(values: &[&str], features: &TypeFeatures) -> Option<f64>
         .count() as f64
         / values.len() as f64;
 
-    let confidence = (match_ratio * 0.7) + (has_domain * 0.3);
+    let confidence = has_domain.mul_add(0.3, match_ratio * 0.7);
 
     if confidence > MIN_MATCH_RATIO_URL {
         Some(confidence)
@@ -258,6 +261,7 @@ pub(super) fn check_url(values: &[&str], features: &TypeFeatures) -> Option<f64>
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn calculate_url_confidence(values: &[&str]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -268,6 +272,7 @@ pub(super) fn calculate_url_confidence(values: &[&str]) -> f64 {
     (matches as f64 / values.len() as f64).clamp(0.0, 1.0)
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_email(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     if !features.has_email_at {
         return None;
@@ -289,6 +294,7 @@ pub(super) fn check_email(values: &[&str], features: &TypeFeatures) -> Option<f6
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn calculate_email_confidence(values: &[&str]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -299,6 +305,7 @@ pub(super) fn calculate_email_confidence(values: &[&str]) -> f64 {
     (matches as f64 / values.len() as f64).clamp(0.0, 1.0)
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_timestamp(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     let matches = values
         .iter()
@@ -314,6 +321,7 @@ pub(super) fn check_timestamp(values: &[&str], _features: &TypeFeatures) -> Opti
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_iso_date(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     let matches = values
         .iter()
@@ -324,17 +332,17 @@ pub(super) fn check_iso_date(values: &[&str], _features: &TypeFeatures) -> Optio
 
             // Anti-pattern: Validate month and day ranges
             // ISO date format: YYYY-MM-DD
-            if let Some(parts) = s.split('-').collect::<Vec<_>>().get(0..3) {
-                if parts.len() == 3 {
-                    if let (Ok(_year), Ok(month), Ok(day)) = (
-                        parts[0].parse::<i32>(),
-                        parts[1].parse::<u32>(),
-                        parts[2].parse::<u32>(),
-                    ) {
-                        // Valid month: 1-12, valid day: 1-31
-                        return (1..=12).contains(&month) && (1..=31).contains(&day);
-                    }
-                }
+            let date_parts: Vec<&str> = s.split('-').collect();
+            if let (Some(year_s), Some(month_s), Some(day_s)) =
+                (date_parts.first(), date_parts.get(1), date_parts.get(2))
+                && let (Ok(_year), Ok(month), Ok(day)) = (
+                    year_s.parse::<i32>(),
+                    month_s.parse::<u32>(),
+                    day_s.parse::<u32>(),
+                )
+            {
+                // Valid month: 1-12, valid day: 1-31
+                return (1..=12).contains(&month) && (1..=31).contains(&day);
             }
             false
         })
@@ -349,6 +357,7 @@ pub(super) fn check_iso_date(values: &[&str], _features: &TypeFeatures) -> Optio
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_numeric_string_id(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // Numeric string IDs are:
     // - All digits
@@ -372,6 +381,7 @@ pub(super) fn check_numeric_string_id(values: &[&str], _features: &TypeFeatures)
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_uuid(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     if !features.has_uuid_format {
         return None;
@@ -398,6 +408,7 @@ pub(super) fn check_uuid(values: &[&str], features: &TypeFeatures) -> Option<f64
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_semver(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     let matches = values.iter().filter(|s| SEMVER_REGEX.is_match(s)).count();
 
@@ -410,6 +421,7 @@ pub(super) fn check_semver(values: &[&str], _features: &TypeFeatures) -> Option<
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_filename(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     if !features.has_file_extension {
         return None;
@@ -441,6 +453,7 @@ pub(super) fn check_filename(values: &[&str], features: &TypeFeatures) -> Option
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_base64(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     // Base64 characteristics:
     // - Only contains A-Z, a-z, 0-9, +, /, =
@@ -472,6 +485,7 @@ pub(super) fn check_base64(values: &[&str], features: &TypeFeatures) -> Option<f
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_hex_string(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     // Hex strings are typically:
     // - Hex colors: 3, 6, or 8 characters (RGB, RRGGBB, RRGGBBAA) - may have # prefix
@@ -531,6 +545,7 @@ pub(super) fn check_hex_string(values: &[&str], features: &TypeFeatures) -> Opti
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_etag(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     let matches = values.iter().filter(|s| ETAG_REGEX.is_match(s)).count();
 
@@ -543,6 +558,7 @@ pub(super) fn check_etag(values: &[&str], _features: &TypeFeatures) -> Option<f6
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_token(values: &[&str], features: &TypeFeatures) -> Option<f64> {
     // Tokens are typically:
     // - Long strings (> 20 chars)
@@ -571,6 +587,7 @@ pub(super) fn check_token(values: &[&str], features: &TypeFeatures) -> Option<f6
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_mime_type(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     let common_types = [
         "application/",
@@ -596,6 +613,7 @@ pub(super) fn check_mime_type(values: &[&str], _features: &TypeFeatures) -> Opti
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_ip_address(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     let matches = values
         .iter()
@@ -618,6 +636,7 @@ pub(super) fn check_ip_address(values: &[&str], _features: &TypeFeatures) -> Opt
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_phone_number(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // Anti-patterns: Phone numbers should be primarily digits
     // If we have multiple consecutive letters, it's not a phone number
@@ -632,7 +651,7 @@ pub(super) fn check_phone_number(values: &[&str], _features: &TypeFeatures) -> O
         .iter()
         .filter(|s| {
             // Count actual digits
-            let digit_count = s.chars().filter(|c| c.is_ascii_digit()).count();
+            let digit_count = s.chars().filter(char::is_ascii_digit).count();
             // Must have 7-15 digits and match the pattern
             (7..=15).contains(&digit_count) && PHONE_REGEX.is_match(s)
         })
@@ -647,6 +666,7 @@ pub(super) fn check_phone_number(values: &[&str], _features: &TypeFeatures) -> O
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_name(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // Anti-patterns: Names should NOT contain:
     // - URLs or email addresses
@@ -678,7 +698,7 @@ pub(super) fn check_name(values: &[&str], _features: &TypeFeatures) -> Option<f6
             let word_count = s.split_whitespace().count();
             s.contains(' ')
                 && (2..=5).contains(&word_count)
-                && s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                && s.chars().next().is_some_and(char::is_uppercase)
                 && s.chars().filter(|c| c.is_alphabetic()).count() as f64 / s.len() as f64 > 0.7
                 && s.len() >= 2
                 && s.len() <= 50
@@ -694,6 +714,7 @@ pub(super) fn check_name(values: &[&str], _features: &TypeFeatures) -> Option<f6
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_sentence(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // Sentences are:
     // - Single sentence (may or may not end with punctuation)
@@ -770,6 +791,7 @@ pub(super) fn check_sentence(values: &[&str], _features: &TypeFeatures) -> Optio
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_paragraph(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // Paragraphs are:
     // - Multiple sentences (2+ sentence-ending punctuation marks) - PRIMARY indicator
@@ -830,6 +852,7 @@ pub(super) fn check_paragraph(values: &[&str], _features: &TypeFeatures) -> Opti
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_api_endpoint(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // API endpoints are typically:
     // - Start with /
@@ -846,15 +869,12 @@ pub(super) fn check_api_endpoint(values: &[&str], _features: &TypeFeatures) -> O
 
             // Anti-pattern: Check for file extensions
             let has_file_extension = s.contains('.')
-                && s.rsplit('.')
-                    .next()
-                    .map(|ext| {
-                        [
-                            "log", "txt", "yml", "yaml", "json", "xml", "csv", "conf", "cfg", "ini",
-                        ]
-                        .contains(&ext)
-                    })
-                    .unwrap_or(false);
+                && s.rsplit('.').next().is_some_and(|ext| {
+                    [
+                        "log", "txt", "yml", "yaml", "json", "xml", "csv", "conf", "cfg", "ini",
+                    ]
+                    .contains(&ext)
+                });
 
             looks_like_api && !has_file_extension
         })
@@ -869,6 +889,7 @@ pub(super) fn check_api_endpoint(values: &[&str], _features: &TypeFeatures) -> O
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_country_code(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // ISO 3166-1 alpha-2 country codes are exactly 2 uppercase letters
     let matches = values
@@ -885,6 +906,7 @@ pub(super) fn check_country_code(values: &[&str], _features: &TypeFeatures) -> O
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_currency_code(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // ISO 4217 currency codes are exactly 3 uppercase letters
     let matches = values
@@ -901,6 +923,7 @@ pub(super) fn check_currency_code(values: &[&str], _features: &TypeFeatures) -> 
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_postal_code(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // Postal/ZIP codes have various formats:
     // - US: 5 digits or 5+4 (12345 or 12345-6789)
@@ -955,6 +978,7 @@ pub(super) fn check_postal_code(values: &[&str], _features: &TypeFeatures) -> Op
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_locale_code(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // Locale codes follow BCP 47 format:
     // - language-COUNTRY (en-US, fr-FR, ja-JP)
@@ -972,25 +996,21 @@ pub(super) fn check_locale_code(values: &[&str], _features: &TypeFeatures) -> Op
             }
 
             // First part: 2-3 lowercase letters (language code)
-            let lang = parts[0];
+            let Some(lang) = parts.first() else {
+                return false;
+            };
             if !(2..=3).contains(&lang.len()) || !lang.chars().all(|c| c.is_ascii_lowercase()) {
                 return false;
             }
 
             // If has second part, check format
-            if parts.len() >= 2 {
-                let second = parts[1];
-
+            if let Some(second) = parts.get(1) {
                 // Could be country (2 uppercase) or script (4 titlecase)
                 let is_country =
                     second.len() == 2 && second.chars().all(|c| c.is_ascii_uppercase());
                 let is_script = second.len() == 4
-                    && second
-                        .chars()
-                        .next()
-                        .map(|c| c.is_uppercase())
-                        .unwrap_or(false)
-                    && second.chars().skip(1).all(|c| c.is_lowercase());
+                    && second.chars().next().is_some_and(char::is_uppercase)
+                    && second.chars().skip(1).all(char::is_lowercase);
 
                 if !is_country && !is_script {
                     return false;
@@ -998,11 +1018,10 @@ pub(super) fn check_locale_code(values: &[&str], _features: &TypeFeatures) -> Op
             }
 
             // If has third part, must be country code
-            if parts.len() == 3 {
-                let country = parts[2];
-                if country.len() != 2 || !country.chars().all(|c| c.is_ascii_uppercase()) {
-                    return false;
-                }
+            if let Some(country) = parts.get(2)
+                && (country.len() != 2 || !country.chars().all(|c| c.is_ascii_uppercase()))
+            {
+                return false;
             }
 
             true
@@ -1018,6 +1037,7 @@ pub(super) fn check_locale_code(values: &[&str], _features: &TypeFeatures) -> Op
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_timezone(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // IANA timezone identifiers:
     // - Format: Area/Location or Area/Location/SubLocation
@@ -1043,11 +1063,7 @@ pub(super) fn check_timezone(values: &[&str], _features: &TypeFeatures) -> Optio
             // Each part should start with uppercase and contain mostly letters/underscores
             parts.iter().all(|part| {
                 !part.is_empty()
-                    && part
-                        .chars()
-                        .next()
-                        .map(|c| c.is_ascii_uppercase())
-                        .unwrap_or(false)
+                    && part.chars().next().is_some_and(|c| c.is_ascii_uppercase())
                     && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             })
         })
@@ -1062,6 +1078,7 @@ pub(super) fn check_timezone(values: &[&str], _features: &TypeFeatures) -> Optio
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub(super) fn check_file_path(values: &[&str], _features: &TypeFeatures) -> Option<f64> {
     // File paths have:
     // - Forward slashes (Unix) or backslashes (Windows)

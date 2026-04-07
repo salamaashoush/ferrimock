@@ -120,15 +120,15 @@ impl MockGenerator {
     }
 
     /// Extract variable names from operation arguments
-    fn extract_variable_names(&self, operation: &FieldDefinition) -> Vec<String> {
+    fn extract_variable_names(operation: &FieldDefinition) -> Vec<String> {
         operation.args.iter().map(|arg| arg.name.clone()).collect()
     }
 
     /// Check if a field name matches a variable name (handles nested paths)
-    fn matches_variable(&self, field_name: &str, variables: &[String]) -> Option<String> {
+    fn matches_variable(field_name: &str, variables: &[String]) -> Option<String> {
         // Direct match
         if variables.contains(&field_name.to_string()) {
-            return Some(format!("{{{{ body_json.variables.{} }}}}", field_name));
+            return Some(format!("{{{{ body_json.variables.{field_name} }}}}"));
         }
 
         // Check nested paths: data.user.id -> match "id" variable
@@ -136,7 +136,7 @@ impl MockGenerator {
         if let Some(last_part) = field_parts.last() {
             let clean_field = last_part.trim_start_matches('[').trim_end_matches(']');
             if variables.contains(&clean_field.to_string()) {
-                return Some(format!("{{{{ body_json.variables.{} }}}}", clean_field));
+                return Some(format!("{{{{ body_json.variables.{clean_field} }}}}"));
             }
         }
 
@@ -145,7 +145,7 @@ impl MockGenerator {
             if field_name.to_lowercase().ends_with(&var.to_lowercase()) && field_name != var {
                 // Check if it's a reasonable match (not just coincidence)
                 if field_name.len() - var.len() <= 10 {
-                    return Some(format!("{{{{ body_json.variables.{} }}}}", var));
+                    return Some(format!("{{{{ body_json.variables.{var} }}}}"));
                 }
             }
         }
@@ -154,11 +154,7 @@ impl MockGenerator {
     }
 
     /// Check if variables contain pagination-related params
-    fn has_pagination_variable(
-        &self,
-        variables: &[String],
-        param_names: &[&str],
-    ) -> Option<String> {
+    fn has_pagination_variable(variables: &[String], param_names: &[&str]) -> Option<String> {
         for param in param_names {
             if variables.contains(&param.to_string()) {
                 return Some(param.to_string());
@@ -168,7 +164,7 @@ impl MockGenerator {
     }
 
     /// Detect if a field is a pagination-related field and should use variable
-    fn is_pagination_field(&self, field_name: &str) -> bool {
+    fn is_pagination_field(field_name: &str) -> bool {
         matches!(
             field_name,
             "hasNextPage" | "hasPreviousPage" | "totalCount" | "startCursor" | "endCursor"
@@ -184,7 +180,7 @@ impl MockGenerator {
         let mock_id = format!("{}-{}", op_type.as_str(), operation.name);
 
         // Extract variable names from operation arguments
-        let variables = self.extract_variable_names(operation);
+        let variables = Self::extract_variable_names(operation);
 
         // Build GraphQL matcher config
         let graphql_config = match op_type {
@@ -300,20 +296,20 @@ impl MockGenerator {
         }
 
         // PRIORITY 1: Check if field matches a GraphQL variable
-        if let Some(name) = field_name {
-            if let Some(var_expr) = self.matches_variable(name, variables) {
-                // Wrap in array if this is a list type
-                if unwrapped.is_list {
-                    let indent = "  ".repeat(depth);
-                    return Ok(format!(
-                        "[\n{}{}\n{}]",
-                        "  ".repeat(depth + 1),
-                        var_expr,
-                        indent
-                    ));
-                }
-                return Ok(var_expr);
+        if let Some(name) = field_name
+            && let Some(var_expr) = Self::matches_variable(name, variables)
+        {
+            // Wrap in array if this is a list type
+            if unwrapped.is_list {
+                let indent = "  ".repeat(depth);
+                return Ok(format!(
+                    "[\n{}{}\n{}]",
+                    "  ".repeat(depth + 1),
+                    var_expr,
+                    indent
+                ));
             }
+            return Ok(var_expr);
         }
 
         // Get the type definition
@@ -332,12 +328,11 @@ impl MockGenerator {
 
                 if let Some(name) = field_name {
                     // Special handling for pagination fields
-                    if self.is_pagination_field(name) {
+                    if Self::is_pagination_field(name) {
                         match name {
                             "hasNextPage" => {
                                 // Smart hasNextPage: true if 'after' variable exists, false otherwise
-                                if self
-                                    .has_pagination_variable(variables, &["after", "cursor"])
+                                if Self::has_pagination_variable(variables, &["after", "cursor"])
                                     .is_some()
                                 {
                                     return Ok("{{ fake_boolean() }}".to_string());
@@ -346,10 +341,7 @@ impl MockGenerator {
                             }
                             "hasPreviousPage" => {
                                 // Smart hasPreviousPage: true if 'before' variable exists
-                                if self
-                                    .has_pagination_variable(variables, &["before"])
-                                    .is_some()
-                                {
+                                if Self::has_pagination_variable(variables, &["before"]).is_some() {
                                     return Ok("{{ fake_boolean() }}".to_string());
                                 }
                                 return Ok("false".to_string());
@@ -415,7 +407,7 @@ impl MockGenerator {
 
             // Smart array length: Use pagination variables if available
             // Use {% set %} statement to avoid nested {{ }} expressions in {% for %}
-            if let Some(param) = self.has_pagination_variable(variables, &["first", "limit"]) {
+            if let Some(param) = Self::has_pagination_variable(variables, &["first", "limit"]) {
                 array_template.push_str(&indent);
                 array_template.push_str("{% set __array_length = body_json.variables.");
                 array_template.push_str(&param);
@@ -426,7 +418,7 @@ impl MockGenerator {
                 array_template.push_str("[\n");
                 array_template.push_str(&inner_indent);
                 array_template.push_str("{% for i in range(start=0, end=__array_length) %}\n");
-            } else if self.has_pagination_variable(variables, &["last"]).is_some() {
+            } else if Self::has_pagination_variable(variables, &["last"]).is_some() {
                 array_template.push_str(&indent);
                 array_template
                     .push_str("{% set __array_length = body_json.variables.last | default(value=");
@@ -569,7 +561,9 @@ impl MockGenerator {
 
         if possible_types.len() == 1 {
             // Only one possible type - generate it directly with __typename
-            let type_ref = &possible_types[0];
+            let type_ref = possible_types
+                .first()
+                .context("Expected at least one possible type")?;
             let concrete_type = self
                 .schema
                 .get_type(&type_ref.name)

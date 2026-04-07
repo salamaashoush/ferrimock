@@ -17,7 +17,8 @@ use std::str::FromStr;
 /// Validator for mock configurations
 pub struct MockValidator {
     /// Configuration options
-    _config: ValidatorConfig,
+    #[cfg_attr(not(test), allow(dead_code))]
+    config: ValidatorConfig,
 }
 
 /// Validator configuration
@@ -38,7 +39,7 @@ impl MockValidator {
     /// Create a new validator with default configuration
     pub fn new() -> Self {
         Self {
-            _config: ValidatorConfig::default(),
+            config: ValidatorConfig::default(),
         }
     }
 
@@ -55,7 +56,7 @@ impl MockValidator {
                     errors: vec![ValidationError {
                         mock_id: None,
                         error_type: ErrorType::FileReadError,
-                        message: format!("Failed to read file: {}", e),
+                        message: format!("Failed to read file: {e}"),
                         snippet: None,
                         suggestion: None,
                         line_number: None,
@@ -69,16 +70,16 @@ impl MockValidator {
         let extension = path.extension().and_then(|e| e.to_str());
         let config_result = match extension {
             Some("json") => serde_json::from_str::<MockCollectionConfig>(&content)
-                .map_err(|e| format!("JSON parse error: {}", e)),
-            Some("yaml") | Some("yml") => serde_yaml::from_str::<MockCollectionConfig>(&content)
-                .map_err(|e| format!("YAML parse error: {}", e)),
+                .map_err(|e| format!("JSON parse error: {e}")),
+            Some("yaml" | "yml") => serde_yaml::from_str::<MockCollectionConfig>(&content)
+                .map_err(|e| format!("YAML parse error: {e}")),
             _ => {
                 return ValidationResult {
                     file_path,
                     errors: vec![ValidationError {
                         mock_id: None,
                         error_type: ErrorType::UnsupportedFormat,
-                        message: format!("Unsupported file format: {:?}", extension),
+                        message: format!("Unsupported file format: {extension:?}"),
                         snippet: None,
                         suggestion: Some("Use .json, .yaml, or .yml extension".to_string()),
                         line_number: None,
@@ -130,16 +131,16 @@ impl MockValidator {
     pub async fn validate_content(&self, content: &str, extension: &str) -> ValidationResult {
         let config_result = match extension {
             "json" => serde_json::from_str::<MockCollectionConfig>(content)
-                .map_err(|e| format!("JSON parse error: {}", e)),
+                .map_err(|e| format!("JSON parse error: {e}")),
             "yaml" | "yml" => serde_yaml::from_str::<MockCollectionConfig>(content)
-                .map_err(|e| format!("YAML parse error: {}", e)),
+                .map_err(|e| format!("YAML parse error: {e}")),
             _ => {
                 return ValidationResult {
                     file_path: None,
                     errors: vec![ValidationError {
                         mock_id: None,
                         error_type: ErrorType::UnsupportedFormat,
-                        message: format!("Unsupported format: {}", extension),
+                        message: format!("Unsupported format: {extension}"),
                         snippet: None,
                         suggestion: Some("Use json, yaml, or yml".to_string()),
                         line_number: None,
@@ -185,7 +186,7 @@ impl MockValidator {
                     errors: vec![ValidationError {
                         mock_id: None,
                         error_type: ErrorType::FileReadError,
-                        message: format!("Failed to read directory: {}", e),
+                        message: format!("Failed to read directory: {e}"),
                         snippet: None,
                         suggestion: None,
                         line_number: None,
@@ -197,7 +198,7 @@ impl MockValidator {
         };
 
         // Collect all valid config files
-        for entry in read_dir.filter_map(|e| e.ok()) {
+        for entry in read_dir.filter_map(std::result::Result::ok) {
             let path = entry.path();
 
             if !path.is_file() {
@@ -205,7 +206,7 @@ impl MockValidator {
             }
 
             let extension = path.extension().and_then(|e| e.to_str());
-            if matches!(extension, Some("json") | Some("yaml") | Some("yml")) {
+            if matches!(extension, Some("json" | "yaml" | "yml")) {
                 results.push(self.validate_file(&path).await);
             }
         }
@@ -214,6 +215,7 @@ impl MockValidator {
     }
 
     /// Internal validation with full context
+    #[allow(clippy::match_same_arms, clippy::indexing_slicing)] // Keeping explicit arms for clarity in validation logic; loop indices are bounds-safe
     async fn validate_config_internal(
         &self,
         config: &MockCollectionConfig,
@@ -272,7 +274,7 @@ impl MockValidator {
                         errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidMethod,
-              message: format!("Invalid HTTP method '{}': {}", method_str, e),
+              message: format!("Invalid HTTP method '{method_str}': {e}"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, method_str)),
               suggestion: Some(
                 "Valid methods are: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT".to_string(),
@@ -294,8 +296,8 @@ impl MockValidator {
                         || url_pattern.ends_with('$')
                         || url_pattern.contains("\\d")
                         || url_pattern.contains("\\w")
-                        || url_pattern.contains("[")
-                        || url_pattern.contains("(")
+                        || url_pattern.contains('[')
+                        || url_pattern.contains('(')
                     {
                         // Validate as regex
                         if let Err(e) = Regex::new(url_pattern) {
@@ -303,7 +305,7 @@ impl MockValidator {
                             errors.push(ValidationError {
                 mock_id: mock_id.clone(),
                 error_type: ErrorType::InvalidRegex,
-                message: format!("Invalid regex pattern in URL: {}", e),
+                message: format!("Invalid regex pattern in URL: {e}"),
                 snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, url_pattern)),
                 suggestion: Some(
                   "Check regex syntax: brackets, parentheses, and special characters must be balanced".to_string(),
@@ -321,7 +323,7 @@ impl MockValidator {
                         errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidHeaderName,
-              message: format!("Invalid header name: '{}'", header_name),
+              message: format!("Invalid header name: '{header_name}'"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, header_name)),
               suggestion: Some("Header names must be valid HTTP header names (alphanumeric and hyphens)".to_string()),
               line_number,
@@ -344,21 +346,21 @@ impl MockValidator {
             // Validate return configuration
             if let Some(ref response_config) = mock.response_config {
                 // Check status code if present
-                if let Some(status) = response_config.status() {
-                    if !(100..=599).contains(&status) {
-                        let status_str = status.to_string();
-                        let line_number = Self::find_line_number(file_content, &status_str);
-                        errors.push(ValidationError {
-                            mock_id: mock_id.clone(),
-                            error_type: ErrorType::InvalidStatusCode,
-                            message: format!("Invalid HTTP status code: {}", status),
-                            snippet: line_number.and_then(|line| {
-                                Self::extract_snippet(file_content, line, &status_str)
-                            }),
-                            suggestion: Some("Status code must be between 100 and 599".to_string()),
-                            line_number,
-                        });
-                    }
+                if let Some(status) = response_config.status()
+                    && !(100..=599).contains(&status)
+                {
+                    let status_str = status.to_string();
+                    let line_number = Self::find_line_number(file_content, &status_str);
+                    errors.push(ValidationError {
+                        mock_id: mock_id.clone(),
+                        error_type: ErrorType::InvalidStatusCode,
+                        message: format!("Invalid HTTP status code: {status}"),
+                        snippet: line_number.and_then(|line| {
+                            Self::extract_snippet(file_content, line, &status_str)
+                        }),
+                        suggestion: Some("Status code must be between 100 and 599".to_string()),
+                        line_number,
+                    });
                 }
 
                 // Validate mutual exclusivity of body type fields
@@ -401,85 +403,72 @@ impl MockValidator {
                 }
 
                 // Validate template (inline Tera template - always validated)
-                if let Some(tmpl) = response_config.template() {
-                    if let Err(e) = template::validate_template(tmpl) {
-                        let line_number = Self::find_line_number(file_content, tmpl);
-                        errors.push(ValidationError {
+                if let Some(tmpl) = response_config.template()
+                    && let Err(e) = template::validate_template(tmpl)
+                {
+                    let line_number = Self::find_line_number(file_content, tmpl);
+                    errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::TemplateError,
-              message: format!("Template validation failed: {}", e),
+              message: format!("Template validation failed: {e}"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, "{{")),
               suggestion: Some(
                 "Check template syntax: variables use {{ var }}, control flow uses {% if %}".to_string(),
               ),
               line_number,
             });
-                    }
                 }
 
                 // Validate template_file (load file, check existence, validate as template)
-                if let Some(tf_ref) = response_config.template_file_ref() {
-                    if let Some(dir) = config_dir {
-                        let full_path = dir.join(tf_ref);
-                        if !full_path.exists() {
-                            let line_number = Self::find_line_number(file_content, tf_ref);
+                if let Some(tf_ref) = response_config.template_file_ref()
+                    && let Some(dir) = config_dir
+                {
+                    let full_path = dir.join(tf_ref);
+                    if full_path.exists() {
+                        // Validate template file content
+                        if let Ok(template_content) = std::fs::read_to_string(&full_path)
+                            && let Err(e) = template::validate_template(&template_content)
+                        {
                             errors.push(ValidationError {
                                 mock_id: mock_id.clone(),
-                                error_type: ErrorType::FileNotFound,
-                                message: format!(
-                                    "Referenced template file does not exist: {}",
-                                    tf_ref
-                                ),
-                                snippet: line_number.and_then(|line| {
-                                    Self::extract_snippet(file_content, line, tf_ref)
-                                }),
-                                suggestion: Some(format!(
-                                    "Expected file at: {}",
-                                    full_path.display()
-                                )),
-                                line_number,
+                                error_type: ErrorType::TemplateError,
+                                message: format!("Template file '{tf_ref}' validation failed: {e}"),
+                                snippet: None,
+                                suggestion: Some("Check template file syntax".to_string()),
+                                line_number: None,
                             });
-                        } else {
-                            // Validate template file content
-                            if let Ok(template_content) = std::fs::read_to_string(&full_path) {
-                                if let Err(e) = template::validate_template(&template_content) {
-                                    errors.push(ValidationError {
-                                        mock_id: mock_id.clone(),
-                                        error_type: ErrorType::TemplateError,
-                                        message: format!(
-                                            "Template file '{}' validation failed: {}",
-                                            tf_ref, e
-                                        ),
-                                        snippet: None,
-                                        suggestion: Some("Check template file syntax".to_string()),
-                                        line_number: None,
-                                    });
-                                }
-                            }
                         }
+                    } else {
+                        let line_number = Self::find_line_number(file_content, tf_ref);
+                        errors.push(ValidationError {
+                            mock_id: mock_id.clone(),
+                            error_type: ErrorType::FileNotFound,
+                            message: format!("Referenced template file does not exist: {tf_ref}"),
+                            snippet: line_number
+                                .and_then(|line| Self::extract_snippet(file_content, line, tf_ref)),
+                            suggestion: Some(format!("Expected file at: {}", full_path.display())),
+                            line_number,
+                        });
                     }
                 }
 
                 // Validate file (check existence only, no template processing)
-                if let Some(file_ref) = response_config.file_ref() {
-                    if let Some(dir) = config_dir {
-                        let full_path = dir.join(file_ref);
-                        if !full_path.exists() {
-                            let line_number = Self::find_line_number(file_content, file_ref);
-                            errors.push(ValidationError {
-                                mock_id: mock_id.clone(),
-                                error_type: ErrorType::FileNotFound,
-                                message: format!("Referenced file does not exist: {}", file_ref),
-                                snippet: line_number.and_then(|line| {
-                                    Self::extract_snippet(file_content, line, file_ref)
-                                }),
-                                suggestion: Some(format!(
-                                    "Expected file at: {}",
-                                    full_path.display()
-                                )),
-                                line_number,
-                            });
-                        }
+                if let Some(file_ref) = response_config.file_ref()
+                    && let Some(dir) = config_dir
+                {
+                    let full_path = dir.join(file_ref);
+                    if !full_path.exists() {
+                        let line_number = Self::find_line_number(file_content, file_ref);
+                        errors.push(ValidationError {
+                            mock_id: mock_id.clone(),
+                            error_type: ErrorType::FileNotFound,
+                            message: format!("Referenced file does not exist: {file_ref}"),
+                            snippet: line_number.and_then(|line| {
+                                Self::extract_snippet(file_content, line, file_ref)
+                            }),
+                            suggestion: Some(format!("Expected file at: {}", full_path.display())),
+                            line_number,
+                        });
                     }
                 }
             } else {
@@ -502,43 +491,42 @@ impl MockValidator {
             }
 
             // Validate top-level delay
-            if let Some(ref delay) = mock.delay {
-                if let Err(_e) = mockpit_config::response::parse_duration(delay) {
-                    let line_number = Self::find_line_number(file_content, delay);
-                    errors.push(ValidationError {
-                        mock_id: mock_id.clone(),
-                        error_type: ErrorType::InvalidDuration,
-                        message: format!("Invalid top-level delay duration: '{}'", delay),
-                        snippet: line_number
-                            .and_then(|line| Self::extract_snippet(file_content, line, delay)),
-                        suggestion: Some(
-                            "Duration must have a unit suffix: '100ms', '2s', '500us'".to_string(),
-                        ),
-                        line_number,
-                    });
-                }
+            if let Some(ref delay) = mock.delay
+                && let Err(_e) = mockpit_config::response::parse_duration(delay)
+            {
+                let line_number = Self::find_line_number(file_content, delay);
+                errors.push(ValidationError {
+                    mock_id: mock_id.clone(),
+                    error_type: ErrorType::InvalidDuration,
+                    message: format!("Invalid top-level delay duration: '{delay}'"),
+                    snippet: line_number
+                        .and_then(|line| Self::extract_snippet(file_content, line, delay)),
+                    suggestion: Some(
+                        "Duration must have a unit suffix: '100ms', '2s', '500us'".to_string(),
+                    ),
+                    line_number,
+                });
             }
 
             // Validate top-level patch configuration
             if let Some(ref patches_config) = mock.patch {
                 // Validate jsonpath values that contain template expressions
                 for (path, value) in &patches_config.jsonpath {
-                    if let Some(s) = value.as_str() {
-                        if s.contains("{{") || s.contains("{%") {
-                            if let Err(e) = template::validate_template(s) {
-                                let line_number = Self::find_line_number(file_content, s);
-                                errors.push(ValidationError {
+                    if let Some(s) = value.as_str()
+                        && (s.contains("{{") || s.contains("{%"))
+                        && let Err(e) = template::validate_template(s)
+                    {
+                        let line_number = Self::find_line_number(file_content, s);
+                        errors.push(ValidationError {
                   mock_id: mock_id.clone(),
                   error_type: ErrorType::TemplateError,
-                  message: format!("Invalid template in patch jsonpath '{}': {}", path, e),
+                  message: format!("Invalid template in patch jsonpath '{path}': {e}"),
                   snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, "{{")),
                   suggestion: Some(
                     "Check template syntax: variables use {{ var }}, functions use {{ func() }}".to_string(),
                   ),
                   line_number,
                 });
-                            }
-                        }
                     }
                 }
 
@@ -551,7 +539,7 @@ impl MockValidator {
                         errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidPatchRegex,
-              message: format!("Invalid regex pattern in patch: {}", e),
+              message: format!("Invalid regex pattern in patch: {e}"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, &regex_config.pattern)),
               suggestion: Some(
                 "Check regex syntax: brackets, parentheses, and special characters must be balanced".to_string(),
@@ -561,23 +549,22 @@ impl MockValidator {
                     }
 
                     // Validate template expressions in replacement
-                    if regex_config.replacement.contains("{{")
-                        || regex_config.replacement.contains("{%")
+                    if (regex_config.replacement.contains("{{")
+                        || regex_config.replacement.contains("{%"))
+                        && let Err(e) = template::validate_template(&regex_config.replacement)
                     {
-                        if let Err(e) = template::validate_template(&regex_config.replacement) {
-                            let line_number =
-                                Self::find_line_number(file_content, &regex_config.replacement);
-                            errors.push(ValidationError {
+                        let line_number =
+                            Self::find_line_number(file_content, &regex_config.replacement);
+                        errors.push(ValidationError {
                 mock_id: mock_id.clone(),
                 error_type: ErrorType::TemplateError,
-                message: format!("Invalid template in patch regex replacement: {}", e),
+                message: format!("Invalid template in patch regex replacement: {e}"),
                 snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, "{{")),
                 suggestion: Some(
                   "Check template syntax: variables use {{ var }}, functions use {{ func() }}".to_string(),
                 ),
                 line_number,
               });
-                        }
                     }
                 }
 
@@ -589,7 +576,7 @@ impl MockValidator {
                         errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidPatchHeaderName,
-              message: format!("Invalid header name in patch: '{}'", name),
+              message: format!("Invalid header name in patch: '{name}'"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, name)),
               suggestion: Some("Header names must be valid HTTP header names (alphanumeric and hyphens)".to_string()),
               line_number,
@@ -597,20 +584,20 @@ impl MockValidator {
                     }
 
                     // Validate template expressions in value
-                    if value.contains("{{") || value.contains("{%") {
-                        if let Err(e) = template::validate_template(value) {
-                            let line_number = Self::find_line_number(file_content, value);
-                            errors.push(ValidationError {
+                    if (value.contains("{{") || value.contains("{%"))
+                        && let Err(e) = template::validate_template(value)
+                    {
+                        let line_number = Self::find_line_number(file_content, value);
+                        errors.push(ValidationError {
                 mock_id: mock_id.clone(),
                 error_type: ErrorType::TemplateError,
-                message: format!("Invalid template in patch header '{}': {}", name, e),
+                message: format!("Invalid template in patch header '{name}': {e}"),
                 snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, "{{")),
                 suggestion: Some(
                   "Check template syntax: variables use {{ var }}, functions use {{ func() }}".to_string(),
                 ),
                 line_number,
               });
-                        }
                     }
                 }
 
@@ -621,7 +608,7 @@ impl MockValidator {
                         errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidPatchHeaderName,
-              message: format!("Invalid header name in patch remove: '{}'", name),
+              message: format!("Invalid header name in patch remove: '{name}'"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, name)),
               suggestion: Some("Header names must be valid HTTP header names (alphanumeric and hyphens)".to_string()),
               line_number,
@@ -648,77 +635,78 @@ impl MockValidator {
                 }
 
                 // Validate delay duration
-                if let Some(ref delay) = request_config.delay {
-                    if let Err(_e) = mockpit_config::response::parse_duration(delay) {
-                        let line_number = Self::find_line_number(file_content, delay);
-                        errors.push(ValidationError {
-                            mock_id: mock_id.clone(),
-                            error_type: ErrorType::InvalidDuration,
-                            message: format!("Invalid request delay duration: '{}'", delay),
-                            snippet: line_number
-                                .and_then(|line| Self::extract_snippet(file_content, line, delay)),
-                            suggestion: Some(
-                                "Duration must have a unit suffix: '100ms', '2s', '500us'"
-                                    .to_string(),
-                            ),
-                            line_number,
-                        });
-                    }
+                if let Some(ref delay) = request_config.delay
+                    && let Err(_e) = mockpit_config::response::parse_duration(delay)
+                {
+                    let line_number = Self::find_line_number(file_content, delay);
+                    errors.push(ValidationError {
+                        mock_id: mock_id.clone(),
+                        error_type: ErrorType::InvalidDuration,
+                        message: format!("Invalid request delay duration: '{delay}'"),
+                        snippet: line_number
+                            .and_then(|line| Self::extract_snippet(file_content, line, delay)),
+                        suggestion: Some(
+                            "Duration must have a unit suffix: '100ms', '2s', '500us'".to_string(),
+                        ),
+                        line_number,
+                    });
                 }
 
                 // Validate timeout duration
-                if let Some(ref timeout) = request_config.timeout {
-                    if let Err(_e) = mockpit_config::response::parse_duration(timeout) {
-                        let line_number = Self::find_line_number(file_content, timeout);
-                        errors.push(ValidationError {
-                            mock_id: mock_id.clone(),
-                            error_type: ErrorType::InvalidDuration,
-                            message: format!("Invalid request timeout duration: '{}'", timeout),
-                            snippet: line_number.and_then(|line| {
-                                Self::extract_snippet(file_content, line, timeout)
-                            }),
-                            suggestion: Some(
-                                "Duration must have a unit suffix: '100ms', '2s', '500us'"
-                                    .to_string(),
-                            ),
-                            line_number,
-                        });
-                    }
+                if let Some(ref timeout) = request_config.timeout
+                    && let Err(_e) = mockpit_config::response::parse_duration(timeout)
+                {
+                    let line_number = Self::find_line_number(file_content, timeout);
+                    errors.push(ValidationError {
+                        mock_id: mock_id.clone(),
+                        error_type: ErrorType::InvalidDuration,
+                        message: format!("Invalid request timeout duration: '{timeout}'"),
+                        snippet: line_number
+                            .and_then(|line| Self::extract_snippet(file_content, line, timeout)),
+                        suggestion: Some(
+                            "Duration must have a unit suffix: '100ms', '2s', '500us'".to_string(),
+                        ),
+                        line_number,
+                    });
                 }
 
                 // Validate forward_to URL
-                if let Some(ref forward_to) = request_config.forward_to {
-                    if !forward_to.starts_with("http://") && !forward_to.starts_with("https://") {
-                        let line_number = Self::find_line_number(file_content, forward_to);
-                        errors.push(ValidationError {
+                if let Some(ref forward_to) = request_config.forward_to
+                    && !forward_to.starts_with("http://")
+                    && !forward_to.starts_with("https://")
+                {
+                    let line_number = Self::find_line_number(file_content, forward_to);
+                    errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidUrl,
               message: format!(
-                "Invalid forward_to URL: '{}' (must start with http:// or https://)",
-                forward_to
+                "Invalid forward_to URL: '{forward_to}' (must start with http:// or https://)"
               ),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, forward_to)),
               suggestion: Some("forward_to must be a full URL, e.g., 'https://staging.example.com'".to_string()),
               line_number,
             });
-                    }
                 }
 
                 // Validate rewrite_path template syntax
-                if let Some(ref rewrite_path) = request_config.rewrite_path {
-                    if rewrite_path.contains("{{") || rewrite_path.contains("{%") {
-                        if let Err(e) = template::validate_template(rewrite_path) {
-                            let line_number = Self::find_line_number(file_content, rewrite_path);
-                            errors.push(ValidationError {
-                mock_id: mock_id.clone(),
-                error_type: ErrorType::InvalidRewritePathTemplate,
-                message: format!("Invalid Tera template in rewrite_path: {}", e),
-                snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, rewrite_path)),
-                suggestion: Some("Check template syntax: use {{ captures.param }} for URL captures".to_string()),
-                line_number,
-              });
-                        }
-                    }
+                if let Some(ref rewrite_path) = request_config.rewrite_path
+                    && (rewrite_path.contains("{{") || rewrite_path.contains("{%"))
+                    && let Err(e) = template::validate_template(rewrite_path)
+                {
+                    let line_number = Self::find_line_number(file_content, rewrite_path);
+                    errors.push(ValidationError {
+                        mock_id: mock_id.clone(),
+                        error_type: ErrorType::InvalidRewritePathTemplate,
+                        message: format!("Invalid Tera template in rewrite_path: {e}"),
+                        snippet: line_number.and_then(|line| {
+                            Self::extract_snippet(file_content, line, rewrite_path)
+                        }),
+                        suggestion: Some(
+                            "Check template syntax: use {{ captures.param }} for URL captures"
+                                .to_string(),
+                        ),
+                        line_number,
+                    });
                 }
 
                 // Validate request header names in headers.add
@@ -728,7 +716,7 @@ impl MockValidator {
                         errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidRequestHeaderName,
-              message: format!("Invalid request header name: '{}'", header_name),
+              message: format!("Invalid request header name: '{header_name}'"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, header_name)),
               suggestion: Some("Header names must be valid HTTP header names (alphanumeric and hyphens)".to_string()),
               line_number,
@@ -744,7 +732,7 @@ impl MockValidator {
                         errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::InvalidRequestBodyRegex,
-              message: format!("Invalid regex pattern in request body patch: {}", e),
+              message: format!("Invalid regex pattern in request body patch: {e}"),
               snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, &regex_config.pattern)),
               suggestion: Some(
                 "Check regex syntax: brackets, parentheses, and special characters must be balanced".to_string(),
@@ -755,12 +743,14 @@ impl MockValidator {
                 }
 
                 // Check for conflicting modes: full mock body + request transforms
-                if let Some(ref response_config) = mock.response_config {
-                    if response_config.is_full_mock() && !request_config.is_empty() {
-                        let line_number = Self::find_line_number(file_content, "forward_to")
-                            .or_else(|| Self::find_line_number(file_content, "rewrite_path"))
-                            .or_else(|| Self::find_line_number(file_content, "[request"));
-                        errors.push(ValidationError {
+                if let Some(ref response_config) = mock.response_config
+                    && response_config.is_full_mock()
+                    && !request_config.is_empty()
+                {
+                    let line_number = Self::find_line_number(file_content, "forward_to")
+                        .or_else(|| Self::find_line_number(file_content, "rewrite_path"))
+                        .or_else(|| Self::find_line_number(file_content, "[request"));
+                    errors.push(ValidationError {
               mock_id: mock_id.clone(),
               error_type: ErrorType::ConflictingModes,
               message: "Cannot combine request transforms with full mock response (response.body/response.json)".to_string(),
@@ -768,7 +758,6 @@ impl MockValidator {
               suggestion: Some("Request transforms require passthrough mode. Remove response.body/response.json, or use top-level `patch` instead.".to_string()),
               line_number,
             });
-                    }
                 }
             }
         }
@@ -804,7 +793,7 @@ impl MockValidator {
                 errors.push(ValidationError {
                     mock_id: None,
                     error_type: ErrorType::ConversionError,
-                    message: format!("Failed to convert config to mock definitions: {}", e),
+                    message: format!("Failed to convert config to mock definitions: {e}"),
                     snippet: None,
                     suggestion: None,
                     line_number: None,
@@ -854,6 +843,7 @@ impl MockValidator {
     }
 
     /// Extract a code snippet around a line
+    #[allow(clippy::indexing_slicing)] // Line number bounds checked: `line_number > lines.len()` guard above
     fn extract_snippet(content: &str, line_number: usize, highlight: &str) -> Option<CodeSnippet> {
         let lines: Vec<&str> = content.lines().collect();
         if line_number == 0 || line_number > lines.len() {
@@ -873,6 +863,7 @@ impl MockValidator {
     }
 
     /// Extract a code snippet by line number only
+    #[allow(clippy::indexing_slicing)] // Line number bounds checked: `line_number > lines.len()` guard above
     fn extract_snippet_by_line(content: &str, line_number: usize) -> Option<CodeSnippet> {
         let lines: Vec<&str> = content.lines().collect();
         if line_number == 0 || line_number > lines.len() {
@@ -927,19 +918,17 @@ impl MockValidator {
         if let (Some(gql1), Some(gql2)) = (
             &mock1.request.graphql_matcher,
             &mock2.request.graphql_matcher,
-        ) {
-            if Self::graphql_matchers_discriminate(gql1, gql2) {
-                return false;
-            }
+        ) && Self::graphql_matchers_discriminate(gql1, gql2)
+        {
+            return false;
         }
 
         // Mocks with different body matchers further discriminate
         if let (Some(body1), Some(body2)) =
             (&mock1.request.body_matcher, &mock2.request.body_matcher)
+            && Self::body_matchers_discriminate(body1, body2)
         {
-            if Self::body_matchers_discriminate(body1, body2) {
-                return false;
-            }
+            return false;
         }
 
         // Mocks with different required header matchers discriminate
@@ -1030,20 +1019,21 @@ impl MockValidator {
                     // Regex vs Regex, Glob vs Glob, and other complex combinations:
                     // Conservative approach - assume they might overlap
                     // (Proper static analysis is too complex for regex/glob patterns)
-                    (UrlPattern::Regex(_), UrlPattern::Regex(_))
-                    | (UrlPattern::Glob(_), UrlPattern::Glob(_))
-                    | (UrlPattern::Prefix(_), UrlPattern::Regex(_))
-                    | (UrlPattern::Regex(_), UrlPattern::Prefix(_))
-                    | (UrlPattern::Suffix(_), UrlPattern::Regex(_))
-                    | (UrlPattern::Regex(_), UrlPattern::Suffix(_))
-                    | (UrlPattern::Prefix(_), UrlPattern::Glob(_))
-                    | (UrlPattern::Glob(_), UrlPattern::Prefix(_))
-                    | (UrlPattern::Suffix(_), UrlPattern::Glob(_))
-                    | (UrlPattern::Glob(_), UrlPattern::Suffix(_))
-                    | (UrlPattern::Prefix(_), UrlPattern::Suffix(_))
-                    | (UrlPattern::Suffix(_), UrlPattern::Prefix(_))
-                    | (UrlPattern::Regex(_), UrlPattern::Glob(_))
-                    | (UrlPattern::Glob(_), UrlPattern::Regex(_)) => {
+                    (
+                        UrlPattern::Regex(_)
+                        | UrlPattern::Prefix(_)
+                        | UrlPattern::Suffix(_)
+                        | UrlPattern::Glob(_),
+                        UrlPattern::Regex(_) | UrlPattern::Glob(_),
+                    )
+                    | (
+                        UrlPattern::Regex(_) | UrlPattern::Glob(_) | UrlPattern::Suffix(_),
+                        UrlPattern::Prefix(_),
+                    )
+                    | (
+                        UrlPattern::Regex(_) | UrlPattern::Glob(_) | UrlPattern::Prefix(_),
+                        UrlPattern::Suffix(_),
+                    ) => {
                         // Conservative: assume overlap for complex pattern combinations
                         return true;
                     }
@@ -1066,43 +1056,41 @@ impl MockValidator {
         }
 
         // Different operation types (query vs mutation vs subscription) never overlap
-        if let (Some(type1), Some(type2)) = (&gql1.operation_type, &gql2.operation_type) {
-            if type1 != type2 {
-                return true;
-            }
+        if let (Some(type1), Some(type2)) = (&gql1.operation_type, &gql2.operation_type)
+            && type1 != type2
+        {
+            return true;
         }
 
         // Introspection queries are always queries (never mutations/subscriptions).
         // If one is an introspection matcher and the other targets mutations or subscriptions,
         // they cannot overlap.
-        if gql1.introspection_matcher.is_some() {
-            if let Some(t) = &gql2.operation_type {
-                if matches!(
-                    t,
-                    mockpit_types::GraphQLOperationType::Mutation
-                        | mockpit_types::GraphQLOperationType::Subscription
-                ) {
-                    return true;
-                }
-            }
+        if gql1.introspection_matcher.is_some()
+            && let Some(t) = &gql2.operation_type
+            && matches!(
+                t,
+                mockpit_types::GraphQLOperationType::Mutation
+                    | mockpit_types::GraphQLOperationType::Subscription
+            )
+        {
+            return true;
         }
-        if gql2.introspection_matcher.is_some() {
-            if let Some(t) = &gql1.operation_type {
-                if matches!(
-                    t,
-                    mockpit_types::GraphQLOperationType::Mutation
-                        | mockpit_types::GraphQLOperationType::Subscription
-                ) {
-                    return true;
-                }
-            }
+        if gql2.introspection_matcher.is_some()
+            && let Some(t) = &gql1.operation_type
+            && matches!(
+                t,
+                mockpit_types::GraphQLOperationType::Mutation
+                    | mockpit_types::GraphQLOperationType::Subscription
+            )
+        {
+            return true;
         }
 
         // Different operation names never overlap
-        if let (Some(name1), Some(name2)) = (&gql1.operation_name, &gql2.operation_name) {
-            if name1 != name2 {
-                return true;
-            }
+        if let (Some(name1), Some(name2)) = (&gql1.operation_name, &gql2.operation_name)
+            && name1 != name2
+        {
+            return true;
         }
 
         // One is introspection-only and the other targets a named operation -- distinct
@@ -1124,20 +1112,20 @@ impl MockValidator {
         // JSONPath matchers on different paths discriminate
         if let (BodyMatcher::JsonPath { path: p1, .. }, BodyMatcher::JsonPath { path: p2, .. }) =
             (body1, body2)
+            && p1 != p2
         {
-            if p1 != p2 {
-                return true;
-            }
-            // Same path but different expected values
-            // We can't easily compare values here without runtime context,
-            // but different paths are a clear discriminator
+            return true;
         }
+        // Same path but different expected values
+        // We can't easily compare values here without runtime context,
+        // but different paths are a clear discriminator
         // Different matcher types (contains vs jsonpath vs regex) are different enough
         // to likely not overlap, but we can't guarantee it statically
         false
     }
 
     /// Check if header matchers guarantee different requests
+    #[allow(clippy::match_same_arms)] // Keeping explicit arms for pattern matching clarity
     fn header_matchers_discriminate(
         headers1: &[mockpit_types::HeaderMatcher],
         headers2: &[mockpit_types::HeaderMatcher],
@@ -1178,6 +1166,7 @@ impl MockValidator {
     }
 
     /// Check if query parameter matchers guarantee different requests
+    #[allow(clippy::match_same_arms)] // Keeping explicit arms for pattern matching clarity
     fn query_matchers_discriminate(
         queries1: &[mockpit_types::QueryMatcher],
         queries2: &[mockpit_types::QueryMatcher],
@@ -1315,6 +1304,7 @@ pub struct ValidationError {
 
 impl ValidationError {
     /// Format the error in Rust compiler style
+    #[allow(clippy::format_push_string)] // Error formatting intentionally uses format! for readability
     pub fn format(&self, file_path: Option<&PathBuf>) -> String {
         let mut output = String::new();
 
@@ -1329,7 +1319,7 @@ impl ValidationError {
             } else {
                 format!("{}", path.display())
             };
-            output.push_str(&format!("  --> {}\n", location));
+            output.push_str(&format!("  --> {location}\n"));
         }
 
         // Code snippet with highlighting
@@ -1339,12 +1329,12 @@ impl ValidationError {
 
         // Mock ID context
         if let Some(ref id) = self.mock_id {
-            output.push_str(&format!("   = note: in mock '{}'\n", id));
+            output.push_str(&format!("   = note: in mock '{id}'\n"));
         }
 
         // Suggestion
         if let Some(ref suggestion) = self.suggestion {
-            output.push_str(&format!("   = help: {}\n", suggestion));
+            output.push_str(&format!("   = help: {suggestion}\n"));
         }
 
         output
@@ -1370,6 +1360,7 @@ pub struct ValidationWarning {
 
 impl ValidationWarning {
     /// Format the warning in Rust compiler style
+    #[allow(clippy::format_push_string)] // Warning formatting intentionally uses format! for readability
     pub fn format(&self, file_path: Option<&PathBuf>) -> String {
         let mut output = String::new();
 
@@ -1384,7 +1375,7 @@ impl ValidationWarning {
             } else {
                 format!("{}", path.display())
             };
-            output.push_str(&format!("  --> {}\n", location));
+            output.push_str(&format!("  --> {location}\n"));
         }
 
         // Code snippet with highlighting
@@ -1394,12 +1385,12 @@ impl ValidationWarning {
 
         // Mock ID context
         if let Some(ref id) = self.mock_id {
-            output.push_str(&format!("   = note: {}\n", id));
+            output.push_str(&format!("   = note: {id}\n"));
         }
 
         // Suggestion
         if let Some(ref suggestion) = self.suggestion {
-            output.push_str(&format!("   = help: {}\n", suggestion));
+            output.push_str(&format!("   = help: {suggestion}\n"));
         }
 
         output
@@ -1421,6 +1412,7 @@ pub struct CodeSnippet {
 
 impl CodeSnippet {
     /// Format the snippet with line numbers and highlighting
+    #[allow(clippy::format_push_string, clippy::indexing_slicing)] // Diagnostic formatting code
     pub fn format(&self) -> String {
         let mut output = String::new();
 
@@ -1432,7 +1424,7 @@ impl CodeSnippet {
         let padding = " ".repeat(self.highlight_start);
         let highlight_len = (self.highlight_end - self.highlight_start).max(1);
         let highlight = "^".repeat(highlight_len);
-        output.push_str(&format!("   | {}{}\n", padding, highlight));
+        output.push_str(&format!("   | {padding}{highlight}\n"));
 
         output
     }
@@ -1537,6 +1529,12 @@ impl WarningType {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use smallvec::smallvec;
@@ -1544,7 +1542,7 @@ mod tests {
     #[tokio::test]
     async fn test_validator_creation() {
         let validator = MockValidator::new();
-        assert!(validator._config.check_files);
+        assert!(validator.config.check_files);
     }
 
     #[tokio::test]
@@ -1626,6 +1624,7 @@ mod tests {
         use mockpit_types::{
             BodySource, RequestMatcher, ResponseGenerator, ResponseMode, UrlPattern,
         };
+        use rustc_hash::FxHashMap;
         use std::sync::Arc;
 
         // POST /api/users (exact match)
@@ -1647,7 +1646,7 @@ mod tests {
             },
             response: ResponseGenerator {
                 status: StatusCode::OK,
-                headers: Default::default(),
+                headers: FxHashMap::default(),
                 body: BodySource::Inline(Arc::new(bytes::Bytes::from(""))),
                 delay: None,
                 mode: ResponseMode::Static,
@@ -1676,7 +1675,7 @@ mod tests {
             },
             response: ResponseGenerator {
                 status: StatusCode::OK,
-                headers: Default::default(),
+                headers: FxHashMap::default(),
                 body: BodySource::Inline(Arc::new(bytes::Bytes::from(""))),
                 delay: None,
                 mode: ResponseMode::Static,
@@ -1756,6 +1755,7 @@ mod tests {
         use mockpit_types::{
             BodySource, QueryMatcher, RequestMatcher, ResponseGenerator, ResponseMode, UrlPattern,
         };
+        use rustc_hash::FxHashMap;
         use std::sync::Arc;
 
         // Mock 1: GET /api/users?role=admin
@@ -1777,7 +1777,7 @@ mod tests {
             },
             response: ResponseGenerator {
                 status: StatusCode::OK,
-                headers: Default::default(),
+                headers: FxHashMap::default(),
                 body: BodySource::Inline(Arc::new(bytes::Bytes::from(""))),
                 delay: None,
                 mode: ResponseMode::Static,
@@ -1804,7 +1804,7 @@ mod tests {
             },
             response: ResponseGenerator {
                 status: StatusCode::OK,
-                headers: Default::default(),
+                headers: FxHashMap::default(),
                 body: BodySource::Inline(Arc::new(bytes::Bytes::from(""))),
                 delay: None,
                 mode: ResponseMode::Static,
@@ -1826,6 +1826,7 @@ mod tests {
         use mockpit_types::{
             BodySource, HeaderMatcher, RequestMatcher, ResponseGenerator, ResponseMode, UrlPattern,
         };
+        use rustc_hash::FxHashMap;
         use std::sync::Arc;
 
         // Mock 1: GET /api/data with X-API-Version: 1
@@ -1850,7 +1851,7 @@ mod tests {
             },
             response: ResponseGenerator {
                 status: StatusCode::OK,
-                headers: Default::default(),
+                headers: FxHashMap::default(),
                 body: BodySource::Inline(Arc::new(bytes::Bytes::from(""))),
                 delay: None,
                 mode: ResponseMode::Static,
@@ -1880,7 +1881,7 @@ mod tests {
             },
             response: ResponseGenerator {
                 status: StatusCode::OK,
-                headers: Default::default(),
+                headers: FxHashMap::default(),
                 body: BodySource::Inline(Arc::new(bytes::Bytes::from(""))),
                 delay: None,
                 mode: ResponseMode::Static,

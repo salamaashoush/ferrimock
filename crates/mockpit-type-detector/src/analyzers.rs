@@ -45,23 +45,23 @@ pub(super) fn analyze_integers(numbers: &[i64]) -> (FieldType, f64) {
 
     // Check for microsecond timestamps (16 digits, starts with 1)
     // Example: 1640000000000000 (2021-12-20 in microseconds)
-    let min_micro = 1000000000000000i64; // 2001-09-09 in microseconds
-    let max_micro = 2000000000000000i64; // 2033-05-18 in microseconds
+    let min_micro = 1_000_000_000_000_000_i64; // 2001-09-09 in microseconds
+    let max_micro = 2_000_000_000_000_000_i64; // 2033-05-18 in microseconds
     if numbers.iter().all(|&n| n >= min_micro && n < max_micro) {
         return (FieldType::MicrosecondTimestamp, 0.90);
     }
 
     // Check for millisecond timestamps (13 digits, starts with 1)
     // Example: 1640000000000 (2021-12-20 in milliseconds)
-    let min_milli = 1000000000000i64; // 2001-09-09 in milliseconds
-    let max_milli = 2000000000000i64; // 2033-05-18 in milliseconds
+    let min_milli = 1_000_000_000_000_i64; // 2001-09-09 in milliseconds
+    let max_milli = 2_000_000_000_000_i64; // 2033-05-18 in milliseconds
     if numbers.iter().all(|&n| n >= min_milli && n < max_milli) {
         return (FieldType::MillisecondTimestamp, 0.90);
     }
 
     // Check for Unix timestamps in seconds (10 digits, reasonable range: 2000-2040)
-    let min_timestamp = 946684800i64; // 2000-01-01
-    let max_timestamp = 2208988800i64; // 2040-01-01
+    let min_timestamp = 946_684_800_i64; // 2000-01-01
+    let max_timestamp = 2_208_988_800_i64; // 2040-01-01
     if numbers
         .iter()
         .all(|&n| n >= min_timestamp && n <= max_timestamp)
@@ -73,25 +73,16 @@ pub(super) fn analyze_integers(numbers: &[i64]) -> (FieldType, f64) {
     // Semantic detection (field name-based) handles FileSize more accurately
 
     // Check for sequential pattern
-    if numbers.len() > 2 {
-        let mut is_sequential = true;
-        let step = numbers[1] - numbers[0];
-
-        for i in 1..numbers.len() {
-            if numbers[i] - numbers[i - 1] != step {
-                is_sequential = false;
-                break;
-            }
-        }
+    if let Some((&first, rest)) = numbers.split_first()
+        && let Some(&second) = rest.first()
+    {
+        let step = second - first;
+        let is_sequential = numbers
+            .windows(2)
+            .all(|w| matches!((w.first(), w.get(1)), (Some(a), Some(b)) if b - a == step));
 
         if is_sequential && step != 0 {
-            return (
-                FieldType::SequentialNumber {
-                    start: numbers[0],
-                    step,
-                },
-                0.95,
-            );
+            return (FieldType::SequentialNumber { start: first, step }, 0.95);
         }
     }
 
@@ -133,11 +124,11 @@ pub(super) fn analyze_floats(floats: &[f64]) -> (FieldType, f64) {
     // Extract min/max for random floats
     let min = floats
         .iter()
-        .min_by(|a, b| a.partial_cmp(b).expect("NaN in float comparison"))
+        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .copied();
     let max = floats
         .iter()
-        .max_by(|a, b| a.partial_cmp(b).expect("NaN in float comparison"))
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .copied();
 
     (FieldType::RandomFloat { min, max }, 0.8)
@@ -263,10 +254,14 @@ where
         }
 
         // Check if all values are the same
-        let all_same = field_values.windows(2).all(|w| w[0] == w[1]);
+        let all_same = field_values
+            .windows(2)
+            .all(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a == b));
 
         if all_same {
-            constant_fields.push((field.clone(), field_values[0].clone()));
+            if let Some(first_val) = field_values.first() {
+                constant_fields.push((field.clone(), (*first_val).clone()));
+            }
         } else {
             let (field_type, _) = detect_type(&field, &field_values);
             varying_fields.push((field, field_type));

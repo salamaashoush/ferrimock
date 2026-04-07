@@ -7,10 +7,11 @@ use mockpit_type_detector::{FieldType, TypeDetector};
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
+use std::sync::LazyLock;
 
-lazy_static::lazy_static! {
-  static ref PATH_ID_REGEX: Regex = Regex::new(r"/(\d+)(?:/|\?|$)").expect("Failed to compile path ID regex");
-}
+#[allow(clippy::expect_used)] // Static regex literal -- panic on invalid pattern is correct
+static PATH_ID_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/(\d+)(?:/|\?|$)").expect("Failed to compile path ID regex"));
 
 /// Pagination pattern detected in responses
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ pub struct PaginationPattern {
     pub static_query_params: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaginationType {
     Offset,
     Cursor,
@@ -62,7 +63,7 @@ pub struct ResponseAnalysis {
 /// Analysis of GraphQL variables across a group of mocks
 #[derive(Debug, Clone)]
 pub struct GraphQLVariableAnalysis {
-    /// Variables that vary across mocks (e.g., ["id", "input.role"])
+    /// Variables that vary across mocks (e.g., `["id", "input.role"]`)
     pub varying_variables: Vec<String>,
     /// Variables that are constant across all mocks with their values
     pub constant_variables: Vec<(String, JsonValue)>,
@@ -114,7 +115,10 @@ impl From<&ResponseAnalysis> for mockpit_codegen::ResponseStructure {
             has_matching_path_ids: analysis.has_matching_path_ids,
             is_json: analysis.is_json,
             top_level_type: analysis.top_level_type.clone(),
-            pagination: analysis.pagination_pattern.as_ref().map(|p| p.into()),
+            pagination: analysis
+                .pagination_pattern
+                .as_ref()
+                .map(std::convert::Into::into),
         }
     }
 }
@@ -145,6 +149,7 @@ impl ResponseAnalyzer {
     }
 
     /// Analyze response patterns across a group to detect field types
+    #[allow(clippy::indexing_slicing)] // Indices are bounds-checked: `responses.is_empty()` guard before `responses[0]`
     pub fn analyze_response_patterns(&self, group: &[MockConfig]) -> Result<ResponseAnalysis> {
         let responses: Vec<JsonValue> = group
             .iter()
@@ -175,7 +180,7 @@ impl ResponseAnalyzer {
         .to_string();
 
         if matches!(responses[0], JsonValue::Array(_)) {
-            return self.analyze_top_level_array_responses(&responses);
+            return Ok(self.analyze_top_level_array_responses(&responses));
         }
 
         if !matches!(responses[0], JsonValue::Object(_)) {
@@ -192,7 +197,7 @@ impl ResponseAnalyzer {
         let response_refs: Vec<&JsonValue> = responses.iter().collect();
         let (varying_fields, constant_fields) = self.analyze_object_fields(&response_refs);
 
-        let has_matching_path_ids = self.check_matching_path_ids(group, &responses);
+        let has_matching_path_ids = Self::check_matching_path_ids(group, &responses);
         let pagination_pattern = self.detect_pagination_pattern(&responses, group);
 
         Ok(ResponseAnalysis {
@@ -206,10 +211,7 @@ impl ResponseAnalyzer {
     }
 
     /// Analyze top-level array responses (e.g., GET /users -> [{...}, {...}])
-    fn analyze_top_level_array_responses(
-        &self,
-        responses: &[JsonValue],
-    ) -> Result<ResponseAnalysis> {
+    fn analyze_top_level_array_responses(&self, responses: &[JsonValue]) -> ResponseAnalysis {
         let all_objects: Vec<&JsonValue> = responses
             .iter()
             .filter_map(|r| r.as_array())
@@ -218,30 +220,30 @@ impl ResponseAnalyzer {
             .collect();
 
         if all_objects.is_empty() {
-            return Ok(ResponseAnalysis {
+            return ResponseAnalysis {
                 varying_fields: vec![],
                 constant_fields: vec![],
                 has_matching_path_ids: false,
                 is_json: true,
                 top_level_type: "array".to_string(),
                 pagination_pattern: None,
-            });
+            };
         }
 
         let (varying_fields, constant_fields) = self.analyze_object_fields(&all_objects);
 
-        Ok(ResponseAnalysis {
+        ResponseAnalysis {
             varying_fields,
             constant_fields,
             has_matching_path_ids: false,
             is_json: true,
             top_level_type: "array".to_string(),
             pagination_pattern: None,
-        })
+        }
     }
 
     /// Extract common field analysis logic for objects
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::indexing_slicing)] // `.windows(2)` guarantees 2-element slices; values[0] guarded by non-empty check
     pub fn analyze_object_fields(
         &self,
         objects: &[&JsonValue],
@@ -280,7 +282,7 @@ impl ResponseAnalyzer {
     }
 
     /// Check if response IDs match path IDs
-    fn check_matching_path_ids(&self, group: &[MockConfig], responses: &[JsonValue]) -> bool {
+    fn check_matching_path_ids(group: &[MockConfig], responses: &[JsonValue]) -> bool {
         if group.len() != responses.len() {
             return false;
         }
@@ -296,17 +298,15 @@ impl ResponseAnalyzer {
             if let Some(url_pattern) = url_pattern {
                 let url = url_pattern.strip_prefix("exact:").unwrap_or(url_pattern);
 
-                if let Some(caps) = path_id_regex.captures(url) {
-                    if let Some(path_id) = caps
+                if let Some(caps) = path_id_regex.captures(url)
+                    && let Some(path_id) = caps
                         .get(1)
-                        .and_then(|m: regex::Match| m.as_str().parse::<i64>().ok())
-                    {
-                        if let Some(response_id) = response.get("id").and_then(|v| v.as_i64()) {
-                            if path_id == response_id {
-                                return true;
-                            }
-                        }
-                    }
+                        .and_then(|m: regex::Match<'_>| m.as_str().parse::<i64>().ok())
+                    && let Some(response_id) =
+                        response.get("id").and_then(serde_json::Value::as_i64)
+                    && path_id == response_id
+                {
+                    return true;
                 }
             }
         }
@@ -315,6 +315,7 @@ impl ResponseAnalyzer {
     }
 
     /// Detect pagination patterns in responses with fuzzy field matching
+    #[allow(clippy::indexing_slicing)] // `objects[0]` guarded by `objects.is_empty()` check
     pub fn detect_pagination_pattern(
         &self,
         responses: &[JsonValue],
@@ -408,7 +409,7 @@ impl ResponseAnalyzer {
         let sample_total = total_field.as_ref().and_then(|field| {
             objects
                 .iter()
-                .filter_map(|obj| obj.get(field).and_then(|v| v.as_i64()))
+                .filter_map(|obj| obj.get(field).and_then(serde_json::Value::as_i64))
                 .max()
         });
 
@@ -421,8 +422,8 @@ impl ResponseAnalyzer {
             // Extract static query params from next/previous URLs
             let static_query_params = Self::extract_static_query_params(
                 &objects,
-                &next_field,
-                &prev_field,
+                next_field.as_ref(),
+                prev_field.as_ref(),
                 &query_analysis,
             );
 
@@ -456,20 +457,19 @@ impl ResponseAnalyzer {
     /// Extract static (non-pagination) query parameters from next/previous URLs
     fn extract_static_query_params(
         objects: &[&serde_json::Map<String, JsonValue>],
-        next_field: &Option<String>,
-        prev_field: &Option<String>,
+        next_field: Option<&String>,
+        prev_field: Option<&String>,
         _query_analysis: &crate::pattern::QueryParamAnalysis,
     ) -> String {
         // Try to get a sample URL from next or previous field
         let sample_url = next_field
-            .as_ref()
             .and_then(|field| {
                 objects
                     .iter()
                     .find_map(|obj| obj.get(field).and_then(|v| v.as_str()))
             })
             .or_else(|| {
-                prev_field.as_ref().and_then(|field| {
+                prev_field.and_then(|field| {
                     objects
                         .iter()
                         .find_map(|obj| obj.get(field).and_then(|v| v.as_str()))
@@ -479,7 +479,7 @@ impl ResponseAnalyzer {
         if let Some(url) = sample_url {
             // Parse URL and extract query params
             if let Some(query_start) = url.find('?') {
-                let query_string = &url[query_start + 1..];
+                let query_string = url.get(query_start + 1..).unwrap_or("");
 
                 // Parse query params and filter out pagination-related ones
                 let pagination_params = [
@@ -501,7 +501,7 @@ impl ResponseAnalyzer {
                             false
                         }
                     })
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect();
 
                 return static_params.join("&");
@@ -545,6 +545,7 @@ impl ResponseAnalyzer {
     /// This is used to determine which variables should be extracted for template generation.
     /// For example, if all mocks have the same GraphQL operation but different variable values,
     /// we can create a template that extracts those variables from the request.
+    #[allow(clippy::indexing_slicing)] // `.windows(2)` guarantees 2-element slices; values[0] guarded by non-empty check
     pub fn analyze_graphql_variables(group: &[MockConfig]) -> GraphQLVariableAnalysis {
         use rustc_hash::FxHashMap;
 
@@ -552,14 +553,14 @@ impl ResponseAnalyzer {
         let mut all_variables: FxHashMap<String, Vec<JsonValue>> = FxHashMap::default();
 
         for mock in group {
-            if let Some(ref match_config) = mock.match_config {
-                if let Some(ref graphql) = match_config.graphql {
-                    // Extract variables from the GraphQL config
-                    let variables = Self::extract_graphql_variables(graphql);
+            if let Some(ref match_config) = mock.match_config
+                && let Some(ref graphql) = match_config.graphql
+            {
+                // Extract variables from the GraphQL config
+                let variables = Self::extract_graphql_variables(graphql);
 
-                    for (key, value) in variables {
-                        all_variables.entry(key).or_default().push(value);
-                    }
+                for (key, value) in variables {
+                    all_variables.entry(key).or_default().push(value);
                 }
             }
         }
@@ -572,7 +573,7 @@ impl ResponseAnalyzer {
         let mut varying_variables = Vec::new();
         let mut constant_variables = Vec::new();
 
-        for (key, values) in all_variables.iter() {
+        for (key, values) in &all_variables {
             // Check if all values are the same
             if values.len() == 1 || values.windows(2).all(|w| w[0] == w[1]) {
                 // Constant variable - all values are the same
@@ -605,6 +606,13 @@ impl ResponseAnalyzer {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::string_slice
+)]
 mod tests {
     use super::*;
     use mockpit_config::{MatchConfig, ReturnConfig};
@@ -716,8 +724,8 @@ mod tests {
 
         let static_params = ResponseAnalyzer::extract_static_query_params(
             &objects,
-            &next_field,
-            &prev_field,
+            next_field.as_ref(),
+            prev_field.as_ref(),
             &query_analysis,
         );
 
@@ -745,8 +753,8 @@ mod tests {
 
         let static_params = ResponseAnalyzer::extract_static_query_params(
             &objects,
-            &next_field,
-            &prev_field,
+            next_field.as_ref(),
+            prev_field.as_ref(),
             &query_analysis,
         );
 
@@ -776,8 +784,8 @@ mod tests {
 
         let static_params = ResponseAnalyzer::extract_static_query_params(
             &objects,
-            &next_field,
-            &prev_field,
+            next_field.as_ref(),
+            prev_field.as_ref(),
             &query_analysis,
         );
 
@@ -805,8 +813,8 @@ mod tests {
 
         let static_params = ResponseAnalyzer::extract_static_query_params(
             &objects,
-            &next_field,
-            &prev_field,
+            next_field.as_ref(),
+            prev_field.as_ref(),
             &query_analysis,
         );
 

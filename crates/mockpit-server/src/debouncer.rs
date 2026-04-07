@@ -47,7 +47,9 @@ impl EventDebouncer {
     }
 
     /// Process events with debouncing
-    pub async fn process_events<F>(&self, mut on_batch: F)
+    ///
+    /// This runs forever, polling on the debounce interval and dispatching batches.
+    pub async fn process_events<F>(&self, mut on_batch: F) -> !
     where
         F: FnMut(DebouncedEvent),
     {

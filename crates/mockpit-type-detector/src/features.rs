@@ -66,6 +66,7 @@ impl Default for TypeFeatures {
 }
 
 /// Extract statistical features from string values
+#[allow(clippy::cast_precision_loss)]
 pub fn extract_features(values: &[&str]) -> TypeFeatures {
     if values.is_empty() {
         return TypeFeatures::default();
@@ -118,12 +119,7 @@ pub fn extract_features(values: &[&str]) -> TypeFeatures {
         if s.matches('.').count() >= 2 {
             has_url_dots = true;
         }
-        if s.contains('.')
-            && s.split('.')
-                .next_back()
-                .map(|ext| ext.len() <= 5)
-                .unwrap_or(false)
-        {
+        if s.contains('.') && s.split('.').next_back().is_some_and(|ext| ext.len() <= 5) {
             has_file_extension = true;
         }
         if s.matches('-').count() >= 3 {
@@ -150,7 +146,7 @@ pub fn extract_features(values: &[&str]) -> TypeFeatures {
         for count in char_counts.values() {
             let probability = *count as f64 / total_chars as f64;
             if probability > 0.0 {
-                entropy -= probability * probability.log2();
+                entropy = probability.mul_add(-probability.log2(), entropy);
             }
         }
         entropy
@@ -207,6 +203,7 @@ pub fn extract_features(values: &[&str]) -> TypeFeatures {
 }
 
 /// Check if values represent a categorical/enum type (low cardinality)
+#[allow(clippy::cast_precision_loss)]
 pub fn check_categorical(values: &[&str]) -> Option<(super::types::FieldType, f64)> {
     use rustc_hash::FxHashSet;
 
@@ -242,7 +239,7 @@ pub fn check_categorical(values: &[&str]) -> Option<(super::types::FieldType, f6
     // Anti-pattern: Check if values look sequential (1,2,3 or a,b,c should not be categorical)
     let looks_sequential = if unique_count >= 3 {
         let mut sorted: Vec<&str> = unique.iter().copied().collect();
-        sorted.sort();
+        sorted.sort_unstable();
 
         // Check for numeric sequence
         let numeric_vals: Vec<i64> = sorted
@@ -251,7 +248,9 @@ pub fn check_categorical(values: &[&str]) -> Option<(super::types::FieldType, f6
             .collect();
         if numeric_vals.len() == sorted.len() && numeric_vals.len() >= 3 {
             // Check if sequential (diff of 1 between consecutive values)
-            numeric_vals.windows(2).all(|w| w[1] - w[0] == 1)
+            numeric_vals
+                .windows(2)
+                .all(|w| matches!((w.first(), w.get(1)), (Some(a), Some(b)) if b - a == 1))
         } else {
             false
         }
@@ -270,7 +269,9 @@ pub fn check_categorical(values: &[&str]) -> Option<(super::types::FieldType, f6
 
         // Calculate confidence based on cardinality ratio (lower ratio = higher confidence)
         // Range: 0.75 (ratio=0.35) to 0.90 (ratio=0.1)
-        let confidence = (0.75 + (0.35 - cardinality_ratio) * 0.4).clamp(0.75, 0.90);
+        let confidence = (0.35 - cardinality_ratio)
+            .mul_add(0.4, 0.75)
+            .clamp(0.75, 0.90);
 
         return Some((
             super::types::FieldType::Categorical { values: values_vec },
