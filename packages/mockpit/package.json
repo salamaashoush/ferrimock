@@ -10,6 +10,10 @@
     ".": {
       "import": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./playwright": {
+      "import": "./src/playwright.ts",
+      "default": "./src/playwright.ts"
     }
   },
   "scripts": {
