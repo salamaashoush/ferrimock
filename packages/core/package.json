@@ -1,0 +1,24 @@
+{
+  "name": "@mockpit/core",
+  "version": "0.1.0",
+  "description": "High-performance HTTP mocking engine -- core library",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@mockpit/node": "workspace:*",
+    "jiti": "^2.6.1"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20.0.0"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "^10.4.0",
+    "msw": "^2.13.2"
+  }
+}

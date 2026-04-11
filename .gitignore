@@ -3,3 +3,6 @@
 *.swo
 *~
 .DS_Store
+node_modules/
+*.node
+bun.lock

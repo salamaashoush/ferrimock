@@ -1,14 +1,14 @@
+// Core interceptor
+export { MockpitInterceptor } from "./interceptor.js";
+
 // Config
-export { defineConfig } from "./config.js";
+export { defineConfig, loadConfig } from "./config.js";
 export type { MockpitConfig } from "./config.js";
 
 // Loader
 export { loadMocksDir } from "./loader.js";
 
-// Interceptor (fetch patching, no HTTP server)
-export { MockpitInterceptor } from "./interceptor.js";
-
-// Re-export the handler API from @mockpit/node
+// Re-export everything from @mockpit/node
 export {
   http,
   graphql,
