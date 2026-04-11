@@ -1,0 +1,10 @@
+mocks:
+  - id: yaml-hello
+    match:
+      method: GET
+      url: /api/hello
+    response:
+      status: 200
+      headers:
+        content-type: application/json
+      body: '{"source":"yaml","message":"hello from yaml"}'
