@@ -1,7 +1,7 @@
 import { defineCommand } from "clap-ts";
 import { MockpitServer } from "@mockpit/node";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { loadConfig } from "../config.js";
 
 export const serve = defineCommand({
   meta: {
@@ -13,30 +13,30 @@ export const serve = defineCommand({
     port: {
       type: "number" as const,
       short: "p",
-      default: 3006,
-      description: "Port to listen on",
+      description: "Port to listen on (default: 3006)",
       env: "MOCKPIT_PORT",
     },
     host: {
       type: "string" as const,
-      default: "127.0.0.1",
-      description: "Host to bind to",
+      description: "Host to bind to (default: 127.0.0.1)",
     },
     mocks: {
       type: "string" as const,
       short: "m",
-      description: "Mock collections directory",
+      description: "Mock collections directory (default: mocks/collections)",
       env: "MOCKS_DIR",
     },
     mockFile: {
       type: "string" as const,
       short: "f",
-      description: "Load specific mock file",
+      action: "append" as const,
+      description: "Additional mock file to load (repeatable)",
     },
     config: {
       type: "string" as const,
       short: "c",
-      description: "TS/JS config file with handler functions",
+      description:
+        "Config file path (default: auto-discover mockpit.config.{ts,js})",
     },
     watch: {
       type: "boolean" as const,
@@ -54,50 +54,51 @@ export const serve = defineCommand({
     },
   },
   async run({ args }) {
+    // Load config file (explicit path or auto-discover)
+    const config = await loadConfig(args.config);
+
+    // Merge CLI args with config (CLI takes precedence)
+    const port = args.port ?? config?.port ?? 3006;
+    const host = args.host ?? config?.host ?? "127.0.0.1";
+    const mocksDir = args.mocks ?? config?.mocksDir ?? "mocks/collections";
+    const cors = args.cors ?? config?.cors ?? false;
+    const watch = args.watch ?? config?.watch ?? false;
+
     const server = new MockpitServer();
 
-    // Load declarative mocks from directory
-    if (args.mocks) {
-      const count = await server.loadMocks(args.mocks);
-      console.log(`Loaded ${count} mock(s) from ${args.mocks}`);
-    } else if (!args.mockFile && !args.config) {
-      // Default directory
-      const defaultDir = process.env.MOCKS_DIR || "mocks/collections";
-      try {
-        const count = await server.loadMocks(defaultDir);
-        if (count > 0) console.log(`Loaded ${count} mock(s) from ${defaultDir}`);
-      } catch {
-        // Directory might not exist, that's fine
-      }
+    // 1. Always load mocks from the collections directory
+    try {
+      const count = await server.loadMocks(resolve(mocksDir));
+      if (count > 0) console.log(`Loaded ${count} mock(s) from ${mocksDir}`);
+    } catch {
+      // Directory might not exist yet, that's ok
     }
 
-    // Load specific mock file
-    if (args.mockFile) {
-      const count = await server.loadMockFile(resolve(args.mockFile));
-      console.log(`Loaded ${count} mock(s) from ${args.mockFile}`);
+    // 2. Load additional mock files from CLI and config
+    const mockFiles = [
+      ...(config?.mockFiles?.map((f) => resolve(f)) ?? []),
+      ...((Array.isArray(args.mockFile) ? args.mockFile : args.mockFile ? [args.mockFile] : []).map(
+        (f) => resolve(f)
+      )),
+    ];
+    for (const file of mockFiles) {
+      const count = await server.loadMockFile(file);
+      console.log(`Loaded ${count} mock(s) from ${file}`);
     }
 
-    // Load TS/JS config file with handlers
-    if (args.config) {
-      const configPath = resolve(args.config);
-      const configUrl = pathToFileURL(configPath).href;
-      const config = await import(configUrl);
-      const handlers = config.default ?? config.handlers;
-      if (Array.isArray(handlers)) {
-        server.useHandlers(handlers);
-        console.log(`Loaded ${handlers.length} handler(s) from ${args.config}`);
-      } else {
-        console.error(
-          `Config file must export default or handlers as an array`
-        );
-        process.exit(1);
-      }
+    // 3. Register handler functions from config
+    if (config?.handlers && config.handlers.length > 0) {
+      server.useHandlers(config.handlers);
+      console.log(`Loaded ${config.handlers.length} handler(s) from config`);
     }
 
-    const url = await server.listen(args.port);
+    // Start server
+    const url = await server.listen(port);
     console.log();
     console.log(`Mock server running at ${url}`);
     console.log(`  Mocks loaded: ${server.mockCount}`);
+    if (cors) console.log("  CORS: enabled");
+    if (watch) console.log(`  Watching: ${mocksDir}`);
     console.log();
     console.log("Press Ctrl+C to stop");
 
@@ -112,17 +113,15 @@ export const serve = defineCommand({
       );
     }
 
-    // Keep process alive until Ctrl+C
-    await new Promise<void>((resolve) => {
-      process.on("SIGINT", async () => {
+    // Keep process alive until signal
+    await new Promise<void>((res) => {
+      const shutdown = async () => {
         console.log("\nShutting down...");
         await server.close();
-        resolve();
-      });
-      process.on("SIGTERM", async () => {
-        await server.close();
-        resolve();
-      });
+        res();
+      };
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
     });
   },
 });

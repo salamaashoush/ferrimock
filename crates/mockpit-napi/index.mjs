@@ -8,5 +8,8 @@ export const {
   MockpitServer,
   JsHandler,
   services,
+  parseConfigFile,
+  parseConfigString,
+  discoverConfigFile,
 } = nativeModule;
 export default nativeModule;
