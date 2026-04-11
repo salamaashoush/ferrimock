@@ -9,14 +9,35 @@
  */
 
 import type { JsHandler } from "@mockpit/node";
+import { BYPASS_HEADER, NETWORK_ERROR_HEADER } from "./msw-compat.js";
+import { LifecycleEvents } from "./events.js";
 
 const originalFetch = globalThis.fetch;
 const OriginalXHR = typeof XMLHttpRequest !== "undefined" ? XMLHttpRequest : null;
 let activeInterceptor: MockpitInterceptor | null = null;
 
+let requestCounter = 0;
+function nextRequestId(): string {
+  return `req:${(requestCounter++).toString(16)}`;
+}
+
+export type UnhandledRequestStrategy =
+  | "bypass"
+  | "warn"
+  | "error"
+  | ((request: Request, print: { warning(): void; error(): void }) => void);
+
+export interface ApplyOptions {
+  onUnhandledRequest?: UnhandledRequestStrategy;
+}
+
 export class MockpitInterceptor {
   private server: any;
   private applied = false;
+  private onUnhandledRequest: UnhandledRequestStrategy = "bypass";
+
+  /** MSW-compatible lifecycle events. */
+  readonly events = new LifecycleEvents();
 
   constructor() {
     const { MockpitServer } = require("@mockpit/node");
@@ -81,11 +102,17 @@ export class MockpitInterceptor {
   /**
    * Patch globalThis.fetch and XMLHttpRequest to intercept requests.
    * For Node.js unit tests (jest, vitest, bun test).
+   *
+   * @param options - Optional configuration (e.g., `onUnhandledRequest`).
    */
-  apply(): void {
+  apply(options?: ApplyOptions): void {
     if (this.applied) return;
     if (activeInterceptor) {
       throw new Error("Another MockpitInterceptor is already active.");
+    }
+
+    if (options?.onUnhandledRequest) {
+      this.onUnhandledRequest = options.onUnhandledRequest;
     }
 
     const self = this;
@@ -96,6 +123,16 @@ export class MockpitInterceptor {
       init?: RequestInit
     ): Promise<Response> {
       const request = new Request(input, init);
+      const requestId = nextRequestId();
+
+      // Bypass: requests marked with bypass header skip interception
+      if (request.headers.has(BYPASS_HEADER)) {
+        request.headers.delete(BYPASS_HEADER);
+        return originalFetch(request);
+      }
+
+      self.events.emit("request:start", { request, requestId });
+
       const url = new URL(request.url);
       const method = request.method;
       const path = url.pathname;
@@ -116,13 +153,32 @@ export class MockpitInterceptor {
       const match = await self.matchRequest(method, path, query, headers, body);
 
       if (match) {
-        return new Response(match.body, {
+        self.events.emit("request:match", { request, requestId });
+
+        // Network error simulation
+        if (match.headers[NETWORK_ERROR_HEADER] === "1") {
+          self.events.emit("request:end", { request, requestId });
+          throw new TypeError("Failed to fetch");
+        }
+
+        const response = new Response(match.body, {
           status: match.status,
           headers: new Headers(match.headers),
         });
+
+        self.events.emit("response:mocked", { request, requestId, response });
+        self.events.emit("request:end", { request, requestId });
+        return response;
       }
 
-      return originalFetch(input, init);
+      // Unhandled request
+      self.events.emit("request:unhandled", { request, requestId });
+      self.handleUnhandled(request);
+
+      const response = await originalFetch(input, init);
+      self.events.emit("response:bypass", { request, requestId, response });
+      self.events.emit("request:end", { request, requestId });
+      return response;
     };
 
     // -- Patch XMLHttpRequest --
@@ -132,6 +188,79 @@ export class MockpitInterceptor {
 
     activeInterceptor = this;
     this.applied = true;
+  }
+
+  // ===== MSW-compatible server methods =====
+
+  /**
+   * Add runtime handlers (MSW's `server.use()`).
+   * Runtime handlers take priority over initial handlers.
+   */
+  use(...handlers: JsHandler[]): void {
+    this.server.use(handlers);
+  }
+
+  /**
+   * Re-enable consumed one-time handlers (MSW's `server.restoreHandlers()`).
+   */
+  restoreHandlers(): void {
+    this.server.restoreHandlers();
+  }
+
+  /**
+   * List all registered handlers (MSW's `server.listHandlers()`).
+   */
+  listHandlers(): Array<{ id: string; methods: string[]; enabled: boolean }> {
+    return this.server.listHandlers();
+  }
+
+  /**
+   * Create an isolated handler scope (MSW's `server.boundary()`).
+   *
+   * Handlers added inside the boundary callback are automatically removed
+   * when the callback returns.
+   */
+  boundary<Args extends any[], R>(
+    callback: (...args: Args) => R
+  ): (...args: Args) => R {
+    return (...args: Args): R => {
+      // Snapshot current handler IDs
+      const before = new Set(this.listHandlers().map((h) => h.id));
+
+      try {
+        return callback(...args);
+      } finally {
+        // Remove handlers that were added during the callback
+        const after = this.listHandlers();
+        for (const handler of after) {
+          if (!before.has(handler.id)) {
+            this.server.removeMock(handler.id);
+          }
+        }
+      }
+    };
+  }
+
+  // ===== Unhandled request handling =====
+
+  private handleUnhandled(request: Request): void {
+    const strategy = this.onUnhandledRequest;
+    const msg = `[mockpit] Unhandled ${request.method} ${request.url}`;
+
+    if (strategy === "bypass") return;
+    if (strategy === "warn") {
+      console.warn(msg);
+      return;
+    }
+    if (strategy === "error") {
+      throw new Error(msg);
+    }
+    if (typeof strategy === "function") {
+      strategy(request, {
+        warning() { console.warn(msg); },
+        error() { throw new Error(msg); },
+      });
+    }
   }
 
   /** Restore original fetch and XMLHttpRequest. */

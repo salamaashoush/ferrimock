@@ -101,6 +101,7 @@ fn build_handler_mock(
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::handler(handler.into_handler_fn())),
         enabled: true,
+            once: false,
         scope: None,
         source_file: None,
         request_transforms: None,
@@ -156,6 +157,16 @@ pub mod http {
     /// Create a PATCH handler mock.
     pub fn patch(path: &str, handler: impl IntoHandlerFn) -> MockDefinition {
         build_handler_mock(Some(Method::PATCH), path, handler, "PATCH")
+    }
+
+    /// Create a HEAD handler mock.
+    pub fn head(path: &str, handler: impl IntoHandlerFn) -> MockDefinition {
+        build_handler_mock(Some(Method::HEAD), path, handler, "HEAD")
+    }
+
+    /// Create an OPTIONS handler mock.
+    pub fn options(path: &str, handler: impl IntoHandlerFn) -> MockDefinition {
+        build_handler_mock(Some(Method::OPTIONS), path, handler, "OPTIONS")
     }
 
     /// Create a handler mock matching any HTTP method.
@@ -602,6 +613,7 @@ mod tests {
             id: "declarative-1".into(),
             priority: 200,
             enabled: true,
+            once: false,
             scope: None,
             source_file: None,
             request_transforms: None,

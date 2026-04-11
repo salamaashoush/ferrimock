@@ -127,6 +127,7 @@ impl MockMatcher {
             && mock.enabled
         {
             self.record_call_if_needed(&mock, method, path, query, headers, body);
+            self.handle_once(&mock);
             let captures = self.extract_url_captures(&mock, path);
             return Some(MockMatch { mock, captures });
         }
@@ -190,6 +191,7 @@ impl MockMatcher {
 
         if let Some(mock) = matched_mock {
             self.record_call_if_needed(&mock, method, path, query, headers, body);
+            self.handle_once(&mock);
             let captures = self.extract_url_captures(&mock, path);
 
             // Cache the result if eligible
@@ -207,6 +209,13 @@ impl MockMatcher {
             Some(MockMatch { mock, captures })
         } else {
             None
+        }
+    }
+
+    /// If the matched mock has `once: true`, disable it after first use.
+    fn handle_once(&self, mock: &crate::types::MockDefinition) {
+        if mock.once {
+            let _ = self.registry.disable_mock(mock.id.as_str());
         }
     }
 
@@ -778,6 +787,7 @@ mod tests {
             id: id.into(),
             priority,
             enabled: true,
+            once: false,
             scope: None,
             source_file: None,
             request_transforms: None,

@@ -17,6 +17,7 @@ fn create_test_mock(id: &str) -> MockDefinition {
         id: id.into(),
         priority: 100,
         enabled: true,
+            once: false,
         scope: None,
         source_file: None,
         request_transforms: None,

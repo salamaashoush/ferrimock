@@ -1,6 +1,6 @@
 //! GraphQL namespace bindings: `graphql.query()`, `graphql.mutation()`, etc.
 
-use crate::handler_bridge::js_to_handler_fn;
+use crate::handler_bridge::js_to_handler_bridge;
 use crate::http_ns::JsHandler;
 use crate::request_context::MockpitRequest;
 use crate::types::JsHandlerResponse;
@@ -17,9 +17,10 @@ pub fn query(
     operation_name: String,
     handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
-    let rust_handler = js_to_handler_fn(handler_fn)?;
+    let bridge = js_to_handler_bridge(handler_fn)?;
     Ok(JsHandler {
-        inner: Some(handler::graphql::query(&operation_name, rust_handler)),
+        inner: Some(handler::graphql::query(&operation_name, bridge.handler_fn)),
+        fn_ref: Some(bridge.fn_ref),
     })
 }
 
@@ -32,9 +33,10 @@ pub fn mutation(
     operation_name: String,
     handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
-    let rust_handler = js_to_handler_fn(handler_fn)?;
+    let bridge = js_to_handler_bridge(handler_fn)?;
     Ok(JsHandler {
-        inner: Some(handler::graphql::mutation(&operation_name, rust_handler)),
+        inner: Some(handler::graphql::mutation(&operation_name, bridge.handler_fn)),
+        fn_ref: Some(bridge.fn_ref),
     })
 }
 
@@ -45,8 +47,9 @@ pub fn mutation(
 pub fn operation(
     handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
-    let rust_handler = js_to_handler_fn(handler_fn)?;
+    let bridge = js_to_handler_bridge(handler_fn)?;
     Ok(JsHandler {
-        inner: Some(handler::graphql::operation(rust_handler)),
+        inner: Some(handler::graphql::operation(bridge.handler_fn)),
+        fn_ref: Some(bridge.fn_ref),
     })
 }

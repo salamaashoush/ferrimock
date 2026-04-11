@@ -585,7 +585,6 @@ impl MockRegistry {
 
     /// Disable a specific mock by ID
     pub fn disable_mock(&self, id: &str) -> Result<(), String> {
-        // Clone the Arc first, then drop the read lock before inserting
         let arc_mock = self.mocks.get(id).map(|r| Arc::clone(r.value()));
 
         if let Some(arc_mock) = arc_mock {
@@ -599,6 +598,7 @@ impl MockRegistry {
             Err(format!("Mock with ID '{id}' not found"))
         }
     }
+
 
     // ===== Recording Methods =====
 
@@ -918,6 +918,7 @@ mod tests {
             id: id.into(),
             priority,
             enabled,
+            once: false,
             scope: None,
             source_file: None,
             request_transforms: None,
@@ -944,6 +945,7 @@ mod tests {
             id: id.into(),
             priority,
             enabled,
+            once: false,
             scope,
             source_file: None,
             request_transforms: None,

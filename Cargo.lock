@@ -2620,7 +2620,10 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "regex",
+ "rustc-hash",
  "serde_json",
+ "smallvec",
  "tokio",
 ]
 
