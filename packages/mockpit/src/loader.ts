@@ -3,38 +3,41 @@
  *
  * Supports:
  * - .yaml, .yml, .json, .har -- loaded by Rust (via MockpitServer.loadMocks)
- * - .ts, .js, .mts, .mjs -- loaded by Node/Bun (via dynamic import)
+ * - .ts, .js, .mts, .mjs -- loaded via jiti (works on plain Node.js, no --import tsx)
  *
  * TS/JS files should export a default array of handlers:
  *
  * ```ts
- * // mocks/api-users.ts
+ * // mocks/users.ts
  * import { http, MockResponse } from 'mockpit'
  *
  * export default [
  *   http.get('/api/users/:id', ({ params }) =>
  *     MockResponse.json({ id: params.id, name: 'John' })
  *   ),
- *   http.post('/api/users', ({ bodyJson }) =>
- *     MockResponse.json({ id: '1', ...bodyJson }, { status: 201 })
- *   ),
  * ]
  * ```
  */
 
 import type { MockpitServer, JsHandler } from "@mockpit/node";
+import { createJiti } from "jiti";
 import { readdirSync, statSync } from "node:fs";
 import { resolve, extname, join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const RUST_EXTENSIONS = new Set([".yaml", ".yml", ".json", ".har"]);
 const JS_EXTENSIONS = new Set([".ts", ".js", ".mts", ".mjs"]);
+
+// Single jiti instance for loading TS/JS mock files
+const jiti = createJiti(import.meta.url, {
+  // Use native ESM when possible, fallback to transpilation for TS
+  interopDefault: true,
+});
 
 /**
  * Load all mocks from a directory into a MockpitServer.
  *
  * Declarative files (.yaml/.json/.har) are loaded by Rust.
- * Handler files (.ts/.js) are loaded by Node/Bun via dynamic import.
+ * Handler files (.ts/.js) are loaded via jiti (no --import tsx needed).
  */
 export async function loadMocksDir(
   server: MockpitServer,
@@ -64,18 +67,18 @@ export async function loadMocksDir(
   const entries = readdirSync(resolvedDir);
   const handlerFiles = entries
     .filter((f) => JS_EXTENSIONS.has(extname(f).toLowerCase()))
-    .filter((f) => !f.startsWith("_") && !f.startsWith(".")) // skip _helpers.ts, .hidden.ts
+    .filter((f) => !f.startsWith("_") && !f.startsWith("."))
     .map((f) => join(resolvedDir, f))
     .sort();
 
-  // 3. Load each handler file via dynamic import
+  // 3. Load each handler file via jiti
   for (const file of handlerFiles) {
     try {
-      const fileUrl = pathToFileURL(file).href;
-      const mod = await import(fileUrl);
-      const handlers: JsHandler[] = mod.default ?? mod.handlers ?? [];
+      const mod = await jiti.import(file);
+      const exported = (mod as any).default ?? (mod as any).handlers ?? mod;
+      const handlers: JsHandler[] = Array.isArray(exported) ? exported : [];
 
-      if (Array.isArray(handlers) && handlers.length > 0) {
+      if (handlers.length > 0) {
         server.useHandlers(handlers);
         handlerCount += handlers.length;
       }
