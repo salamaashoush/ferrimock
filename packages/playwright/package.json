@@ -1,0 +1,25 @@
+{
+  "name": "@mockpit/playwright",
+  "version": "0.1.0",
+  "description": "Playwright adapter for mockpit -- fixtures that wire the mock engine into page.route()",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "@mockpit/core": "workspace:*",
+    "@playwright/test": ">=1.40.0"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": false
+    }
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20.0.0"
+  }
+}

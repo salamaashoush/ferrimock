@@ -1,0 +1,24 @@
+{
+  "name": "@mockpit/cli",
+  "version": "0.1.0",
+  "description": "CLI for the mockpit HTTP mocking engine",
+  "type": "module",
+  "bin": {
+    "mockpit": "./bin/mockpit.mjs"
+  },
+  "exports": {
+    ".": {
+      "import": "./src/cli.ts",
+      "default": "./src/cli.ts"
+    }
+  },
+  "dependencies": {
+    "@mockpit/core": "workspace:*",
+    "@mockpit/node": "workspace:*",
+    "clap-ts": "^0.2.1"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20.0.0"
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { MockpitInterceptor } from "../src/interceptor.js";
+import { MockpitInterceptor } from "@mockpit/core";
 import { http, MockResponse, fake } from "@mockpit/node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse } from "msw";

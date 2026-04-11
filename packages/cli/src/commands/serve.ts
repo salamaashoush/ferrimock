@@ -1,8 +1,6 @@
 import { defineCommand } from "clap-ts";
-import { MockpitServer } from "@mockpit/node";
+import { MockpitServer, loadConfig, loadMocksDir } from "@mockpit/core";
 import { resolve } from "node:path";
-import { loadConfig } from "../config.js";
-import { loadMocksDir } from "../loader.js";
 
 export const serve = defineCommand({
   meta: {
