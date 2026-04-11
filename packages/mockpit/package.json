@@ -25,5 +25,9 @@
   "license": "MIT",
   "engines": {
     "node": ">= 20.0.0"
+  },
+  "devDependencies": {
+    "@faker-js/faker": "^10.4.0",
+    "msw": "^2.13.2"
   }
 }
