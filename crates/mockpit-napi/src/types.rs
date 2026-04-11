@@ -53,18 +53,35 @@ pub struct JsResponseInit {
     pub headers: Option<HashMap<String, String>>,
 }
 
-impl From<&mockpit::types::RequestContext> for JsRequestContext {
-    fn from(ctx: &mockpit::types::RequestContext) -> Self {
+impl JsRequestContext {
+    /// Minimal construction -- avoids cloning headers and query for the common case
+    /// where handlers only need params and body.
+    pub fn from_context_minimal(ctx: &mockpit::types::RequestContext) -> Self {
         Self {
             method: ctx.method.clone(),
             uri: ctx.uri.clone(),
             path: ctx.path.clone(),
             params: ctx.captures.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-            query: ctx.query.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-            headers: ctx.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            // Only include query/headers if non-empty (avoids HashMap allocation)
+            query: if ctx.query.is_empty() {
+                HashMap::new()
+            } else {
+                ctx.query.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            },
+            headers: if ctx.headers.is_empty() {
+                HashMap::new()
+            } else {
+                ctx.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            },
             body: ctx.body.clone(),
             body_json: ctx.body_json.clone(),
         }
+    }
+}
+
+impl From<&mockpit::types::RequestContext> for JsRequestContext {
+    fn from(ctx: &mockpit::types::RequestContext) -> Self {
+        Self::from_context_minimal(ctx)
     }
 }
 
