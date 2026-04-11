@@ -13,8 +13,8 @@ pub struct JsExportResult {
     pub mocks_exported: u32,
 }
 
-#[napi(namespace = "services")]
-pub async fn export(input: JsExportInput) -> Result<JsExportResult> {
+#[napi(namespace = "services", js_name = "exportHar")]
+pub async fn export_har(input: JsExportInput) -> Result<JsExportResult> {
     let result = mockpit::services::export::export(mockpit::services::export::ExportInput {
         mocks_dir: input.mocks_dir,
         filter: input.filter,

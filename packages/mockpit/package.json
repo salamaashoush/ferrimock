@@ -1,0 +1,28 @@
+{
+  "name": "mockpit",
+  "version": "0.1.0",
+  "description": "High-performance HTTP mocking engine with MSW-style handler API",
+  "type": "module",
+  "bin": {
+    "mockpit": "./bin/mockpit.mjs"
+  },
+  "exports": {
+    ".": {
+      "import": "./src/cli.ts",
+      "default": "./src/cli.ts"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/cli.ts --outdir dist --target node",
+    "dev": "bun run src/cli.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@mockpit/node": "workspace:*",
+    "clap-ts": "^0.2.1"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20.0.0"
+  }
+}
