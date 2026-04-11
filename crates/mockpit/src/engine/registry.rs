@@ -478,7 +478,8 @@ impl MockRegistry {
             let is_conditional = !mock.request.header_matchers.is_empty()
                 || mock.request.body_matcher.is_some()
                 || !mock.request.query_matchers.is_empty()
-                || mock.request.graphql_matcher.is_some();
+                || mock.request.graphql_matcher.is_some()
+                || matches!(mock.response.body, crate::types::BodySource::Handler(_));
 
             if is_conditional {
                 has_conditional = true;

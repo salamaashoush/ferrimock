@@ -2,6 +2,7 @@
 members = [
   "crates/mockpit",
   "crates/mockpit-cli",
+  "crates/mockpit-napi",
 ]
 
 resolver = "2"

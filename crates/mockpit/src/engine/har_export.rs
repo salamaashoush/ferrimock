@@ -85,6 +85,7 @@ fn mock_to_har_entry(mock: &MockDefinition, _index: usize) -> v1_2::Entries {
         BodySource::FileCached(content) => String::from_utf8(content.to_vec())
             .unwrap_or_else(|_| format!("<binary data: {} bytes>", content.len())),
         BodySource::Template { source: tmpl, .. } => format!("<template: {tmpl}>"),
+        BodySource::Handler(_) => "<handler function>".to_string(),
     };
 
     // Calculate delay in milliseconds
