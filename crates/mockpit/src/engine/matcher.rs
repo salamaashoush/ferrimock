@@ -147,7 +147,8 @@ impl MockMatcher {
                     if let Some(mock) = self.registry.get_mock(mock_id.as_str()) {
                         let is_cacheable = mock.request.query_matchers.is_empty()
                             && mock.request.header_matchers.is_empty()
-                            && mock.request.body_matcher.is_none();
+                            && mock.request.body_matcher.is_none()
+                            && !matches!(mock.response.body, crate::types::BodySource::Handler(_));
 
                         if is_cacheable {
                             self.record_call_if_needed(&mock, method, path, query, headers, body);
@@ -599,12 +600,12 @@ impl MockMatcher {
         // For non-patch mocks, generate a full response
         let response_generator = &mock_def.response;
 
-        // Generate the response (may include dynamic status/headers from templates)
+        // Generate the response (may include dynamic status/headers from templates/handlers)
         let dynamic_result = if matches!(
             response_generator.body,
-            crate::types::BodySource::Template { .. }
+            crate::types::BodySource::Template { .. } | crate::types::BodySource::Handler(_)
         ) {
-            // For templates, use generate_dynamic which returns DynamicResponse
+            // For templates and handlers, use generate_dynamic which returns DynamicResponse
             response_generator
                 .generate_dynamic(
                     method.as_str(),

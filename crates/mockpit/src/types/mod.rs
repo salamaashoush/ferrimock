@@ -9,9 +9,24 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use smallvec::SmallVec;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Type alias for async handler functions that receive request context and produce dynamic responses.
+///
+/// This is the function signature used by programmatic mock handlers (MSW-style API).
+/// Handlers receive the full [`RequestContext`] (method, path, captures, headers, body, etc.)
+/// and return a [`DynamicResponse`] which can set status, headers, and body.
+pub type HandlerFn = Arc<
+    dyn Fn(
+            RequestContext,
+        ) -> Pin<Box<dyn Future<Output = Result<DynamicResponse, anyhow::Error>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Unified request context for both scripts and templates
 /// This context contains all HTTP request information plus custom variables
@@ -297,6 +312,41 @@ impl UrlPattern {
     pub fn glob(pattern: &str) -> Result<Self, globset::Error> {
         let glob = Glob::new(pattern)?;
         Ok(UrlPattern::Glob(glob.compile_matcher()))
+    }
+
+    /// Compile an MSW-style path pattern with `:param` placeholders to a regex.
+    ///
+    /// Converts patterns like `/users/:id/posts/:postId` into
+    /// `^/users/(?P<id>[^/]+)/posts/(?P<postId>[^/]+)$` with named captures.
+    ///
+    /// Supports:
+    /// - `:param` — named path parameter (matches one segment)
+    /// - `*` as a full segment — wildcard (matches everything)
+    /// - Literal segments — escaped for regex safety
+    ///
+    /// # Examples
+    /// ```
+    /// # use mockpit::types::UrlPattern;
+    /// let pattern = UrlPattern::path_pattern("/users/:id").unwrap();
+    /// assert!(pattern.matches("/users/123"));
+    /// assert!(!pattern.matches("/users/123/extra"));
+    /// ```
+    pub fn path_pattern(pattern: &str) -> Result<Self, regex::Error> {
+        let regex_str = pattern
+            .split('/')
+            .map(|segment| {
+                if let Some(param) = segment.strip_prefix(':') {
+                    format!("(?P<{param}>[^/]+)")
+                } else if segment == "*" {
+                    ".*".to_string()
+                } else {
+                    regex::escape(segment)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+
+        UrlPattern::regex(&format!("^{regex_str}$"))
     }
 }
 
@@ -969,6 +1019,9 @@ impl ResponseGenerator {
             BodySource::Template { .. } => Err(anyhow::anyhow!(
                 "Template rendering not available in bdg-mock-types. Use bdg-mock-template or bdg-mock-engine."
             )),
+            BodySource::Handler(_) => Err(anyhow::anyhow!(
+                "Handler-based responses require generate_dynamic(). Use the engine's ResponseGeneratorExt."
+            )),
         }
     }
 
@@ -985,7 +1038,7 @@ impl ResponseGenerator {
 }
 
 /// Source for response body content
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BodySource {
     /// Inline string content - now uses `Arc<Bytes>` for zero-copy
@@ -1006,6 +1059,28 @@ pub enum BodySource {
         #[serde(skip)]
         hash: u64,
     },
+    /// Function-based response handler (programmatic MSW-style API).
+    ///
+    /// Receives the full [`RequestContext`] and returns a [`DynamicResponse`].
+    /// Only created programmatically via the handler builder API, never from config files.
+    #[serde(skip)]
+    Handler(HandlerFn),
+}
+
+impl std::fmt::Debug for BodySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BodySource::Inline(b) => f.debug_tuple("Inline").field(b).finish(),
+            BodySource::File(p) => f.debug_tuple("File").field(p).finish(),
+            BodySource::FileCached(b) => f.debug_tuple("FileCached").field(b).finish(),
+            BodySource::Template { source, hash } => f
+                .debug_struct("Template")
+                .field("source", source)
+                .field("hash", hash)
+                .finish(),
+            BodySource::Handler(_) => f.debug_tuple("Handler").field(&"<fn>").finish(),
+        }
+    }
 }
 
 // Custom serialization for Inline to maintain serde compatibility
@@ -1043,6 +1118,11 @@ impl BodySource {
         BodySource::Template { source, hash }
     }
 
+    /// Create a handler body source from a function
+    pub fn handler(f: HandlerFn) -> Self {
+        BodySource::Handler(f)
+    }
+
     /// Whether this body source may produce a structured response with status/headers/body fields.
     /// Used to skip expensive JSON parsing when the template just returns a plain body.
     pub fn may_produce_structured_response(&self) -> bool {
@@ -1052,6 +1132,8 @@ impl BodySource {
                     || source.contains("\"headers\"")
                     || source.contains("\"body\"")
             }
+            // Handlers return DynamicResponse directly, which already has structured fields
+            BodySource::Handler(_) => true,
             _ => false,
         }
     }

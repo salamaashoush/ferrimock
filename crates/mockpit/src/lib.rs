@@ -65,6 +65,10 @@ pub mod consolidator;
 #[cfg(feature = "engine")]
 pub mod engine;
 
+/// Ergonomic builder API for handler-based mock definitions (MSW-style)
+#[cfg(feature = "engine")]
+pub mod handler;
+
 // ---------------------------------------------------------------------------
 // Optional features
 // ---------------------------------------------------------------------------
@@ -121,4 +125,8 @@ pub mod prelude {
 
     // Persistence
     pub use crate::core::PersistenceStore;
+
+    // Handler API
+    pub use crate::handler::{DynamicResponseExt, IntoHandlerFn, MockResponse};
+    pub use crate::types::{DynamicResponse, HandlerFn};
 }
