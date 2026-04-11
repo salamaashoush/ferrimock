@@ -3,6 +3,7 @@
  *
  * Supports:
  * - fetch() patching (Node.js unit tests -- jest, vitest, bun test)
+ * - XMLHttpRequest patching (legacy code, Axios, jQuery.ajax)
  * - Playwright page.route() (browser-level interception)
  * - Any route-based API (WDIO, Cypress, custom)
  *
@@ -13,6 +14,7 @@
 import type { JsHandler } from "@mockpit/node";
 
 const originalFetch = globalThis.fetch;
+const OriginalXHR = typeof XMLHttpRequest !== "undefined" ? XMLHttpRequest : null;
 let activeInterceptor: MockpitInterceptor | null = null;
 
 export class MockpitInterceptor {
@@ -70,7 +72,7 @@ export class MockpitInterceptor {
   // ===== Mode 1: Patch globalThis.fetch =====
 
   /**
-   * Patch globalThis.fetch to intercept requests.
+   * Patch globalThis.fetch and XMLHttpRequest to intercept requests.
    * For Node.js unit tests (jest, vitest, bun test).
    */
   apply(): void {
@@ -81,6 +83,7 @@ export class MockpitInterceptor {
 
     const self = this;
 
+    // -- Patch fetch --
     globalThis.fetch = async function mockpitFetch(
       input: RequestInfo | URL,
       init?: RequestInit
@@ -111,18 +114,25 @@ export class MockpitInterceptor {
       return originalFetch(input, init);
     };
 
+    // -- Patch XMLHttpRequest --
+    if (OriginalXHR) {
+      patchXHR(self);
+    }
+
     activeInterceptor = this;
     this.applied = true;
   }
 
-  /** Restore original fetch. */
+  /** Restore original fetch and XMLHttpRequest. */
   dispose(): void {
     if (this.applied) {
       globalThis.fetch = originalFetch;
+      if (OriginalXHR) {
+        (globalThis as any).XMLHttpRequest = OriginalXHR;
+      }
       activeInterceptor = null;
       this.applied = false;
     }
-    // Also clean up any page routes
     for (const disposer of this.routeDisposers) {
       disposer().catch(() => {});
     }
@@ -275,4 +285,116 @@ export class MockpitInterceptor {
       );
     };
   }
+}
+
+// ===== XMLHttpRequest patching =====
+
+function patchXHR(interceptor: MockpitInterceptor): void {
+  if (!OriginalXHR) return;
+
+  const MockXHR = function (this: any) {
+    const xhr = new OriginalXHR!();
+    let _method = "GET";
+    let _url = "";
+    let _headers: Record<string, string> = {};
+    let _body: string | undefined;
+    let _async = true;
+    let _mocked = false;
+    let _mockStatus = 200;
+    let _mockHeaders: Record<string, string> = {};
+    let _mockBody = "";
+
+    // Proxy open()
+    const origOpen = xhr.open.bind(xhr);
+    xhr.open = function (method: string, url: string, async_?: boolean, ...rest: any[]) {
+      _method = method;
+      _url = url;
+      _async = async_ !== false;
+      _headers = {};
+      return origOpen(method, url, async_, ...rest);
+    };
+
+    // Proxy setRequestHeader()
+    const origSetHeader = xhr.setRequestHeader.bind(xhr);
+    xhr.setRequestHeader = function (name: string, value: string) {
+      _headers[name.toLowerCase()] = value;
+      return origSetHeader(name, value);
+    };
+
+    // Proxy send()
+    const origSend = xhr.send.bind(xhr);
+    xhr.send = function (body?: any) {
+      _body = body != null ? String(body) : undefined;
+
+      // Try to match against the mock engine
+      let url: URL;
+      try {
+        url = new URL(_url);
+      } catch {
+        try {
+          url = new URL(_url, "http://localhost");
+        } catch {
+          return origSend(body);
+        }
+      }
+
+      const path = url.pathname;
+      const query = url.search ? url.search.slice(1) : undefined;
+
+      // Use matchRequest -- it's async so we need to handle it
+      interceptor
+        .matchRequest(_method, path, query, _headers, _body)
+        .then((match) => {
+          if (match) {
+            _mocked = true;
+            _mockStatus = match.status;
+            _mockHeaders = match.headers;
+            _mockBody = match.body;
+
+            // Simulate XHR lifecycle
+            Object.defineProperty(xhr, "readyState", { value: 4, writable: true, configurable: true });
+            Object.defineProperty(xhr, "status", { value: match.status, writable: true, configurable: true });
+            Object.defineProperty(xhr, "statusText", { value: "", writable: true, configurable: true });
+            Object.defineProperty(xhr, "responseText", { value: match.body, writable: true, configurable: true });
+            Object.defineProperty(xhr, "response", { value: match.body, writable: true, configurable: true });
+
+            // Build getAllResponseHeaders string
+            const headerStr = Object.entries(match.headers)
+              .map(([k, v]) => `${k}: ${v}`)
+              .join("\r\n");
+            xhr.getAllResponseHeaders = () => headerStr;
+            xhr.getResponseHeader = (name: string) =>
+              match.headers[name.toLowerCase()] ?? null;
+
+            // Fire events
+            if (typeof xhr.onreadystatechange === "function") {
+              xhr.onreadystatechange(new Event("readystatechange"));
+            }
+            xhr.dispatchEvent(new Event("readystatechange"));
+            if (typeof xhr.onload === "function") {
+              xhr.onload(new ProgressEvent("load"));
+            }
+            xhr.dispatchEvent(new ProgressEvent("load"));
+            xhr.dispatchEvent(new ProgressEvent("loadend"));
+          } else {
+            // No match -- send to real network
+            origSend(body);
+          }
+        })
+        .catch(() => {
+          origSend(body);
+        });
+    };
+
+    return xhr;
+  } as any;
+
+  // Copy static properties
+  MockXHR.UNSENT = 0;
+  MockXHR.OPENED = 1;
+  MockXHR.HEADERS_RECEIVED = 2;
+  MockXHR.LOADING = 3;
+  MockXHR.DONE = 4;
+
+  (globalThis as any).XMLHttpRequest = MockXHR;
 }
