@@ -9,6 +9,7 @@ export { loadMocksDir } from "./loader.js";
 export {
   http,
   graphql,
+  fake,
   MockResponse,
   MockpitServer,
   services,

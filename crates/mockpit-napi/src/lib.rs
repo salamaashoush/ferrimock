@@ -7,6 +7,7 @@
 //! Uses NAPI-RS's built-in shared tokio runtime.
 
 mod config;
+mod fake_ns;
 mod handler_bridge;
 mod http_ns;
 mod graphql_ns;
