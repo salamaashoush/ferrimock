@@ -79,7 +79,9 @@ export async function loadConfig(
     return parseConfigFile(resolvedPath) as MockpitConfig;
   }
 
-  const fileUrl = pathToFileURL(resolvedPath).href;
-  const mod = await import(fileUrl);
+  // TS/JS config -- load via jiti (works on plain Node.js, no --import tsx)
+  const { createJiti } = await import("jiti");
+  const jiti = createJiti(import.meta.url, { interopDefault: true });
+  const mod = await jiti.import(resolvedPath) as any;
   return (mod.default ?? mod.config ?? mod) as MockpitConfig;
 }
