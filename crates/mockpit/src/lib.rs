@@ -69,6 +69,11 @@ pub mod engine;
 #[cfg(feature = "engine")]
 pub mod handler;
 
+/// Service layer — pure execution logic with no CLI/UI coupling.
+/// Used by NAPI bindings, TS CLI, and Rust consumers.
+#[cfg(feature = "engine")]
+pub mod services;
+
 // ---------------------------------------------------------------------------
 // Optional features
 // ---------------------------------------------------------------------------
