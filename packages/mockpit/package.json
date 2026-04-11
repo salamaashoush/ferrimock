@@ -8,8 +8,8 @@
   },
   "exports": {
     ".": {
-      "import": "./src/cli.ts",
-      "default": "./src/cli.ts"
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
     }
   },
   "scripts": {

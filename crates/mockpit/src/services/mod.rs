@@ -33,6 +33,7 @@
 //! })?;
 //! ```
 
+pub mod config;
 pub mod consolidate;
 pub mod convert;
 pub mod create;
