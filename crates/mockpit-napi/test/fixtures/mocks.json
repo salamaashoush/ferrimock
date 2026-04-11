@@ -1,0 +1,29 @@
+{
+  "mocks": [
+    {
+      "id": "json-products",
+      "match": {
+        "method": "GET",
+        "url": "/api/json/products"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": "{\"source\":\"json\",\"products\":[{\"id\":1,\"name\":\"Widget\"}]}"
+      }
+    },
+    {
+      "id": "json-status",
+      "match": {
+        "method": "GET",
+        "url": "/api/json/status"
+      },
+      "response": {
+        "status": 200,
+        "body": "running"
+      }
+    }
+  ]
+}

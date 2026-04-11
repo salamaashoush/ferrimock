@@ -1,0 +1,18 @@
+mocks:
+  - id: yaml-users
+    match:
+      method: GET
+      url: /api/yaml/users
+    response:
+      status: 200
+      headers:
+        content-type: application/json
+      body: '{"source":"yaml","users":[{"id":1,"name":"Alice"}]}'
+
+  - id: yaml-health
+    match:
+      method: GET
+      url: /api/yaml/health
+    response:
+      status: 200
+      body: "ok"
