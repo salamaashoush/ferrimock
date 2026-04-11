@@ -5,6 +5,9 @@ export type { MockpitConfig } from "./config.js";
 // Loader
 export { loadMocksDir } from "./loader.js";
 
+// Interceptor (fetch patching, no HTTP server)
+export { MockpitInterceptor } from "./interceptor.js";
+
 // Re-export the handler API from @mockpit/node
 export {
   http,

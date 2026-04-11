@@ -250,6 +250,101 @@ impl MockpitServer {
         let p = self.port.load(std::sync::atomic::Ordering::Relaxed);
         if p == 0 { None } else { Some(u32::from(p)) }
     }
+
+    /// Match a request against the mock registry and generate the response.
+    ///
+    /// This is the fast path for fetch interception -- no HTTP server needed.
+    /// Matching and response generation happen entirely in Rust.
+    /// Returns null if no mock matches.
+    #[napi]
+    pub async fn match_request(
+        &self,
+        method: String,
+        path: String,
+        query: Option<String>,
+        headers: Option<std::collections::HashMap<String, String>>,
+        body: Option<String>,
+    ) -> Result<Option<MatchedResponse>> {
+        let http_method: http::Method = method
+            .parse()
+            .map_err(|e| Error::from_reason(format!("Invalid method: {e}")))?;
+
+        let mut header_map = http::HeaderMap::new();
+        if let Some(ref h) = headers {
+            for (name, value) in h {
+                if let (Ok(n), Ok(v)) = (
+                    http::header::HeaderName::try_from(name.as_str()),
+                    http::header::HeaderValue::try_from(value.as_str()),
+                ) {
+                    header_map.insert(n, v);
+                }
+            }
+        }
+
+        let body_bytes = body.as_deref().map(str::as_bytes);
+
+        let matcher = MockMatcher::new((*self.registry).clone());
+        let mock_match = matcher.find_match(
+            &http_method,
+            &path,
+            query.as_deref(),
+            &header_map,
+            body_bytes,
+        );
+
+        let Some(mock_match) = mock_match else {
+            return Ok(None);
+        };
+
+        let mock_def = &mock_match.mock;
+        let captures = mock_match.captures;
+
+        let dynamic = mock_def
+            .response
+            .generate_dynamic(
+                method.as_str(),
+                &path,
+                query.as_deref(),
+                &header_map,
+                body_bytes,
+                captures,
+                mock_def.vars.as_ref(),
+            )
+            .await
+            .map_err(|e| Error::from_reason(format!("Response generation failed: {e}")))?;
+
+        let status = dynamic.status.unwrap_or(mock_def.response.status).as_u16();
+
+        let mut response_headers: std::collections::HashMap<String, String> = mock_def
+            .response
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        if let Some(dyn_headers) = dynamic.headers {
+            response_headers.extend(dyn_headers);
+        }
+
+        let body_str =
+            String::from_utf8(dynamic.body.to_vec()).unwrap_or_default();
+
+        Ok(Some(MatchedResponse {
+            status: u32::from(status),
+            headers: response_headers,
+            body: body_str,
+            mock_id: mock_def.id.to_string(),
+        }))
+    }
+}
+
+/// Result of matching a request against the mock registry.
+#[napi(object)]
+pub struct MatchedResponse {
+    pub status: u32,
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: String,
+    pub mock_id: String,
 }
 
 // -- Internal server implementation --
