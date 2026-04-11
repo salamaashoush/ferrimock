@@ -11,4 +11,5 @@ mod http_ns;
 mod graphql_ns;
 mod response_ns;
 mod server;
+mod services;
 mod types;
