@@ -1,7 +1,8 @@
 //! HTTP namespace bindings: `http.get()`, `http.post()`, etc.
 
 use crate::handler_bridge::js_to_handler_fn;
-use crate::types::{JsHandlerResponse, JsRequestContext};
+use crate::request_context::MockpitRequest;
+use crate::types::JsHandlerResponse;
 use mockpit::handler;
 use mockpit::types::MockDefinition;
 use napi::bindgen_prelude::*;
@@ -40,7 +41,7 @@ impl JsHandler {
 #[napi(namespace = "http")]
 pub fn get(
     path: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
@@ -52,7 +53,7 @@ pub fn get(
 #[napi(namespace = "http")]
 pub fn post(
     path: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
@@ -64,7 +65,7 @@ pub fn post(
 #[napi(namespace = "http")]
 pub fn put(
     path: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
@@ -76,7 +77,7 @@ pub fn put(
 #[napi(namespace = "http", js_name = "delete")]
 pub fn delete_handler(
     path: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
@@ -88,7 +89,7 @@ pub fn delete_handler(
 #[napi(namespace = "http")]
 pub fn patch(
     path: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
@@ -100,7 +101,7 @@ pub fn patch(
 #[napi(namespace = "http")]
 pub fn all(
     path: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {

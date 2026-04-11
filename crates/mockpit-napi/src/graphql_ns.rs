@@ -2,7 +2,8 @@
 
 use crate::handler_bridge::js_to_handler_fn;
 use crate::http_ns::JsHandler;
-use crate::types::{JsHandlerResponse, JsRequestContext};
+use crate::request_context::MockpitRequest;
+use crate::types::JsHandlerResponse;
 use mockpit::handler;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -14,7 +15,7 @@ use napi_derive::napi;
 #[napi(namespace = "graphql")]
 pub fn query(
     operation_name: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
@@ -29,7 +30,7 @@ pub fn query(
 #[napi(namespace = "graphql")]
 pub fn mutation(
     operation_name: String,
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
@@ -42,7 +43,7 @@ pub fn mutation(
 /// @param handler - Async function receiving request context, returning response or null.
 #[napi(namespace = "graphql")]
 pub fn operation(
-    handler_fn: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<JsHandler> {
     let rust_handler = js_to_handler_fn(handler_fn)?;
     Ok(JsHandler {
