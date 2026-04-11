@@ -5,9 +5,12 @@
 //! Most handlers only access `params` -- they never touch `headers` or `body`.
 
 use mockpit::types::RequestContext;
-use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Global request counter for generating unique request IDs.
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Request context passed to handler functions.
 ///
@@ -17,12 +20,23 @@ use std::collections::HashMap;
 #[napi]
 pub struct MockpitRequest {
     inner: RequestContext,
+    request_id: String,
 }
 
 #[napi]
 impl MockpitRequest {
     pub(crate) fn new(ctx: RequestContext) -> Self {
-        Self { inner: ctx }
+        let id = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        Self {
+            inner: ctx,
+            request_id: format!("req:{id:x}"),
+        }
+    }
+
+    /// Unique request identifier.
+    #[napi(getter)]
+    pub fn request_id(&self) -> &str {
+        &self.request_id
     }
 
     #[napi(getter)]
@@ -93,5 +107,29 @@ impl MockpitRequest {
     #[napi]
     pub fn query_param(&self, name: String) -> Option<String> {
         self.inner.query.get(&name).cloned()
+    }
+
+    /// Parsed cookies from the Cookie request header.
+    #[napi(getter)]
+    pub fn cookies(&self) -> HashMap<String, String> {
+        self.inner
+            .headers
+            .get("cookie")
+            .map(|cookie_header| {
+                cookie_header
+                    .split(';')
+                    .filter_map(|pair| {
+                        let mut parts = pair.splitn(2, '=');
+                        let name = parts.next()?.trim();
+                        let value = parts.next()?.trim();
+                        if name.is_empty() {
+                            None
+                        } else {
+                            Some((name.to_string(), value.to_string()))
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

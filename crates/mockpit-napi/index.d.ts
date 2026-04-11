@@ -2,11 +2,27 @@
 /* eslint-disable */
 export declare namespace MockResponse {
   /**
+   * Create a binary response from a Buffer/ArrayBuffer.
+   *
+   * Sets `Content-Type: application/octet-stream` automatically.
+   *
+   * @param data - Binary data as Buffer.
+   * @param init - Optional status code and headers.
+   */
+  export function arrayBuffer(data: Buffer, init?: JsResponseInit | undefined | null): JsHandlerResponse
+  /**
    * Create an empty response with just a status code.
    *
    * @param status - HTTP status code.
    */
   export function empty(status: number): JsHandlerResponse
+  /**
+   * Create a network error response.
+   *
+   * When the interceptor sees this response, it throws a `TypeError("Failed to fetch")`
+   * to simulate a network failure (DNS error, connection refused, etc.).
+   */
+  export function error(): JsHandlerResponse
   /**
    * Create an HTML response.
    *
@@ -34,6 +50,15 @@ export declare namespace MockResponse {
    * @param init - Optional status code and headers.
    */
   export function text(body: string, init?: JsResponseInit | undefined | null): JsHandlerResponse
+  /**
+   * Create an XML response.
+   *
+   * Sets `Content-Type: application/xml` automatically.
+   *
+   * @param body - XML content.
+   * @param init - Optional status code and headers.
+   */
+  export function xml(body: string, init?: JsResponseInit | undefined | null): JsHandlerResponse
 }
 
 /**
@@ -54,6 +79,8 @@ export declare class JsHandler {
  * all headers, query params, etc. for every request.
  */
 export declare class MockpitRequest {
+  /** Unique request identifier. */
+  get requestId(): string
   get method(): string
   get path(): string
   get uri(): string
@@ -68,6 +95,8 @@ export declare class MockpitRequest {
   header(name: string): string | null
   /** Get a single query param by name. */
   queryParam(name: string): string | null
+  /** Parsed cookies from the Cookie request header. */
+  get cookies(): Record<string, string>
 }
 
 /**
@@ -107,6 +136,22 @@ export declare class MockpitServer {
    */
   useHandlers(handlers: Array<JsHandler>): void
   /**
+   * Add runtime handlers (MSW's `server.use()`).
+   *
+   * Runtime handlers take priority over initial handlers (priority 200 vs 100).
+   * They are added to the same registry and participate in matching.
+   *
+   * @param handlers - Array of handlers created by `http.get()`, `http.post()`, etc.
+   */
+  use(handlers: Array<JsHandler>): void
+  /**
+   * Re-enable consumed one-time handlers (MSW's `server.restoreHandlers()`).
+   *
+   * One-time handlers (`{ once: true }`) are disabled after first match.
+   * This method re-enables them so they can match again.
+   */
+  restoreHandlers(): void
+  /**
    * Remove all handler-based mocks (those with IDs starting with "handler:").
    *
    * Declarative mocks loaded from files are not affected.
@@ -143,6 +188,13 @@ export declare class MockpitServer {
   /** Get the number of registered mocks. */
   get mockCount(): number
   /**
+   * List all registered handlers.
+   *
+   * Returns an array of handler info objects with id and method/path info.
+   * Equivalent to MSW's `server.listHandlers()`.
+   */
+  listHandlers(): Array<HandlerInfo>
+  /**
    * Start the mock server on the given port.
    *
    * @param port - Port number (default: 0 for random available port).
@@ -158,11 +210,20 @@ export declare class MockpitServer {
   /**
    * Match a request against the mock registry and generate the response.
    *
-   * This is the fast path for fetch interception -- no HTTP server needed.
-   * Matching and response generation happen entirely in Rust.
+   * **Optimization**: For handler mocks, uses `FunctionRef` to call the JS
+   * handler directly from the deferred resolver callback (JS thread).
+   * This eliminates the ~22us TSFN queue+wakeup overhead, replacing it with
+   * a direct `napi_call_function` (~1us).
+   *
+   * Flow:
+   * 1. Rust matching on tokio (~12us)
+   * 2. Deferred resolver on JS thread:
+   *    - Declarative: response already built
+   *    - Handler: FunctionRef direct call (~1us)
+   *
    * Returns null if no mock matches.
    */
-  matchRequest(method: string, path: string, query?: string | undefined | null, headers?: Record<string, string> | undefined | null, body?: string | undefined | null): Promise<MatchedResponse | null>
+  matchRequest(method: string, path: string, query?: string | undefined | null, headers?: Record<string, string> | undefined | null, body?: string | undefined | null): Promise<MaybePromise>
 }
 
 /**
@@ -170,6 +231,13 @@ export declare class MockpitServer {
  * Returns the path if found, null otherwise.
  */
 export declare function discoverConfigFile(dir?: string | undefined | null): string | null
+
+/** Handler info returned by `listHandlers()`. */
+export interface HandlerInfo {
+  id: string
+  methods: Array<string>
+  enabled: boolean
+}
 
 /**
  * Response returned from JS handler functions.
@@ -354,22 +422,26 @@ export declare namespace graphql {
 
 export declare namespace http {
   /** Create a handler mock matching any HTTP method. */
-  export function all(path: string, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  export function all(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
   /** Create a DELETE handler mock. */
-  export function delete(path: string, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  export function delete(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
   /**
    * Create a GET handler mock.
    *
-   * @param path - URL pattern (e.g., `/users/:id`). Supports `:param` captures and `*` wildcards.
+   * @param path - URL pattern string (e.g., `/users/:id`) or RegExp.
    * @param handler - Async function receiving request context, returning response or null.
    */
-  export function get(path: string, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  export function get(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  /** Create a HEAD handler mock. */
+  export function head(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  /** Create an OPTIONS handler mock. */
+  export function options(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
   /** Create a PATCH handler mock. */
-  export function patch(path: string, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  export function patch(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
   /** Create a POST handler mock. */
-  export function post(path: string, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  export function post(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
   /** Create a PUT handler mock. */
-  export function put(path: string, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
+  export function put(path: unknown, handlerFn: (arg: MockpitRequest) => Promise<JsHandlerResponse | undefined | null>): JsHandler
 }
 
 export declare namespace services {

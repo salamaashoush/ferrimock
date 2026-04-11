@@ -322,6 +322,7 @@ impl MockConfig {
             id: self.id,
             priority: self.priority,
             enabled: self.enabled,
+            once: false,
             scope: self.scope,
             source_file: None,
             request_transforms,

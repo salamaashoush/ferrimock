@@ -197,6 +197,8 @@ pub struct MockDefinition {
     pub response: ResponseGenerator,
     /// Enabled flag
     pub enabled: bool,
+    /// One-time handler: auto-disables after first match (MSW's `{ once: true }`)
+    pub once: bool,
     /// Optional scope for test isolation (mocks in a scope can be deleted together)
     pub scope: Option<LeanString>,
     /// Source file path (for hot reload tracking)
@@ -1355,6 +1357,7 @@ mod tests {
             id: "test-mock".into(),
             priority: 100,
             enabled: true,
+            once: false,
             scope: None,
             source_file: None,
             request_transforms: None,

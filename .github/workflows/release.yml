@@ -45,10 +45,10 @@ jobs:
             --notes "${{ steps.changelog.outputs.content }}"
 
   # ---------------------------------------------------------------------------
-  # Build binaries for all platforms
+  # Build Rust CLI binaries for all platforms
   # ---------------------------------------------------------------------------
-  build:
-    name: Build ${{ matrix.target }}
+  build-cli:
+    name: CLI ${{ matrix.target }}
     needs: [create-release]
     runs-on: ${{ matrix.os }}
     strategy:
@@ -117,6 +117,79 @@ jobs:
         shell: bash
 
   # ---------------------------------------------------------------------------
+  # Build NAPI native modules for all platforms
+  # ---------------------------------------------------------------------------
+  build-napi:
+    name: NAPI ${{ matrix.settings.target }}
+    needs: [create-release]
+    runs-on: ${{ matrix.settings.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: bunx @napi-rs/cli build --platform --release --target x86_64-unknown-linux-gnu
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            build: |
+              sudo apt-get update
+              sudo apt-get install -y gcc-aarch64-linux-gnu
+              export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+              bunx @napi-rs/cli build --platform --release --target aarch64-unknown-linux-gnu
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            build: bunx @napi-rs/cli build --platform --release --target x86_64-apple-darwin
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: bunx @napi-rs/cli build --platform --release --target aarch64-apple-darwin
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            build: bunx @napi-rs/cli build --platform --release --target x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.settings.target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - name: Build native module
+        working-directory: crates/mockpit-napi
+        run: ${{ matrix.settings.build }}
+        shell: bash
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: napi-${{ matrix.settings.target }}
+          path: crates/mockpit-napi/*.node
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Run JS tests with built NAPI module
+  # ---------------------------------------------------------------------------
+  test-napi:
+    name: JS tests
+    needs: [build-napi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+      - name: Download native module
+        uses: actions/download-artifact@v4
+        with:
+          name: napi-x86_64-unknown-linux-gnu
+          path: crates/mockpit-napi/
+      - name: Run JS tests
+        run: bun test ./packages/core/test/ ./crates/mockpit-napi/test/
+
+  # ---------------------------------------------------------------------------
   # Publish to crates.io
   # ---------------------------------------------------------------------------
   publish-crates:
@@ -153,11 +226,62 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
+  # Publish to npm
+  # ---------------------------------------------------------------------------
+  publish-npm:
+    name: Publish to npm
+    needs: [build-napi, test-napi]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install
+
+      - name: Download all native modules
+        uses: actions/download-artifact@v4
+        with:
+          path: crates/mockpit-napi/artifacts
+          pattern: napi-*
+          merge-multiple: false
+
+      - name: Move artifacts
+        working-directory: crates/mockpit-napi
+        run: |
+          bunx @napi-rs/cli artifacts -o . --npm-dir npm
+        shell: bash
+
+      - name: Publish @mockpit/node
+        working-directory: crates/mockpit-napi
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @mockpit/core
+        working-directory: packages/core
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @mockpit/cli
+        working-directory: packages/cli
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @mockpit/playwright
+        working-directory: packages/playwright
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ---------------------------------------------------------------------------
   # Publish the release (un-draft after all builds succeed)
   # ---------------------------------------------------------------------------
   publish-release:
     name: Publish release
-    needs: [build, publish-crates]
+    needs: [build-cli, build-napi, test-napi, publish-crates, publish-npm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

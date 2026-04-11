@@ -4,125 +4,113 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mockpit is a high-performance Rust HTTP mocking framework. It provides request matching, template-based response
-generation, HAR recording, smart consolidation, GraphQL mock generation, and fake data generators.
+Mockpit is a high-performance HTTP mocking engine for Node.js, powered by Rust via NAPI. It provides an MSW-compatible API that is 3-4x faster than MSW, plus declarative YAML/JSON mocks with Tera template rendering and 115+ fake data generators.
 
 ## Workspace Structure
 
-Cargo workspace with 2 crates.
+Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 
-### mockpit (library)
+### Rust Crates
 
-All core mock engine logic in one publishable crate. Modules:
-
-- `core` - Shared utilities: PersistenceStore (thread-safe KV store), levenshtein_distance
-- `types` - Core types: RequestContext, URL patterns, request/response matchers, body sources
+**mockpit** (library) -- Core mock engine:
+- `types` - Core types: RequestContext, URL patterns, matchers, body sources, HandlerFn
 - `config` - Mock configuration parsing (YAML/JSON), HAR file loading
-- `recorder` - HTTP request/response recording for mock generation
-- `codegen` - Template code generation from detected field types
+- `engine` - MockRegistry, MockMatcher, validation, scopes, call tracking
+- `handler` - MSW-style handler builder API (http::get, graphql::query, etc.)
 - `template` - Tera template rendering with 115+ fake data functions
-- `consolidator` - Smart mock consolidation with pattern detection (90%+ size reduction)
-- `engine` - Core engine: MockRegistry, MockMatcher, validation, scopes, call tracking
-- `type_detector` - Semantic type detection from field names and JSON values (40+ types)
-- `fake_data` - Fake data generators: names, emails, UUIDs, images, PDFs, etc.
-- `graphql` - GraphQL introspection parsing, SDL generation, and mock generation
-- `server` - HTTP server utilities: hot reload, graceful shutdown, file watcher, state management
-- `api` - Mock management HTTP API (axum router): CRUD, bulk ops, inspector, recording
+- `fake_data` - Fake data generators: names, emails, UUIDs, images, PDFs
+- `consolidator` - Smart mock consolidation with pattern detection
+- `graphql` - GraphQL introspection parsing and mock generation
+- `server` - HTTP server utilities: hot reload, graceful shutdown
+- `api` - Mock management HTTP API (axum router)
+- `recorder` - HTTP request/response recording
 
-### mockpit-cli (lib + binary)
+**mockpit-napi** (cdylib) -- Node.js NAPI bindings:
+- `http_ns.rs` - `http.get/post/put/delete/patch/head/options/all` with RegExp support
+- `graphql_ns.rs` - `graphql.query/mutation/operation`
+- `response_ns.rs` - `MockResponse.json/text/html/xml/arrayBuffer/empty/error`
+- `handler_bridge.rs` - HandlerFn (TSFN for server) + FunctionRef (direct call for interceptor)
+- `request_context.rs` - MockpitRequest with lazy getters (params, headers, cookies, body)
+- `server.rs` - MockpitServer with FunctionRef-optimized matchRequest, use/resetHandlers/listHandlers
+- `fake_ns.rs` - 115+ fake data generators exposed to JS
 
-CLI binary and command implementations. Has both `[[bin]]` and `[lib]` sections.
+**mockpit-cli** (binary) -- CLI for mock management and fake data generation.
 
-- `commands/` - Mock management and fake data CLI commands
-- `main.rs` - Binary entry point
-- lib exports: `MockCommand`, `FakeCommand`, `execute`, `fake`
+### JavaScript Packages
+
+**@mockpit/core** -- Main user-facing package:
+- `interceptor.ts` - MockpitInterceptor (patches fetch/XHR), lifecycle events, boundary, onUnhandledRequest
+- `msw-compat.ts` - delay(), passthrough(), bypass() utilities
+- `events.ts` - LifecycleEvents emitter (request:start/match/unhandled/end, response:mocked/bypass)
+- `graphql-link.ts` - URL-scoped GraphQL handlers (graphqlLink)
+- `config.ts` / `loader.ts` - Config loading
+
+**@mockpit/cli** -- CLI wrapper (delegates to Rust binary).
+
+**@mockpit/playwright** -- Playwright fixture adapter.
 
 ## Essential Commands
 
 ```bash
-cargo build                              # Debug build
-cargo nextest run                        # Run all tests (1139 tests)
-cargo nextest run --package mockpit      # Test mockpit library
-cargo check --workspace                  # Fast compile check
+# Rust
+cargo check --workspace                          # Fast compile check
+cargo test -p mockpit --lib                       # Run Rust tests (607 tests)
+cargo check -p mockpit-napi                       # Check NAPI bindings
+
+# Build native module
+cd crates/mockpit-napi && bunx @napi-rs/cli build --platform --release
+
+# JavaScript tests
+bun test ./packages/core/test/                    # All JS tests
+bun test ./packages/core/test/msw-compat.test.ts  # MSW compatibility tests
+bun test ./packages/core/test/interceptor.test.ts # Interceptor + benchmarks
+bun test ./crates/mockpit-napi/test/              # NAPI binding tests
 ```
 
 ## Architecture
 
+### NAPI FunctionRef Optimization
+
+The key performance optimization: `matchRequest()` uses `FunctionRef` to call JS handlers directly from the deferred resolver callback (~1us) instead of ThreadsafeFunction (~22us UV loop wakeup).
+
+Flow:
+1. `matchRequest()` called from JS
+2. `spawn_future_with_callback` runs Rust matching on tokio
+3. Deferred resolver runs on JS thread:
+   - Declarative mock: response already built in Rust
+   - Handler mock: `FunctionRef::borrow_back()` + `Function::call()` (~1us direct napi_call_function)
+   - Async handlers: detected via `napi_is_promise`, chained with `PromiseRaw::then()`
+4. Result: JS handler calls are 3-4x faster than MSW
+
+Key files:
+- `handler_bridge.rs` - TSFN (server mode) + FunctionRef (interceptor mode)
+- `server.rs` - `match_request` with `MaybePromise` return type for sync/async handler support
+
 ### Mock Request Flow
 
 1. Request arrives -> `MockMatcher::find_match()`
-2. URL pattern matching (Express, Glob, Regex, Exact) by priority
-3. Header/query/body matching evaluation
-4. Template rendering with fake data + captures
-5. Response generation (inline body, template, file, or patch upstream)
+2. URL pattern matching (Express `:id`, Glob, Regex, Exact) by priority
+3. Header/query/body/GraphQL matching evaluation
+4. Once handlers auto-disable after first match
+5. Response generation: inline, template (Tera), file, or handler (JS function)
 
-### Mock Configuration Format
+### MSW API Compatibility
 
-```yaml
-mocks:
-- id: get-user
-  priority: 100
-  match:
-    methods: ["GET"]
-    url: "/api/users/:id"
-  response:
-    status: 200
-    template: '{"id": "{{ captures.id }}", "name": "{{ fake_name() }}"}'
-```
-
-### Feature Flags (mockpit crate)
-
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `engine` | yes | Core mock engine (includes fake-data, type-detector, codegen) |
-| `fake-data` | yes | Fake data generators |
-| `type-detector` | no | Semantic type detection |
-| `codegen` | no | Template code generation |
-| `graphql` | no | GraphQL introspection + mock generation |
-| `server` | no | HTTP server with hot reload |
-| `api` | no | Mock management HTTP API |
-| `schema` | no | JSON schema generation |
-| `full` | no | Everything |
-
-### Extension APIs
-
-Embedders can extend mockpit without modifying its source:
-
-- `mockpit::template::register_template_function(name, closure)` - custom template functions
-- `mockpit::config::DomainFilter` trait on `HarLoadOptions` - domain filtering for HAR loading
-- `mockpit::type_detector::register_url_classifier(closure)` - custom download URL detection
-- `mockpit::codegen::register_file_object_detector(detector)` - file object detection in responses
-- `mockpit::consolidator::register_path_normalizer(closure)` - custom URL path normalization
-- `mockpit::core::set_app_name(name)` - app identity for HAR exports
-
-### API Route Prefix
-
-The HTTP API uses `/__mockpit/` prefix by default. Consumers can customize via
-`create_mock_router_with_prefix("/__custom_prefix")`.
+Implemented:
+- `http.get/post/put/delete/patch/head/options/all` with string and RegExp paths
+- `graphql.query/mutation/operation` + `graphqlLink(url)`
+- `MockResponse.json/text/html/xml/arrayBuffer/empty/error`
+- `delay()`, `passthrough()`, `bypass()`
+- Request context: params, headers, cookies, body, bodyJson, query, requestId
+- `server.use()`, `resetHandlers()`, `restoreHandlers()`, `listHandlers()`
+- `server.boundary()`, lifecycle events, `onUnhandledRequest` strategies
+- One-time handlers (`once: true`)
 
 ## Code Standards
 
 - Idiomatic Rust with zero-cost abstractions
 - `anyhow::Result` for application code
-- No `unsafe`, no `unwrap()` in production code
+- `unsafe` denied in mockpit-napi (except marked `#[allow(unsafe_code)]` for NAPI FFI)
+- FxHashMap for performance-critical paths (not std HashMap)
 - All new code must include tests
-- Run `cargo nextest run` before committing
-
-## Testing
-
-1139 tests. Uses cargo-nextest for parallel execution.
-
-```bash
-cargo nextest run                        # All tests
-cargo nextest run --package mockpit      # Library tests
-cargo nextest run test_name              # Specific test
-```
-
-## Mock Examples
-
-Example mock files live in `mocks/examples/`:
-- `advanced-matching/` - Header, body, URL, query param matching
-- `stateful/` - Pagination, OAuth flow, file upload
-- `templates-and-responses/` - Template features, delays, errors
-- `graphql-examples.yaml` - GraphQL mock examples
-- `flat-syntax-complete.yaml` - Complete mock syntax reference
+- Run `cargo test -p mockpit --lib` and `bun test` before committing

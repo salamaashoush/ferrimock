@@ -1,100 +1,66 @@
 # Mockpit
 
-A high-performance HTTP mocking framework for Rust with template-based response generation, HAR recording, smart
-consolidation, and GraphQL support.
+High-performance HTTP mocking engine for Node.js, powered by Rust. Drop-in replacement for MSW with 3-4x better performance.
 
-## Features
+## Why Mockpit?
 
-- **Request Matching** - Express-style (`:id`), glob (`**/*.json`), regex, and exact URL patterns with priority-based
-  selection
-- **Template Responses** - Tera template engine with 115+ fake data functions for realistic responses
-- **HAR Recording** - Record live HTTP traffic and convert to mock definitions
-- **Smart Consolidation** - Detect patterns across recordings for 90%+ size reduction
-- **GraphQL Support** - Auto-generate mocks from GraphQL schema introspection
-- **Fake Data** - 115+ generators: names, emails, UUIDs, images, PDFs, and more
-- **Stateful Mocking** - Thread-safe persistence store for multi-step workflows
-- **Hot Reload** - File watcher with debouncing for live mock editing
-- **HTTP API** - Axum-based management API for CRUD, bulk operations, and runtime control
-- **CLI Tools** - Commands for creating, testing, validating, serving, and converting mocks
+- **3-4x faster than MSW** -- Rust mock matching engine + NAPI FunctionRef optimization
+- **MSW-compatible API** -- `http.get()`, `MockResponse.json()`, `server.use()`, lifecycle events
+- **Declarative mocks** -- YAML/JSON/HAR files with Tera templates and 115+ fake data generators
+- **Zero-config interceptor** -- Patches `fetch` and `XMLHttpRequest`, works with any test runner
 
-## Installation
+## Performance
 
-### One-line install (macOS / Linux)
-
-```sh
-curl -sSf https://raw.githubusercontent.com/salamaashoush/mockpit/main/scripts/install.sh | sh
-```
-
-### Cargo install
-
-```sh
-cargo install mockpit-cli
-```
-
-### From source
-
-```sh
-git clone https://github.com/salamaashoush/mockpit
-cd mockpit
-cargo install --path crates/mockpit-cli
-```
+| Mode | Mockpit | MSW | Speedup |
+|------|---------|-----|---------|
+| Declarative (inline) | 9us | N/A | Rust-only, no JS crossing |
+| Template + fake data | 8us | N/A | Rust Tera engine + fake generators |
+| JS handler (static) | 15us | 37us | **2.5x** |
+| JS handler + fake data | 18us | 46us | **2.6x** |
+| Full interceptor flow | 13us | 35us | **2.7x** |
 
 ## Quick Start
 
-### CLI
-
-```sh
-# Create a mock
-mockpit mock create "/api/users/:id" -m GET -s 200 --template
-
-# Serve mocks with hot reload
-mockpit mock serve mocks/
-
-# Generate fake data
-mockpit fake data email --count 10
-
-# Test mock matching
-mockpit mock test -m GET /api/users/123 --render
+```bash
+bun add @mockpit/core
 ```
 
-### As a library
+### Interceptor (fetch patching, like MSW)
 
-Add to your `Cargo.toml`:
+```ts
+import { MockpitInterceptor, http, MockResponse, delay } from '@mockpit/core'
 
-```toml
-[dependencies]
-mockpit = { git = "https://github.com/salamaashoush/mockpit" }
+const interceptor = new MockpitInterceptor()
+
+interceptor.useHandlers([
+  http.get('/api/users/:id', async ({ params }) => {
+    await delay(100)
+    return MockResponse.json({ id: params.id, name: 'John' })
+  }),
+])
+
+interceptor.apply()
+
+// fetch is now intercepted
+const res = await fetch('http://localhost/api/users/42')
+const user = await res.json() // { id: '42', name: 'John' }
+
+interceptor.dispose()
 ```
 
-### Basic Usage
+### Declarative Mocks (YAML)
 
-```rust
-use mockpit::prelude::*;
+```ts
+const interceptor = new MockpitInterceptor()
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Create a mock registry and load mocks from a directory
-    let registry = MockRegistry::new();
-    registry.load_from_directory("mocks/").await?;
-
-    // Create a matcher to evaluate incoming requests
-    let matcher = MockMatcher::new(registry);
-
-    // Match a request
-    let ctx = RequestContext::new();
-    if let Some(action) = matcher.find_match(&ctx).await {
-        println!("Matched: {:?}", action);
-    }
-    Ok(())
-}
+await interceptor.loadMocks('./mocks')
+interceptor.apply()
 ```
-
-### Mock File Format
 
 ```yaml
+# mocks/users.yaml
 mocks:
 - id: get-user
-  priority: 100
   match:
     methods: ["GET"]
     url: "/api/users/:id"
@@ -110,47 +76,184 @@ mocks:
       }
 ```
 
-### With HTTP Server
+### HTTP Server Mode
+
+```ts
+import { MockpitServer, http, MockResponse } from '@mockpit/core'
+
+const server = new MockpitServer()
+
+server.useHandlers([
+  http.get('/api/users/:id', async ({ params }) =>
+    MockResponse.json({ id: params.id, name: 'John' })
+  ),
+])
+
+const url = await server.listen(3000)
+// Server running at http://127.0.0.1:3000
+
+await server.close()
+```
+
+## MSW-Compatible API
+
+### HTTP Handlers
+
+```ts
+import { http, MockResponse, fake } from '@mockpit/core'
+
+http.get('/path', handler)      // GET
+http.post('/path', handler)     // POST
+http.put('/path', handler)      // PUT
+http.delete('/path', handler)   // DELETE
+http.patch('/path', handler)    // PATCH
+http.head('/path', handler)     // HEAD
+http.options('/path', handler)  // OPTIONS
+http.all('/path', handler)      // Any method
+
+// RegExp matching
+http.get(/^\/api\/users\/\d+$/, handler)
+```
+
+### GraphQL Handlers
+
+```ts
+import { graphql } from '@mockpit/core'
+
+graphql.query('GetUser', handler)
+graphql.mutation('CreateUser', handler)
+graphql.operation(handler)  // any operation
+```
+
+### Response Builders
+
+```ts
+MockResponse.json({ key: 'value' })
+MockResponse.json({ key: 'value' }, { status: 201, headers: { 'x-custom': 'val' } })
+MockResponse.text('plain text')
+MockResponse.html('<h1>Hello</h1>')
+MockResponse.xml('<root/>')
+MockResponse.arrayBuffer(buffer)
+MockResponse.empty(204)
+MockResponse.error()  // simulate network failure
+```
+
+### Request Context
+
+```ts
+http.get('/api/users/:id', async (req) => {
+  req.method        // 'GET'
+  req.path          // '/api/users/42'
+  req.uri           // '/api/users/42?page=1'
+  req.params        // { id: '42' }
+  req.query         // { page: '1' }
+  req.headers       // { 'content-type': 'application/json' }
+  req.cookies       // { session: 'abc123' }
+  req.body          // raw body string
+  req.bodyJson      // parsed JSON body
+  req.requestId     // unique request ID
+
+  // Fast single-value lookups
+  req.param('id')       // '42'
+  req.header('accept')  // 'application/json'
+  req.queryParam('page') // '1'
+})
+```
+
+### Utilities
+
+```ts
+import { delay, passthrough, bypass } from '@mockpit/core'
+
+// Delay response
+http.get('/api/slow', async () => {
+  await delay(200)        // exact ms
+  await delay('real')     // random 100-400ms
+  await delay('infinite') // never resolves (test timeouts)
+  return MockResponse.json({ ok: true })
+})
+
+// Passthrough to real network
+http.get('/api/real', async () => passthrough())
+
+// Bypass interception for a specific request
+const realResponse = await fetch(bypass('http://real-api.com/data'))
+```
+
+### Server Methods
+
+```ts
+const interceptor = new MockpitInterceptor()
+
+interceptor.useHandlers([...])    // Register initial handlers
+interceptor.use(handler)          // Add runtime handler (higher priority)
+interceptor.resetHandlers()       // Remove all handlers
+interceptor.restoreHandlers()     // Re-enable consumed once handlers
+interceptor.listHandlers()        // List active handlers
+interceptor.boundary(callback)    // Scoped handler isolation
+
+interceptor.apply({
+  onUnhandledRequest: 'warn'      // 'bypass' | 'warn' | 'error' | callback
+})
+```
+
+### Lifecycle Events
+
+```ts
+interceptor.events.on('request:start', ({ request, requestId }) => { ... })
+interceptor.events.on('request:match', ({ request, requestId }) => { ... })
+interceptor.events.on('request:unhandled', ({ request, requestId }) => { ... })
+interceptor.events.on('request:end', ({ request, requestId }) => { ... })
+interceptor.events.on('response:mocked', ({ request, requestId, response }) => { ... })
+interceptor.events.on('response:bypass', ({ request, requestId, response }) => { ... })
+```
+
+### Fake Data (115+ generators)
+
+```ts
+import { fake } from '@mockpit/core'
+
+fake.uuid()         // '550e8400-e29b-41d4-a716-446655440000'
+fake.name()         // 'John Smith'
+fake.email()        // 'john@example.com'
+fake.phone()        // '+1-555-0123'
+fake.city()         // 'San Francisco'
+fake.url()          // 'https://example.com'
+fake.ipv4()         // '192.168.1.1'
+fake.creditCard()   // '4111111111111111'
+fake.jwt()          // 'eyJhbGciOiJIUzI1NiJ9...'
+fake.sentence()     // 'The quick brown fox...'
+// ... 100+ more
+```
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| `@mockpit/core` | Interceptor, MSW-compat API, config loader |
+| `@mockpit/node` | Rust NAPI bindings (http, graphql, MockResponse, fake, MockpitServer) |
+| `@mockpit/cli` | CLI for mock management, fake data generation |
+| `@mockpit/playwright` | Playwright fixture adapter |
+
+## Rust Library
+
+Mockpit is also a standalone Rust library for mock matching, template rendering, and HTTP server.
 
 ```toml
 [dependencies]
-mockpit = { git = "https://github.com/salamaashoush/mockpit", features = ["server", "api"] }
+mockpit = { git = "https://github.com/salamaashoush/mockpit", features = ["full"] }
 ```
 
-### With GraphQL Support
+See [Mock Engine](docs/MOCK_ENGINE.md), [Fake Data](docs/FAKE_DATA.md), [GraphQL](docs/GRAPHQL_MOCKS.md), [CLI Reference](docs/CLI_REFERENCE.md).
 
-```toml
-[dependencies]
-mockpit = { git = "https://github.com/salamaashoush/mockpit", features = ["graphql"] }
+## CLI
+
+```bash
+mockpit mock serve mocks/                # Serve mocks with hot reload
+mockpit mock create "/api/users/:id"     # Create a mock
+mockpit mock test -m GET /api/users/123  # Test matching
+mockpit fake data email --count 10       # Generate fake data
 ```
-
-## Feature Flags
-
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `engine` | yes | Core mock engine (includes fake-data, type-detector, codegen) |
-| `fake-data` | yes | 115+ fake data generators |
-| `type-detector` | no | Semantic type detection from field names and JSON values |
-| `codegen` | no | Template code generation from detected types |
-| `graphql` | no | GraphQL schema introspection and mock generation |
-| `server` | no | HTTP server with hot reload and graceful shutdown |
-| `api` | no | Mock management HTTP API (axum router) |
-| `schema` | no | JSON schema generation for editor validation |
-| `full` | no | Enable everything |
-
-## Crate Structure
-
-```
-mockpit          - Library crate with feature-gated modules
-mockpit-cli      - CLI binary and command implementations
-```
-
-## Documentation
-
-- [Mock Engine](docs/MOCK_ENGINE.md) - Complete guide to the mocking system
-- [Fake Data](docs/FAKE_DATA.md) - All 115+ generators with examples
-- [GraphQL Mocks](docs/GRAPHQL_MOCKS.md) - Auto-generate mocks from GraphQL schemas
-- [CLI Reference](docs/CLI_REFERENCE.md) - All CLI commands and flags
 
 ## License
 
