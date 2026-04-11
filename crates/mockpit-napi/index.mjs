@@ -4,6 +4,7 @@ const nativeModule = require("./index.js");
 export const {
   http,
   graphql,
+  fake,
   MockResponse,
   MockpitServer,
   JsHandler,
