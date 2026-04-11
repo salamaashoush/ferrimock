@@ -1,0 +1,10 @@
+mocks:
+  - id: dir-users
+    match:
+      method: GET
+      url: /api/dir/users
+    response:
+      status: 200
+      headers:
+        content-type: application/json
+      body: '{"source":"dir-yaml"}'

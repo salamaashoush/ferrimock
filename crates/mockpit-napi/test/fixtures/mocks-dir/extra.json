@@ -1,0 +1,16 @@
+{
+  "mocks": [
+    {
+      "id": "dir-products",
+      "match": {
+        "method": "GET",
+        "url": "/api/dir/products"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "content-type": "application/json" },
+        "body": "{\"source\":\"dir-json\"}"
+      }
+    }
+  ]
+}
