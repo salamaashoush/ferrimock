@@ -9,6 +9,7 @@
 mod config;
 mod fake_ns;
 mod handler_bridge;
+mod request_context;
 mod http_ns;
 mod graphql_ns;
 mod response_ns;

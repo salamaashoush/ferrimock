@@ -1,19 +1,19 @@
 //! Bridge JS handler functions to Rust `HandlerFn` via `ThreadsafeFunction`.
 //!
-//! Optimization: direct return type (no double Promise wrapping).
-//! JsRequestContext uses minimal construction to avoid unnecessary cloning.
+//! Uses MockpitRequest (lazy class) instead of JsRequestContext (eager object)
+//! to avoid constructing a full JS object with all headers/query/body per request.
 
-use crate::types::{JsHandlerResponse, JsRequestContext};
+use crate::request_context::MockpitRequest;
+use crate::types::JsHandlerResponse;
 use mockpit::types::{DynamicResponse, HandlerFn, RequestContext};
 use napi::bindgen_prelude::*;
 use std::sync::Arc;
 
-/// TSFN type: handler receives JsRequestContext, returns Promise<JsHandlerResponse | null>.
-/// call_async() unwraps the Promise automatically -- single await, not double.
+/// TSFN type: handler receives MockpitRequest (lazy class), returns Promise<response>.
 pub type HandlerCallbackTsfn = napi::threadsafe_function::ThreadsafeFunction<
-    JsRequestContext,
+    MockpitRequest,
     Promise<Option<JsHandlerResponse>>,
-    JsRequestContext,
+    MockpitRequest,
     Status,
     false, // callee_handled
     true,  // weak
@@ -22,7 +22,7 @@ pub type HandlerCallbackTsfn = napi::threadsafe_function::ThreadsafeFunction<
 
 /// Convert a JS function into a Rust `HandlerFn`.
 pub fn js_to_handler_fn(
-    callback: Function<'_, JsRequestContext, Promise<Option<JsHandlerResponse>>>,
+    callback: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
 ) -> Result<HandlerFn> {
     let tsfn: HandlerCallbackTsfn = callback
         .build_threadsafe_function()
@@ -36,11 +36,11 @@ pub fn js_to_handler_fn(
     Ok(Arc::new(move |ctx: RequestContext| {
         let tsfn = Arc::clone(&tsfn);
         Box::pin(async move {
-            let js_ctx = JsRequestContext::from_context_minimal(&ctx);
+            // MockpitRequest is a thin wrapper -- no HashMap cloning here.
+            // Fields are converted to JS values lazily when the handler accesses them.
+            let req = MockpitRequest::new(ctx);
 
-            // call_async sends to JS thread and awaits the resolved Promise value.
-            // Single await -- no double Promise wrapping.
-            match tsfn.call_async(js_ctx).await {
+            match tsfn.call_async(req).await {
                 Ok(promise) => match promise.await {
                     Ok(Some(resp)) => Ok(DynamicResponse::from(resp)),
                     Ok(None) => Ok(DynamicResponse::body_only(bytes::Bytes::new())),
