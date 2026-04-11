@@ -1,17 +1,13 @@
-import type { JsHandler } from "@mockpit/node";
-
 /**
  * Mockpit configuration.
  *
- * Universal config format used across all ecosystems:
- * - YAML/JSON: parsed by Rust (fast, no JS runtime needed)
- * - TS/JS: loaded via dynamic import (supports handler functions)
+ * Pure configuration -- no mocks, no handlers. Those go in the mocks directory.
  *
  * @example
  * ```yaml
  * # mockpit.config.yaml
  * port: 3006
- * mocksDir: ./mocks/collections
+ * mocksDir: ./mocks
  * cors: true
  * watch: true
  * ```
@@ -19,17 +15,12 @@ import type { JsHandler } from "@mockpit/node";
  * @example
  * ```ts
  * // mockpit.config.ts
- * import { defineConfig, http, MockResponse } from 'mockpit'
+ * import { defineConfig } from 'mockpit'
  *
  * export default defineConfig({
  *   port: 3006,
- *   mocksDir: './mocks/collections',
+ *   mocksDir: './mocks',
  *   cors: true,
- *   handlers: [
- *     http.get('/api/users/:id', ({ params }) =>
- *       MockResponse.json({ id: params.id, name: 'John' })
- *     ),
- *   ],
  * })
  * ```
  */
@@ -42,8 +33,6 @@ export interface MockpitConfig {
   watch?: boolean;
   verbose?: boolean;
   logMatches?: boolean;
-  /** Handler functions (only available in TS/JS configs) */
-  handlers?: JsHandler[];
 }
 
 /**
@@ -56,8 +45,8 @@ export function defineConfig(config: MockpitConfig): MockpitConfig {
 /**
  * Load a mockpit config file.
  *
- * - YAML/JSON: parsed by Rust (via `parseConfigFile`)
- * - TS/JS: loaded via dynamic import (supports handlers, npm imports)
+ * - YAML/JSON: parsed by Rust
+ * - TS/JS: loaded via dynamic import
  * - Auto-discovers `mockpit.config.*` if no path given
  */
 export async function loadConfig(
@@ -71,7 +60,6 @@ export async function loadConfig(
   const { existsSync } = await import("node:fs");
   const { pathToFileURL } = await import("node:url");
 
-  // Resolve path: explicit or auto-discover
   let resolvedPath: string | null = null;
 
   if (configPath) {
@@ -87,13 +75,10 @@ export async function loadConfig(
 
   const ext = extname(resolvedPath).toLowerCase();
 
-  // YAML/JSON — parse in Rust (fast)
   if (ext === ".yaml" || ext === ".yml" || ext === ".json") {
-    const parsed = parseConfigFile(resolvedPath);
-    return parsed as MockpitConfig;
+    return parseConfigFile(resolvedPath) as MockpitConfig;
   }
 
-  // TS/JS — dynamic import (supports handlers, npm imports)
   const fileUrl = pathToFileURL(resolvedPath).href;
   const mod = await import(fileUrl);
   return (mod.default ?? mod.config ?? mod) as MockpitConfig;

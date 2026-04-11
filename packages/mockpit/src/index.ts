@@ -1,6 +1,9 @@
-// Re-export everything users need for mockpit.config.ts
+// Config
 export { defineConfig } from "./config.js";
 export type { MockpitConfig } from "./config.js";
+
+// Loader
+export { loadMocksDir } from "./loader.js";
 
 // Re-export the handler API from @mockpit/node
 export {

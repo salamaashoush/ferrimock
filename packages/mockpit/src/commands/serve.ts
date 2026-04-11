@@ -2,6 +2,7 @@ import { defineCommand } from "clap-ts";
 import { MockpitServer } from "@mockpit/node";
 import { resolve } from "node:path";
 import { loadConfig } from "../config.js";
+import { loadMocksDir } from "../loader.js";
 
 export const serve = defineCommand({
   meta: {
@@ -23,7 +24,7 @@ export const serve = defineCommand({
     mocks: {
       type: "string" as const,
       short: "m",
-      description: "Mock collections directory (default: mocks/collections)",
+      description: "Mocks directory (default: mocks/)",
       env: "MOCKS_DIR",
     },
     mockFile: {
@@ -36,7 +37,7 @@ export const serve = defineCommand({
       type: "string" as const,
       short: "c",
       description:
-        "Config file path (default: auto-discover mockpit.config.{ts,js})",
+        "Config file path (default: auto-discover mockpit.config.*)",
     },
     watch: {
       type: "boolean" as const,
@@ -60,36 +61,38 @@ export const serve = defineCommand({
     // Merge CLI args with config (CLI takes precedence)
     const port = args.port ?? config?.port ?? 3006;
     const host = args.host ?? config?.host ?? "127.0.0.1";
-    const mocksDir = args.mocks ?? config?.mocksDir ?? "mocks/collections";
+    const mocksDir = args.mocks ?? config?.mocksDir ?? "mocks";
     const cors = args.cors ?? config?.cors ?? false;
     const watch = args.watch ?? config?.watch ?? false;
 
     const server = new MockpitServer();
 
-    // 1. Always load mocks from the collections directory
-    try {
-      const count = await server.loadMocks(resolve(mocksDir));
-      if (count > 0) console.log(`Loaded ${count} mock(s) from ${mocksDir}`);
-    } catch {
-      // Directory might not exist yet, that's ok
-    }
+    // 1. Load all mocks from the mocks directory
+    //    YAML/JSON/HAR -> loaded by Rust
+    //    TS/JS -> loaded by Node/Bun via dynamic import
+    const { declarativeCount, handlerCount } = await loadMocksDir(
+      server,
+      resolve(mocksDir)
+    );
+    if (declarativeCount > 0)
+      console.log(`Loaded ${declarativeCount} declarative mock(s) from ${mocksDir}`);
+    if (handlerCount > 0)
+      console.log(`Loaded ${handlerCount} handler(s) from ${mocksDir}`);
 
     // 2. Load additional mock files from CLI and config
     const mockFiles = [
       ...(config?.mockFiles?.map((f) => resolve(f)) ?? []),
-      ...((Array.isArray(args.mockFile) ? args.mockFile : args.mockFile ? [args.mockFile] : []).map(
-        (f) => resolve(f)
-      )),
+      ...(
+        Array.isArray(args.mockFile)
+          ? args.mockFile
+          : args.mockFile
+            ? [args.mockFile]
+            : []
+      ).map((f) => resolve(f)),
     ];
     for (const file of mockFiles) {
       const count = await server.loadMockFile(file);
       console.log(`Loaded ${count} mock(s) from ${file}`);
-    }
-
-    // 3. Register handler functions from config
-    if (config?.handlers && config.handlers.length > 0) {
-      server.useHandlers(config.handlers);
-      console.log(`Loaded ${config.handlers.length} handler(s) from config`);
     }
 
     // Start server
