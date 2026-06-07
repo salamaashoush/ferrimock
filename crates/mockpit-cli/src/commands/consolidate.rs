@@ -13,26 +13,26 @@ pub async fn consolidate_mocks(
 ) -> anyhow::Result<()> {
     use mockpit::consolidator::{ConsolidatorOptions, MockConsolidator};
 
-    println!("{}", ui::action("Consolidating mock collection"));
-    println!();
-    println!("{}", ui::kv("Input", &ui::path(&input)));
-    println!("{}", ui::kv("Output", &ui::path(&output)));
-    println!("{}", ui::kv("Format", &format));
-    println!();
+    crate::say!("{}", ui::action("Consolidating mock collection"));
+    crate::say!();
+    crate::say!("{}", ui::kv("Input", &ui::path(&input)));
+    crate::say!("{}", ui::kv("Output", &ui::path(&output)));
+    crate::say!("{}", ui::kv("Format", &format));
+    crate::say!();
 
     if verbose {
-        println!("{}", ui::header("Optimization Settings"));
+        crate::say!("{}", ui::header("Optimization Settings"));
         println!(
             "{}",
             ui::kv("  Min pattern threshold", &ui::number(min_pattern))
         );
-        println!("{}", ui::kv("  Pagination detection", "automatic"));
-        println!("{}", ui::kv("  ID pattern detection", "automatic"));
+        crate::say!("{}", ui::kv("  Pagination detection", "automatic"));
+        crate::say!("{}", ui::kv("  ID pattern detection", "automatic"));
         println!(
             "{}",
             ui::kv("  Template extraction", &enable_templates.to_string())
         );
-        println!();
+        crate::say!();
     }
 
     // Create consolidator with simplified options
@@ -55,7 +55,7 @@ pub async fn consolidate_mocks(
     spinner.finish_and_clear();
 
     // Print statistics
-    println!();
+    crate::say!();
     consolidator.stats().print_report();
 
     // Save to output file
@@ -83,16 +83,16 @@ pub async fn consolidate_mocks(
         #[allow(clippy::cast_precision_loss)]
         let savings = (1.0 - (output_size as f64 / input_size as f64)) * 100.0;
 
-        println!("{}", ui::success("Successfully consolidated mocks!"));
-        println!();
-        println!("{}", ui::kv("Output file", &ui::path(&output)));
-        println!("{}", ui::kv("Input size", &ui::format_bytes(input_size)));
-        println!("{}", ui::kv("Output size", &ui::format_bytes(output_size)));
-        println!("{}", ui::kv("Space saved", &format!("{savings:.1}%")));
+        crate::say!("{}", ui::success("Successfully consolidated mocks!"));
+        crate::say!();
+        crate::say!("{}", ui::kv("Output file", &ui::path(&output)));
+        crate::say!("{}", ui::kv("Input size", &ui::format_bytes(input_size)));
+        crate::say!("{}", ui::kv("Output size", &ui::format_bytes(output_size)));
+        crate::say!("{}", ui::kv("Space saved", &format!("{savings:.1}%")));
     } else {
-        println!("{}", ui::success("Successfully consolidated mocks!"));
-        println!();
-        println!("{}", ui::kv("Output file", &ui::path(&output)));
+        crate::say!("{}", ui::success("Successfully consolidated mocks!"));
+        crate::say!();
+        crate::say!("{}", ui::kv("Output file", &ui::path(&output)));
     }
 
     Ok(())

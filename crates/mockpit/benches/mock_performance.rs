@@ -459,6 +459,60 @@ fn bench_isolate_costs(c: &mut Criterion) {
 // Benchmark 4: Response Generation - Static Inline
 // ============================================================================
 
+fn bench_context_construction(c: &mut Criterion) {
+    use mockpit::types::RequestContext;
+    let mut group = c.benchmark_group("context_construction");
+    group.significance_level(0.05).sample_size(1000);
+
+    // Realistic request: 10 headers + a JSON body.
+    let mut headers = HeaderMap::new();
+    for (k, v) in [
+        ("host", "api.example.com"),
+        ("accept", "application/json"),
+        ("accept-encoding", "gzip, deflate, br"),
+        ("user-agent", "mockpit-bench/1.0"),
+        ("authorization", "Bearer abc123"),
+        ("content-type", "application/json"),
+        ("x-request-id", "req-1234567890"),
+        ("cache-control", "no-cache"),
+        ("connection", "keep-alive"),
+        ("x-forwarded-for", "10.0.0.1"),
+    ] {
+        headers.insert(HeaderName::from_static(k), HeaderValue::from_static(v));
+    }
+    let body = br#"{"name":"John","email":"john@example.com","age":30}"#;
+
+    // Full materialization (template references headers + body).
+    group.bench_function("full_headers_body", |b| {
+        b.iter(|| {
+            black_box(RequestContext::from_request(
+                "POST",
+                "/api/users",
+                None,
+                black_box(&headers),
+                Some(black_box(body)),
+            ))
+        });
+    });
+
+    // Lazy: template references neither headers nor body.
+    group.bench_function("lazy_skip_headers_body", |b| {
+        b.iter(|| {
+            black_box(RequestContext::from_request_selective(
+                "POST",
+                "/api/users",
+                None,
+                black_box(&headers),
+                Some(black_box(body)),
+                false,
+                false,
+            ))
+        });
+    });
+
+    group.finish();
+}
+
 fn bench_static_response(c: &mut Criterion) {
     let mut group = c.benchmark_group("static_response_generation");
     group.significance_level(0.05).sample_size(1000);
@@ -825,6 +879,7 @@ criterion_group!(
     bench_pattern_matching_scale,
     bench_miss_at_scale,
     bench_isolate_costs,
+    bench_context_construction,
     bench_static_response,
     bench_file_response,
     bench_template_response,

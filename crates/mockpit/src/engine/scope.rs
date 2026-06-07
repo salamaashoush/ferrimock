@@ -48,10 +48,10 @@ impl ScopeManager {
     }
 
     /// Create a new scope with optional TTL
-    pub fn create_scope(&self, id: LeanString, ttl: Option<Duration>) -> Result<ScopeInfo, String> {
+    pub fn create_scope(&self, id: LeanString, ttl: Option<Duration>) -> crate::Result<ScopeInfo> {
         // Check if scope already exists
         if self.scopes.contains_key(&id) {
-            return Err(format!("Scope '{id}' already exists"));
+            return Err(crate::mp_err!("Scope '{id}' already exists"));
         }
 
         let created_at = Utc::now();
@@ -78,11 +78,11 @@ impl ScopeManager {
     }
 
     /// Delete a scope
-    pub fn delete_scope(&self, scope_id: &str) -> Result<(), String> {
+    pub fn delete_scope(&self, scope_id: &str) -> crate::Result<()> {
         if self.scopes.remove(scope_id).is_some() {
             Ok(())
         } else {
-            Err(format!("Scope '{scope_id}' not found"))
+            Err(crate::mp_err!("Scope '{scope_id}' not found"))
         }
     }
 
@@ -196,7 +196,7 @@ mod tests {
         let result = manager.create_scope("test-scope".into(), None);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("already exists"));
+        assert!(result.unwrap_err().to_string().contains("already exists"));
     }
 
     #[test]
@@ -216,7 +216,7 @@ mod tests {
 
         let result = manager.delete_scope("nonexistent");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]

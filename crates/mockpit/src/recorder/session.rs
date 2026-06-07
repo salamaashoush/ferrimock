@@ -1,7 +1,7 @@
 //! Recording session management utilities
 
 use super::types::RecordingSession;
-use anyhow::Result;
+use crate::Result;
 use std::path::Path;
 
 /// Load a recording session from disk
@@ -17,7 +17,7 @@ pub async fn load_session(path: impl AsRef<Path>) -> Result<RecordingSession> {
         return Ok(session);
     }
 
-    Err(anyhow::anyhow!(
+    Err(crate::mp_err!(
         "Failed to parse recording file as JSON or YAML"
     ))
 }

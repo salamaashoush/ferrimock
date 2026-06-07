@@ -1,7 +1,8 @@
 //! Request patcher - applies request-side patches before forwarding to upstream
 
 use super::types::RequestPatch;
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::Context;
 use bytes::Bytes;
 use http::HeaderMap;
 use http::header::{HeaderName, HeaderValue};
@@ -226,14 +227,14 @@ fn set_value_at_path(
         } else {
             current
                 .as_object_mut()
-                .ok_or_else(|| anyhow::anyhow!("Expected object at '{field_name}'"))?
+                .ok_or_else(|| crate::mp_err!("Expected object at '{field_name}'"))?
                 .entry(field_name)
                 .or_insert(serde_json::Value::Array(vec![]))
         };
 
         let arr = field
             .as_array_mut()
-            .ok_or_else(|| anyhow::anyhow!("Expected array at '{segment}'"))?;
+            .ok_or_else(|| crate::mp_err!("Expected array at '{segment}'"))?;
 
         if index_str == "*" {
             // Apply to all elements
@@ -243,11 +244,11 @@ fn set_value_at_path(
         } else {
             let idx: usize = index_str
                 .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid array index: {index_str}"))?;
+                .map_err(|_| crate::mp_err!("Invalid array index: {index_str}"))?;
             if let Some(elem) = arr.get_mut(idx) {
                 set_value_at_path(elem, remaining, value)?;
             } else {
-                return Err(anyhow::anyhow!(
+                return Err(crate::mp_err!(
                     "Array index {} out of bounds (length {})",
                     idx,
                     arr.len()
@@ -258,7 +259,7 @@ fn set_value_at_path(
         // Simple field navigation
         let obj = current
             .as_object_mut()
-            .ok_or_else(|| anyhow::anyhow!("Expected object at '{segment}'"))?;
+            .ok_or_else(|| crate::mp_err!("Expected object at '{segment}'"))?;
 
         if remaining.is_empty() {
             // Set the value

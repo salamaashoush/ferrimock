@@ -45,7 +45,7 @@ impl HotReloadManager {
         mock_registry: Arc<MockRegistry>,
         watch_dirs: Vec<PathBuf>,
         config: HotReloadConfig,
-    ) -> anyhow::Result<Self> {
+    ) -> crate::Result<Self> {
         let filter = FileEventFilter::new().with_extensions(&["json", "yaml", "yml", "har"]);
         let watcher = FileWatcher::new(filter)?;
         let debouncer = EventDebouncer::new(Duration::from_millis(config.debounce_ms));
@@ -59,7 +59,7 @@ impl HotReloadManager {
     }
 
     /// Start watching directories
-    pub fn start_watching(&mut self) -> anyhow::Result<()> {
+    pub fn start_watching(&mut self) -> crate::Result<()> {
         for dir in &self.watch_dirs {
             if dir.exists() {
                 self.watcher.watch(dir)?;
@@ -141,7 +141,7 @@ impl HotReloadManager {
     }
 
     /// Reload a single file
-    async fn reload_file(&self, path: &Path) -> Result<usize, String> {
+    async fn reload_file(&self, path: &Path) -> crate::Result<usize> {
         Box::pin(self.mock_registry.reload_file(path)).await
     }
 }

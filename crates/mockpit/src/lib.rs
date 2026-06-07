@@ -37,6 +37,10 @@
 // Core (always available when engine is enabled)
 // ---------------------------------------------------------------------------
 
+/// The library error type ([`MockpitError`]) and [`Result`] alias.
+pub mod error;
+pub use error::{MockpitError, Result};
+
 /// Thread-safe persistence store for stateful mocking
 #[cfg(feature = "engine")]
 pub mod core;

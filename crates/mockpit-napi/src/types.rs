@@ -3,35 +3,10 @@
 use napi_derive::napi;
 use std::collections::HashMap;
 
-/// Request context passed to JS handler functions.
-///
-/// Contains all HTTP request information plus captured path parameters.
-#[napi(object)]
-#[derive(Clone)]
-pub struct JsRequestContext {
-    /// HTTP method (GET, POST, etc.)
-    pub method: String,
-    /// Full URI including query string
-    pub uri: String,
-    /// Request path (without query string)
-    pub path: String,
-    /// Path parameter captures from `:param` patterns
-    pub params: HashMap<String, String>,
-    /// Parsed query parameters
-    pub query: HashMap<String, String>,
-    /// Request headers
-    pub headers: HashMap<String, String>,
-    /// Request body as string (if UTF-8)
-    pub body: Option<String>,
-    /// Request body parsed as JSON (if valid JSON)
-    pub body_json: Option<serde_json::Value>,
-}
-
 /// Response returned from JS handler functions.
 ///
 /// Return `null`/`undefined` from a handler to signal passthrough.
 #[napi(object)]
-#[derive(Clone)]
 pub struct JsHandlerResponse {
     /// HTTP status code (default: 200)
     pub status: Option<u32>,
@@ -41,6 +16,9 @@ pub struct JsHandlerResponse {
     pub body: Option<String>,
     /// Response body as JSON (takes precedence over `body` if both set)
     pub body_json: Option<serde_json::Value>,
+    /// Raw binary response body (takes precedence over `body`/`body_json`).
+    /// Set by `MockResponse.arrayBuffer()` for binary-safe responses.
+    pub body_bytes: Option<napi::bindgen_prelude::Uint8Array>,
 }
 
 /// Options for response construction.
@@ -53,37 +31,6 @@ pub struct JsResponseInit {
     pub headers: Option<HashMap<String, String>>,
 }
 
-impl JsRequestContext {
-    /// Minimal construction -- avoids cloning headers and query for the common case
-    /// where handlers only need params and body.
-    pub fn from_context_minimal(ctx: &mockpit::types::RequestContext) -> Self {
-        Self {
-            method: ctx.method.clone(),
-            uri: ctx.uri.clone(),
-            path: ctx.path.clone(),
-            params: ctx.captures.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-            // Only include query/headers if non-empty (avoids HashMap allocation)
-            query: if ctx.query.is_empty() {
-                HashMap::new()
-            } else {
-                ctx.query.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            },
-            headers: if ctx.headers.is_empty() {
-                HashMap::new()
-            } else {
-                ctx.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            },
-            body: ctx.body.clone(),
-            body_json: ctx.body_json.clone(),
-        }
-    }
-}
-
-impl From<&mockpit::types::RequestContext> for JsRequestContext {
-    fn from(ctx: &mockpit::types::RequestContext) -> Self {
-        Self::from_context_minimal(ctx)
-    }
-}
 
 impl From<JsHandlerResponse> for mockpit::types::DynamicResponse {
     fn from(resp: JsHandlerResponse) -> Self {
@@ -94,8 +41,10 @@ impl From<JsHandlerResponse> for mockpit::types::DynamicResponse {
 
         let headers = resp.headers.map(|h| h.into_iter().collect());
 
-        // body_json takes precedence over body
-        let body = if let Some(json) = resp.body_json {
+        // Precedence: raw bytes (binary-safe) > body_json > body string.
+        let body = if let Some(bytes) = resp.body_bytes {
+            bytes::Bytes::from(bytes.to_vec())
+        } else if let Some(json) = resp.body_json {
             bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or_default())
         } else if let Some(text) = resp.body {
             bytes::Bytes::from(text)

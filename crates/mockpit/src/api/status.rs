@@ -256,10 +256,10 @@ pub async fn start_recording(
     axum::Json(options): axum::Json<RecordingOptions>,
 ) -> impl IntoResponse {
     // Start recording inline
-    let result: Result<String, String> = async {
+    let result: crate::Result<String> = async {
         let mut recorder_guard = app_state.mock.mock_recorder.write().await;
         if recorder_guard.is_some() {
-            return Err("Recording is already in progress".to_string());
+            return Err(crate::mp_err!("Recording is already in progress"));
         }
         let session = options
             .session
@@ -297,7 +297,7 @@ pub async fn start_recording(
         Err(e) => {
             let mut response = serde_json::Map::new();
             response.insert("success".to_string(), serde_json::Value::Bool(false));
-            response.insert("error".to_string(), serde_json::Value::String(e));
+            response.insert("error".to_string(), serde_json::Value::String(e.to_string()));
             (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::Value::Object(response)),

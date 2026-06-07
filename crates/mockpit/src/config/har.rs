@@ -7,7 +7,8 @@
 //!
 //! Use the consolidator for further smart pattern detection and optimization.
 
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::Context;
 use har::{Har, Spec, v1_2};
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
@@ -205,7 +206,7 @@ impl HarLoader {
     pub async fn convert_har_to_mocks(&self, har: Har) -> Result<Vec<MockConfig>> {
         let entries = match &har.log {
             Spec::V1_2(log) => &log.entries,
-            Spec::V1_3(_) => return Err(anyhow::anyhow!("Unsupported HAR version")),
+            Spec::V1_3(_) => return Err(crate::mp_err!("Unsupported HAR version")),
         };
 
         // Create bodies directory if body extraction is enabled

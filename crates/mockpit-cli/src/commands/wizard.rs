@@ -6,7 +6,7 @@ use super::ui;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use super::create::{generate_json_mock, generate_template_body, generate_yaml_mock};
+use mockpit::services::create::{create, generate_template_body, CreateInput};
 
 /// Wizard state holding all configuration
 #[derive(Debug, Clone)]
@@ -82,9 +82,9 @@ pub fn run_wizard(
     initial_priority: u32,
     initial_collection: Option<String>,
 ) -> anyhow::Result<()> {
-    println!();
-    println!("{}", ui::header("Mock Creation Wizard"));
-    println!();
+    crate::say!();
+    crate::say!("{}", ui::header("Mock Creation Wizard"));
+    crate::say!();
     println!(
         "{}",
         ui::dim("Create a new mock definition with step-by-step guidance.")
@@ -93,7 +93,7 @@ pub fn run_wizard(
         "{}",
         ui::dim("Press Enter to accept defaults shown in [brackets].")
     );
-    println!();
+    crate::say!();
 
     // Initialize state with any provided defaults
     let mut state = WizardState {
@@ -135,9 +135,9 @@ pub fn run_wizard(
 
 fn step_request_matching(state: &mut WizardState) -> anyhow::Result<()> {
     ui::divider();
-    println!("{}", ui::step(1, 6, "Request Matching"));
+    crate::say!("{}", ui::step(1, 6, "Request Matching"));
     ui::divider();
-    println!();
+    crate::say!();
 
     // URL Pattern
     let default_url = if state.url_pattern.is_empty() {
@@ -168,10 +168,10 @@ fn step_request_matching(state: &mut WizardState) -> anyhow::Result<()> {
         "  {}",
         ui::dim(&format!("Auto-detected: {pattern_type} pattern"))
     );
-    println!();
+    crate::say!();
 
     // HTTP Methods
-    println!("{}", ui::emphasis("HTTP Method(s):"));
+    crate::say!("{}", ui::emphasis("HTTP Method(s):"));
     println!(
         "  {}",
         ui::dim("Select methods (space-separated, e.g., 'GET POST')")
@@ -201,7 +201,7 @@ fn step_request_matching(state: &mut WizardState) -> anyhow::Result<()> {
     if !input.is_empty() {
         state.methods = input.split_whitespace().map(ToString::to_string).collect();
     }
-    println!();
+    crate::say!();
 
     // Header Matchers
     print!("{} (y/N): ", ui::emphasis("Add header matchers?"));
@@ -232,7 +232,7 @@ fn step_request_matching(state: &mut WizardState) -> anyhow::Result<()> {
             println!("  {}", ui::success(&format!("Added: {name} = {pattern}")));
         }
     }
-    println!();
+    crate::say!();
 
     // Query Parameter Matchers
     print!("{} (y/N): ", ui::emphasis("Add query parameter matchers?"));
@@ -263,7 +263,7 @@ fn step_request_matching(state: &mut WizardState) -> anyhow::Result<()> {
             println!("  {}", ui::success(&format!("Added: {name} = {pattern}")));
         }
     }
-    println!();
+    crate::say!();
 
     // Body Matcher (for POST/PUT/PATCH)
     if state
@@ -295,16 +295,16 @@ fn step_request_matching(state: &mut WizardState) -> anyhow::Result<()> {
             }
         }
     }
-    println!();
+    crate::say!();
 
     Ok(())
 }
 
 fn step_response_config(state: &mut WizardState) -> anyhow::Result<()> {
     ui::divider();
-    println!("{}", ui::step(2, 6, "Response Configuration"));
+    crate::say!("{}", ui::step(2, 6, "Response Configuration"));
     ui::divider();
-    println!();
+    crate::say!();
 
     // Status Code
     let default_status = state.status.to_string();
@@ -322,10 +322,10 @@ fn step_response_config(state: &mut WizardState) -> anyhow::Result<()> {
     if !input.is_empty() {
         state.status = input.parse().unwrap_or(state.status);
     }
-    println!();
+    crate::say!();
 
     // Content-Type
-    println!("{}", ui::emphasis("Content-Type:"));
+    crate::say!("{}", ui::emphasis("Content-Type:"));
     let content_types = [
         ("1", "application/json"),
         ("2", "text/plain"),
@@ -358,18 +358,18 @@ fn step_response_config(state: &mut WizardState) -> anyhow::Result<()> {
             custom => custom.to_string(),
         };
     }
-    println!();
+    crate::say!();
 
     Ok(())
 }
 
 fn step_response_body(state: &mut WizardState) -> anyhow::Result<()> {
     ui::divider();
-    println!("{}", ui::step(3, 6, "Response Body"));
+    crate::say!("{}", ui::step(3, 6, "Response Body"));
     ui::divider();
-    println!();
+    crate::say!();
 
-    println!("{}", ui::emphasis("Body Source:"));
+    crate::say!("{}", ui::emphasis("Body Source:"));
     println!("  [x] 1 Template with fake data (recommended)");
     println!("  [ ] 2 Static JSON/text");
     println!("  [ ] 3 File reference");
@@ -393,12 +393,12 @@ fn step_response_body(state: &mut WizardState) -> anyhow::Result<()> {
         "4" => BodySource::Empty,
         _ => BodySource::Template,
     };
-    println!();
+    crate::say!();
 
     // Generate or get the body content
     match &state.body_source {
         BodySource::Template => {
-            println!("{}", ui::emphasis("Template Type:"));
+            crate::say!("{}", ui::emphasis("Template Type:"));
             println!("  [x] 1 Auto-generate based on endpoint");
             println!("  [ ] 2 User/profile response");
             println!("  [ ] 3 Paginated list response");
@@ -424,7 +424,7 @@ fn step_response_body(state: &mut WizardState) -> anyhow::Result<()> {
                 "7" => generate_delete_template(),
                 "8" => generate_error_template(state.status),
                 "9" => {
-                    println!();
+                    crate::say!();
                     println!(
                         "{}",
                         ui::dim("Enter template (press Ctrl+D or empty line to finish):")
@@ -450,7 +450,7 @@ fn step_response_body(state: &mut WizardState) -> anyhow::Result<()> {
             };
 
             // Show preview
-            println!();
+            crate::say!();
             ui::preview_box("Template Preview", &state.template_body);
 
             print!("{} (y/N): ", ui::emphasis("Edit template?"));
@@ -502,16 +502,16 @@ fn step_response_body(state: &mut WizardState) -> anyhow::Result<()> {
             state.template_body = String::new();
         }
     }
-    println!();
+    crate::say!();
 
     Ok(())
 }
 
 fn step_response_behavior(state: &mut WizardState) -> anyhow::Result<()> {
     ui::divider();
-    println!("{}", ui::step(4, 6, "Response Behavior"));
+    crate::say!("{}", ui::step(4, 6, "Response Behavior"));
     ui::divider();
-    println!();
+    crate::say!();
 
     // Delay
     print!("{} (y/N): ", ui::emphasis("Add response delay?"));
@@ -531,16 +531,16 @@ fn step_response_behavior(state: &mut WizardState) -> anyhow::Result<()> {
         state.delay_ms = Some(delay_val);
         println!("  {}", ui::success(&format!("Set delay: {delay_val}ms")));
     }
-    println!();
+    crate::say!();
 
     Ok(())
 }
 
 fn step_metadata(state: &mut WizardState, output: Option<String>) -> anyhow::Result<()> {
     ui::divider();
-    println!("{}", ui::step(5, 6, "Metadata"));
+    crate::say!("{}", ui::step(5, 6, "Metadata"));
     ui::divider();
-    println!();
+    crate::say!();
 
     // Generate default mock ID if not set
     if state.mock_id.is_empty() {
@@ -571,7 +571,7 @@ fn step_metadata(state: &mut WizardState, output: Option<String>) -> anyhow::Res
     if !input.is_empty() {
         state.mock_id = input.to_string();
     }
-    println!();
+    crate::say!();
 
     // Priority
     let default_priority = state.priority.to_string();
@@ -588,7 +588,7 @@ fn step_metadata(state: &mut WizardState, output: Option<String>) -> anyhow::Res
     if !input.is_empty() {
         state.priority = input.parse().unwrap_or(state.priority);
     }
-    println!();
+    crate::say!();
 
     // Collection
     let default_collection = state.collection.clone().unwrap_or_default();
@@ -609,11 +609,11 @@ fn step_metadata(state: &mut WizardState, output: Option<String>) -> anyhow::Res
     if !input.is_empty() {
         state.collection = Some(input.to_string());
     }
-    println!();
+    crate::say!();
 
     // Output path and format
     let default_dir =
-        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+        crate::config::mocks_dir();
     let default_path = output.unwrap_or_else(|| format!("{}/{}.yaml", default_dir, state.mock_id));
     print!(
         "{} [{}]: ",
@@ -638,28 +638,28 @@ fn step_metadata(state: &mut WizardState, output: Option<String>) -> anyhow::Res
         .and_then(|ext| ext.to_str())
         .unwrap_or("yaml")
         .to_string();
-    println!();
+    crate::say!();
 
     Ok(())
 }
 
 fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
     ui::divider();
-    println!("{}", ui::step(6, 6, "Review & Save"));
+    crate::say!("{}", ui::step(6, 6, "Review & Save"));
     ui::divider();
-    println!();
+    crate::say!();
 
     // Show summary
-    println!("{}", ui::header("Mock Summary"));
-    println!();
-    println!("{}", ui::kv("Mock ID", &state.mock_id));
-    println!("{}", ui::kv("Priority", &state.priority.to_string()));
-    println!("{}", ui::kv("Methods", &state.methods.join(", ")));
-    println!("{}", ui::kv("URL Pattern", &state.url_pattern));
-    println!("{}", ui::kv("Status", &state.status.to_string()));
-    println!("{}", ui::kv("Content-Type", &state.content_type));
+    crate::say!("{}", ui::header("Mock Summary"));
+    crate::say!();
+    crate::say!("{}", ui::kv("Mock ID", &state.mock_id));
+    crate::say!("{}", ui::kv("Priority", &state.priority.to_string()));
+    crate::say!("{}", ui::kv("Methods", &state.methods.join(", ")));
+    crate::say!("{}", ui::kv("URL Pattern", &state.url_pattern));
+    crate::say!("{}", ui::kv("Status", &state.status.to_string()));
+    crate::say!("{}", ui::kv("Content-Type", &state.content_type));
     if let Some(delay) = state.delay_ms {
-        println!("{}", ui::kv("Delay", &format!("{delay}ms")));
+        crate::say!("{}", ui::kv("Delay", &format!("{delay}ms")));
     }
     if !state.header_matchers.is_empty() {
         println!(
@@ -674,15 +674,15 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
         );
     }
     if state.body_matcher.is_some() {
-        println!("{}", ui::kv("Body Matcher", "Yes"));
+        crate::say!("{}", ui::kv("Body Matcher", "Yes"));
     }
-    println!();
+    crate::say!();
     println!(
         "{}",
         ui::kv("Output", &state.output_path.display().to_string())
     );
-    println!("{}", ui::kv("Format", &state.format));
-    println!();
+    crate::say!("{}", ui::kv("Format", &state.format));
+    crate::say!();
 
     // Generate and show the mock configuration
     let body = if state.template_body.is_empty() {
@@ -691,10 +691,8 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
         state.template_body.clone()
     };
 
-    let mock_config = match state.format.as_str() {
-        "json" => generate_json_mock_extended(state, &body)?,
-        _ => generate_yaml_mock_extended(state, &body)?,
-    };
+    let format = if state.format == "json" { "json" } else { "yaml" };
+    let mock_config = generate_mock_content(state, &body, format)?;
 
     ui::preview_box("Generated Configuration", &mock_config);
 
@@ -705,7 +703,7 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     if input.trim().eq_ignore_ascii_case("n") {
-        println!("{}", ui::warning("Cancelled"));
+        crate::say!("{}", ui::warning("Cancelled"));
         return Ok(());
     }
 
@@ -719,7 +717,7 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
     std::fs::write(&state.output_path, &mock_config)
         .map_err(|e| anyhow::anyhow!("Failed to write mock file: {e}"))?;
 
-    println!();
+    crate::say!();
     println!(
         "{}",
         ui::success(&format!(
@@ -727,7 +725,7 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
             ui::path(&state.output_path.display().to_string())
         ))
     );
-    println!();
+    crate::say!();
     println!(
         "{}",
         ui::dim(&format!(
@@ -892,32 +890,21 @@ fn generate_error_template(status: u16) -> String {
     )
 }
 
-fn generate_json_mock_extended(state: &WizardState, body: &str) -> anyhow::Result<String> {
-    let is_template = matches!(state.body_source, BodySource::Template);
-    let params = super::create::MockGeneratorParams {
-        mock_id: &state.mock_id,
-        method: state.methods.first().map_or("GET", String::as_str),
-        url: &state.url_pattern,
+fn generate_mock_content(
+    state: &WizardState,
+    body: &str,
+    format: &str,
+) -> anyhow::Result<String> {
+    let result = create(CreateInput {
+        url: state.url_pattern.clone(),
+        method: state.methods.first().map_or("GET", String::as_str).to_string(),
         status: state.status,
-        body,
+        body: Some(body.to_string()),
+        template: matches!(state.body_source, BodySource::Template),
+        id: Some(state.mock_id.clone()),
         priority: state.priority,
-        collection: state.collection.as_deref(),
-        is_template,
-    };
-    generate_json_mock(&params)
-}
-
-fn generate_yaml_mock_extended(state: &WizardState, body: &str) -> anyhow::Result<String> {
-    let is_template = matches!(state.body_source, BodySource::Template);
-    let params = super::create::MockGeneratorParams {
-        mock_id: &state.mock_id,
-        method: state.methods.first().map_or("GET", String::as_str),
-        url: &state.url_pattern,
-        status: state.status,
-        body,
-        priority: state.priority,
-        collection: state.collection.as_deref(),
-        is_template,
-    };
-    generate_yaml_mock(&params)
+        collection: state.collection.clone(),
+        format: format.to_string(),
+    })?;
+    Ok(result.content)
 }

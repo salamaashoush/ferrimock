@@ -39,6 +39,7 @@ pub fn json(data: serde_json::Value, init: Option<JsResponseInit>) -> JsHandlerR
         )),
         body: Some(body),
         body_json: Some(data),
+        body_bytes: None,
     }
 }
 
@@ -61,6 +62,7 @@ pub fn text(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
         )),
         body: Some(body),
         body_json: None,
+        body_bytes: None,
     }
 }
 
@@ -83,6 +85,7 @@ pub fn html(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
         )),
         body: Some(body),
         body_json: None,
+        body_bytes: None,
     }
 }
 
@@ -105,6 +108,7 @@ pub fn xml(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
         )),
         body: Some(body),
         body_json: None,
+        body_bytes: None,
     }
 }
 
@@ -115,15 +119,11 @@ pub fn xml(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
 /// @param data - Binary data as Buffer.
 /// @param init - Optional status code and headers.
 #[napi(namespace = "MockResponse")]
-pub fn array_buffer(data: napi::bindgen_prelude::Buffer, init: Option<JsResponseInit>) -> JsHandlerResponse {
+pub fn array_buffer(data: napi::bindgen_prelude::Uint8Array, init: Option<JsResponseInit>) -> JsHandlerResponse {
     let default_headers = HashMap::from([(
         "content-type".to_string(),
         "application/octet-stream".to_string(),
     )]);
-
-    // Convert binary data to string for transport through the string-based body field.
-    // Loss-less for valid UTF-8; lossy for binary but sufficient for mock responses.
-    let body = String::from_utf8_lossy(data.as_ref()).into_owned();
 
     JsHandlerResponse {
         status: init.as_ref().and_then(|i| i.status),
@@ -131,8 +131,10 @@ pub fn array_buffer(data: napi::bindgen_prelude::Buffer, init: Option<JsResponse
             default_headers,
             init.and_then(|i| i.headers),
         )),
-        body: Some(body),
+        body: None,
         body_json: None,
+        // Binary-safe: bytes pass through untouched.
+        body_bytes: Some(data),
     }
 }
 
@@ -146,6 +148,7 @@ pub fn empty(status: u32) -> JsHandlerResponse {
         headers: None,
         body: None,
         body_json: None,
+        body_bytes: None,
     }
 }
 
@@ -161,5 +164,6 @@ pub fn error() -> JsHandlerResponse {
         headers: Some(headers),
         body: None,
         body_json: None,
+        body_bytes: None,
     }
 }

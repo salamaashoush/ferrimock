@@ -41,7 +41,7 @@ pub struct FakeImageResult {
 }
 
 /// Generate a fake image.
-pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, anyhow::Error> {
+pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, crate::MockpitError> {
     use crate::fake_data::*;
 
     let w = Some(input.width);
@@ -88,11 +88,11 @@ pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, anyhow::Error>
             None, // font_size
         ),
         "solid" | "color" => fake_png(w, h, input.bg_color.as_deref()),
-        other => anyhow::bail!("Unknown image type: {other}"),
+        other => crate::mp_bail!("Unknown image type: {other}"),
     };
 
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &base64_data)
-        .map_err(|e| anyhow::anyhow!("Failed to decode image: {e}"))?;
+        .map_err(|e| crate::mp_err!("Failed to decode image: {e}"))?;
 
     let mime_type = if input.image_format == "jpeg" || input.image_format == "jpg" {
         "image/jpeg".into()

@@ -10,7 +10,7 @@ pub use super::types::{RecordedInteraction, RecordingSession};
 pub use filters::RecordingFilterOptions;
 pub use formats::RecordingFormat;
 
-use anyhow::Result;
+use crate::Result;
 use bytes::Bytes;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -870,7 +870,7 @@ impl MockRecorder {
             {
                 let filename = std::path::Path::new(file_ref)
                     .file_name()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid body file path: {file_ref}"))?;
+                    .ok_or_else(|| crate::mp_err!("Invalid body file path: {file_ref}"))?;
 
                 let body_file_path = bodies_dir.join(filename);
                 tokio::fs::write(&body_file_path, &interaction.response.body).await?;

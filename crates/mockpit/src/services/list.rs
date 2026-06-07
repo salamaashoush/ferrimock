@@ -50,7 +50,7 @@ pub struct ListOutput {
 }
 
 /// List all loaded mocks from a directory.
-pub async fn list(input: ListInput) -> Result<ListOutput, anyhow::Error> {
+pub async fn list(input: ListInput) -> Result<ListOutput, crate::MockpitError> {
     let dir = input.mocks_dir.unwrap_or_else(|| {
         std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string())
     });
@@ -59,7 +59,7 @@ pub async fn list(input: ListInput) -> Result<ListOutput, anyhow::Error> {
     registry
         .load_from_directory(&dir)
         .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| crate::mp_err!(e))?;
 
     let all_mocks = registry.get_all_mocks();
 

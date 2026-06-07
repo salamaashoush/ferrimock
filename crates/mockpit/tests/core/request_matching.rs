@@ -190,9 +190,9 @@ fn test_body_matcher_contains() {
     use mockpit::engine::BodyMatcher;
 
     let matcher = BodyMatcher::contains("test");
-    assert!(matcher.matches(b"this is a test"));
-    assert!(matcher.matches(b"test"));
-    assert!(!matcher.matches(b"no match here"));
+    assert!(matcher.matches(b"this is a test", None));
+    assert!(matcher.matches(b"test", None));
+    assert!(!matcher.matches(b"no match here", None));
 }
 
 #[test]
@@ -200,8 +200,8 @@ fn test_body_matcher_regex() {
     use mockpit::engine::BodyMatcher;
 
     let matcher = BodyMatcher::regex(r"\d{3}-\d{3}-\d{4}").unwrap();
-    assert!(matcher.matches(b"Phone: 123-456-7890"));
-    assert!(!matcher.matches(b"Phone: 123-45-6789"));
+    assert!(matcher.matches(b"Phone: 123-456-7890", None));
+    assert!(!matcher.matches(b"Phone: 123-45-6789", None));
 }
 
 #[test]
@@ -211,10 +211,10 @@ fn test_body_matcher_json_path() {
     let matcher = BodyMatcher::json_path("user.name", serde_json::json!("John"));
 
     let json_body = r#"{"user": {"name": "John", "age": 30}}"#;
-    assert!(matcher.matches(json_body.as_bytes()));
+    assert!(matcher.matches(json_body.as_bytes(), None));
 
     let json_body_no_match = r#"{"user": {"name": "Jane", "age": 30}}"#;
-    assert!(!matcher.matches(json_body_no_match.as_bytes()));
+    assert!(!matcher.matches(json_body_no_match.as_bytes(), None));
 }
 
 #[test]
@@ -224,8 +224,8 @@ fn test_body_matcher_json_equals() {
     let expected = serde_json::json!({"type": "user", "id": "123"});
     let matcher = BodyMatcher::json_equals(expected);
 
-    assert!(matcher.matches(br#"{"type": "user", "id": "123"}"#));
-    assert!(!matcher.matches(br#"{"type": "user", "id": "456"}"#));
+    assert!(matcher.matches(br#"{"type": "user", "id": "123"}"#, None));
+    assert!(!matcher.matches(br#"{"type": "user", "id": "456"}"#, None));
 }
 
 // Note: These tests have been removed as the Condition type is obsolete.

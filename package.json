@@ -3,5 +3,12 @@
   "workspaces": [
     "crates/mockpit-napi",
     "packages/*"
-  ]
+  ],
+  "scripts": {
+    "build": "bun run --filter '@mockpit/core' build && bun run --filter '@mockpit/playwright' build && bun run --filter '@mockpit/cli' build"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3"
+  }
 }

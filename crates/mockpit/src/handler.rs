@@ -43,7 +43,7 @@ fn next_handler_id(prefix: &str) -> LeanString {
 /// Trait for converting closures into [`HandlerFn`].
 ///
 /// Automatically implemented for async closures with the signature
-/// `Fn(RequestContext) -> Future<Output = Result<DynamicResponse, anyhow::Error>>`.
+/// `Fn(RequestContext) -> Future<Output = Result<DynamicResponse, crate::MockpitError>>`.
 pub trait IntoHandlerFn: Send + Sync + 'static {
     /// Convert this callable into a type-erased handler function.
     fn into_handler_fn(self) -> HandlerFn;
@@ -52,7 +52,7 @@ pub trait IntoHandlerFn: Send + Sync + 'static {
 impl<F, Fut> IntoHandlerFn for F
 where
     F: Fn(RequestContext) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<DynamicResponse, anyhow::Error>> + Send + 'static,
+    Fut: Future<Output = Result<DynamicResponse, crate::MockpitError>> + Send + 'static,
 {
     fn into_handler_fn(self) -> HandlerFn {
         Arc::new(move |ctx| Box::pin(self(ctx)))

@@ -43,6 +43,8 @@ pub mod fake_image;
 pub mod fake_pdf;
 pub mod format;
 pub mod list;
+/// Standalone mock HTTP server (requires the `server` feature for axum/tower-http).
+#[cfg(feature = "server")]
 pub mod serve;
 pub mod show;
 pub mod template;

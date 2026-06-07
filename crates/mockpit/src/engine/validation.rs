@@ -70,9 +70,9 @@ impl MockValidator {
         let extension = path.extension().and_then(|e| e.to_str());
         let config_result = match extension {
             Some("json") => serde_json::from_str::<MockCollectionConfig>(&content)
-                .map_err(|e| format!("JSON parse error: {e}")),
+                .map_err(|e| crate::mp_err!("JSON parse error: {e}")),
             Some("yaml" | "yml") => serde_yaml::from_str::<MockCollectionConfig>(&content)
-                .map_err(|e| format!("YAML parse error: {e}")),
+                .map_err(|e| crate::mp_err!("YAML parse error: {e}")),
             _ => {
                 return ValidationResult {
                     file_path,
@@ -97,14 +97,14 @@ impl MockValidator {
             }
             Err(e) => {
                 // Parse error - extract line number if possible
-                let (line_number, snippet) = Self::extract_parse_error_info(&e, &content);
+                let (line_number, snippet) = Self::extract_parse_error_info(&e.to_string(), &content);
 
                 ValidationResult {
                     file_path,
                     errors: vec![ValidationError {
                         mock_id: None,
                         error_type: ErrorType::ParseError,
-                        message: e,
+                        message: e.to_string(),
                         snippet,
                         suggestion: Some("Check syntax according to the file format".to_string()),
                         line_number,
@@ -131,9 +131,9 @@ impl MockValidator {
     pub async fn validate_content(&self, content: &str, extension: &str) -> ValidationResult {
         let config_result = match extension {
             "json" => serde_json::from_str::<MockCollectionConfig>(content)
-                .map_err(|e| format!("JSON parse error: {e}")),
+                .map_err(|e| crate::mp_err!("JSON parse error: {e}")),
             "yaml" | "yml" => serde_yaml::from_str::<MockCollectionConfig>(content)
-                .map_err(|e| format!("YAML parse error: {e}")),
+                .map_err(|e| crate::mp_err!("YAML parse error: {e}")),
             _ => {
                 return ValidationResult {
                     file_path: None,
@@ -156,13 +156,13 @@ impl MockValidator {
                     .await
             }
             Err(e) => {
-                let (line_number, snippet) = Self::extract_parse_error_info(&e, content);
+                let (line_number, snippet) = Self::extract_parse_error_info(&e.to_string(), content);
                 ValidationResult {
                     file_path: None,
                     errors: vec![ValidationError {
                         mock_id: None,
                         error_type: ErrorType::ParseError,
-                        message: e,
+                        message: e.to_string(),
                         snippet,
                         suggestion: Some("Check syntax according to the file format".to_string()),
                         line_number,
@@ -1652,6 +1652,8 @@ mod tests {
                 delay: None,
                 mode: ResponseMode::Static,
                 structured_response: false,
+                context_uses_headers: true,
+                context_uses_body: true,
             },
         };
 
@@ -1682,6 +1684,8 @@ mod tests {
                 delay: None,
                 mode: ResponseMode::Static,
                 structured_response: false,
+                context_uses_headers: true,
+                context_uses_body: true,
             },
         };
 
@@ -1785,6 +1789,8 @@ mod tests {
                 delay: None,
                 mode: ResponseMode::Static,
                 structured_response: false,
+                context_uses_headers: true,
+                context_uses_body: true,
             },
         };
 
@@ -1813,6 +1819,8 @@ mod tests {
                 delay: None,
                 mode: ResponseMode::Static,
                 structured_response: false,
+                context_uses_headers: true,
+                context_uses_body: true,
             },
         };
 
@@ -1861,6 +1869,8 @@ mod tests {
                 delay: None,
                 mode: ResponseMode::Static,
                 structured_response: false,
+                context_uses_headers: true,
+                context_uses_body: true,
             },
         };
 
@@ -1892,6 +1902,8 @@ mod tests {
                 delay: None,
                 mode: ResponseMode::Static,
                 structured_response: false,
+                context_uses_headers: true,
+                context_uses_body: true,
             },
         };
 

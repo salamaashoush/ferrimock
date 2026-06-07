@@ -3,14 +3,26 @@
   "version": "0.1.0",
   "description": "High-performance HTTP mocking engine -- core library",
   "type": "module",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
   "exports": {
     ".": {
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
     }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsdown",
+    "verify:node-http": "node verify-node-http.mjs",
+    "bench:msw": "node bench/vs-msw.mjs"
   },
   "dependencies": {
     "@mockpit/node": "workspace:*",
+    "@mswjs/interceptors": "^0.41.9",
     "jiti": "^2.6.1"
   },
   "license": "MIT",

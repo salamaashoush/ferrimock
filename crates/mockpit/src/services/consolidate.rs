@@ -42,7 +42,7 @@ pub struct ConsolidateResult {
 }
 
 /// Consolidate a mock collection file.
-pub async fn consolidate(input: ConsolidateInput) -> Result<ConsolidateResult, anyhow::Error> {
+pub async fn consolidate(input: ConsolidateInput) -> Result<ConsolidateResult, crate::MockpitError> {
     let options = ConsolidatorOptions {
         enable_consolidation: true,
         enable_templates: input.enable_templates,
@@ -62,7 +62,7 @@ pub async fn consolidate(input: ConsolidateInput) -> Result<ConsolidateResult, a
     let collection = consolidator
         .consolidate_file(&input.input)
         .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| crate::mp_err!(e))?;
 
     let stats = consolidator.stats();
     let mocks_before = stats.original_count;

@@ -59,17 +59,17 @@ fn generate_mock_id(method: &str, url: &str) -> String {
 }
 
 /// Create a new mock definition.
-pub fn create(input: CreateInput) -> Result<CreateResult, anyhow::Error> {
+pub fn create(input: CreateInput) -> Result<CreateResult, crate::MockpitError> {
     let mock_id = input
         .id
         .unwrap_or_else(|| generate_mock_id(&input.method, &input.url));
 
-    let body = if input.template {
-        generate_template_body(&input.method, &input.url)
-    } else {
-        input
-            .body
-            .unwrap_or_else(|| r#"{"message": "Mock response"}"#.to_string())
+    // An explicit body always wins (e.g. the wizard supplies an edited
+    // template); otherwise generate a template body or fall back to a default.
+    let body = match (input.template, input.body) {
+        (_, Some(b)) => b,
+        (true, None) => generate_template_body(&input.method, &input.url),
+        (false, None) => r#"{"message": "Mock response"}"#.to_string(),
     };
 
     let body_key = if input.template { "template" } else { "body" };
@@ -104,7 +104,7 @@ pub fn create(input: CreateInput) -> Result<CreateResult, anyhow::Error> {
 }
 
 /// Generate a template body with fake data based on endpoint heuristics.
-fn generate_template_body(method: &str, url: &str) -> String {
+pub fn generate_template_body(method: &str, url: &str) -> String {
     let is_list = url.ends_with('s')
         && !url.contains("/:") // e.g. /users but not /users/:id
         || url.contains("/list")

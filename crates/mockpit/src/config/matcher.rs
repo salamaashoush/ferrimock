@@ -304,12 +304,12 @@ pub struct RequestConfig {
 
 impl RequestConfig {
     /// Convert to a RequestMatcher
-    pub fn into_request_matcher(self) -> Result<RequestMatcher, String> {
+    pub fn into_request_matcher(self) -> crate::Result<RequestMatcher> {
         // Parse methods
         let methods: Result<SmallVec<[Method; 2]>, _> = self
             .methods
             .iter()
-            .map(|m| Method::from_str(m).map_err(|e| format!("Invalid method '{m}': {e}")))
+            .map(|m| Method::from_str(m).map_err(|e| crate::mp_err!("Invalid method '{m}': {e}")))
             .collect();
         let methods = methods?;
 
@@ -327,20 +327,20 @@ impl RequestConfig {
             .into_iter()
             .map(|(name, config)| {
                 let header_name = HeaderName::from_str(&name)
-                    .map_err(|e| format!("Invalid header name '{name}': {e}"))?;
+                    .map_err(|e| crate::mp_err!("Invalid header name '{name}': {e}"))?;
                 config.into_header_matcher(header_name)
             })
             .collect();
         let header_matchers = header_matchers?;
 
         // Parse query parameter matchers from the query map with inline syntax support
-        let query_matchers: Result<SmallVec<[QueryMatcher; 2]>, String> = self
+        let query_matchers: crate::Result<SmallVec<[QueryMatcher; 2]>> = self
             .query
             .into_iter()
             .map(|(name, value)| {
                 if let Some(regex_pattern) = value.strip_prefix('~') {
                     QueryMatcher::regex(name, regex_pattern)
-                        .map_err(|e| format!("Invalid query regex: {e}"))
+                        .map_err(|e| crate::mp_err!("Invalid query regex: {e}"))
                 } else if value == "?" {
                     Ok(QueryMatcher::present(name))
                 } else if value == "!" {
@@ -389,14 +389,14 @@ pub enum HeaderMatchConfig {
 }
 
 impl HeaderMatchConfig {
-    pub fn into_header_matcher(self, name: HeaderName) -> Result<HeaderMatcher, String> {
+    pub fn into_header_matcher(self, name: HeaderName) -> crate::Result<HeaderMatcher> {
         match self {
             HeaderMatchConfig::Exact(value) => {
                 // Check for inline matcher syntax prefixes
                 if let Some(regex_pattern) = value.strip_prefix('~') {
                     // ~pattern = regex match
                     HeaderMatcher::regex(name, regex_pattern)
-                        .map_err(|e| format!("Invalid header regex: {e}"))
+                        .map_err(|e| crate::mp_err!("Invalid header regex: {e}"))
                 } else if value == "?" {
                     // ? = header must be present
                     Ok(HeaderMatcher::present(name))
@@ -434,17 +434,17 @@ pub enum BodyMatcherConfig {
 }
 
 impl BodyMatcherConfig {
-    pub fn into_body_matcher(self) -> Result<BodyMatcher, String> {
+    pub fn into_body_matcher(self) -> crate::Result<BodyMatcher> {
         match self {
             BodyMatcherConfig::Inline(map) => {
                 // Parse inline syntax from the map
                 // We expect exactly one entry for inline syntax
                 if map.len() != 1 {
-                    return Err("Body matcher requires exactly one key-value pair".to_string());
+                    return Err(crate::mp_err!("Body matcher requires exactly one key-value pair"));
                 }
 
                 let Some((key, value)) = map.iter().next() else {
-                    return Err("Body matcher map is empty".to_string());
+                    return Err(crate::mp_err!("Body matcher map is empty"));
                 };
 
                 // Check for legacy syntax (backward compatibility)
@@ -465,7 +465,7 @@ impl BodyMatcherConfig {
                         let text_list = text_list?;
 
                         if text_list.is_empty() {
-                            return Err("contains array cannot be empty".to_string());
+                            return Err(crate::mp_err!("contains array cannot be empty"));
                         }
 
                         // For multiple contains, we need to check all of them
@@ -475,42 +475,42 @@ impl BodyMatcherConfig {
                         return Ok(BodyMatcher::contains(
                             text_list
                                 .first()
-                                .ok_or_else(|| "contains array cannot be empty".to_string())?,
+                                .ok_or_else(|| crate::mp_err!("contains array cannot be empty"))?,
                         ));
                     } else if let Some(text) = value.as_str() {
                         // Single string
                         return Ok(BodyMatcher::contains(text));
                     }
-                    return Err("contains value must be a string or array of strings".to_string());
+                    return Err(crate::mp_err!("contains value must be a string or array of strings"));
                 } else if key == "regex" {
                     // Legacy syntax: regex = "pattern"
                     if let Some(pattern) = value.as_str() {
                         return BodyMatcher::regex(pattern)
-                            .map_err(|e| format!("Invalid regex pattern: {e}"));
+                            .map_err(|e| crate::mp_err!("Invalid regex pattern: {e}"));
                     }
-                    return Err("regex value must be a string".to_string());
+                    return Err(crate::mp_err!("regex value must be a string"));
                 } else if key == "json_path" {
                     // Legacy syntax: json_path = { "$.path" = "value" }
                     if let Some(obj) = value.as_object() {
                         // Should have exactly one entry
                         if obj.len() != 1 {
                             return Err(
-                                "json_path object must have exactly one key-value pair".to_string()
+                                "json_path object must have exactly one key-value pair".to_string().into()
                             );
                         }
                         let Some((path, expected_value)) = obj.iter().next() else {
-                            return Err("json_path object is empty".to_string());
+                            return Err(crate::mp_err!("json_path object is empty"));
                         };
                         return Ok(BodyMatcher::json_path(path.clone(), expected_value.clone()));
                     }
-                    return Err("json_path value must be an object".to_string());
+                    return Err(crate::mp_err!("json_path value must be an object"));
                 }
 
                 // Auto-detect based on key prefix
                 if let Some(regex_pattern) = key.strip_prefix('~') {
                     // ~pattern = regex match
                     BodyMatcher::regex(regex_pattern)
-                        .map_err(|e| format!("Invalid regex pattern: {e}"))
+                        .map_err(|e| crate::mp_err!("Invalid regex pattern: {e}"))
                 } else if let Some(contains_text) = key.strip_prefix('@') {
                     // @text = contains match
                     Ok(BodyMatcher::contains(contains_text))
@@ -519,7 +519,7 @@ impl BodyMatcherConfig {
                     Ok(BodyMatcher::json_path(key.clone(), value.clone()))
                 } else {
                     // No prefix: error - must use explicit prefix
-                    Err(format!(
+                    Err(crate::mp_err!(
                         "Body matcher key '{key}' must start with $, ~, or @ for JSONPath, regex, or contains matching"
                     ))
                 }
@@ -579,7 +579,7 @@ headers:
             matcher
                 .body_matcher
                 .expect("body_matcher should exist")
-                .matches(b"this is a test")
+                .matches(b"this is a test", None)
         );
     }
 
@@ -608,7 +608,7 @@ headers:
             matcher
                 .body_matcher
                 .expect("body_matcher should exist")
-                .matches(b"Phone: 123-456-7890")
+                .matches(b"Phone: 123-456-7890", None)
         );
     }
 
@@ -637,7 +637,7 @@ headers:
             matcher
                 .body_matcher
                 .expect("body_matcher should exist")
-                .matches(br#"{"user":{"name":"John"}}"#)
+                .matches(br#"{"user":{"name":"John"}}"#, None)
         );
     }
 }
@@ -725,7 +725,7 @@ impl IntrospectionMatchConfig {
 }
 
 impl GraphQLMatchConfig {
-    pub fn into_graphql_matcher(self) -> Result<crate::types::GraphQLMatcher, String> {
+    pub fn into_graphql_matcher(self) -> crate::Result<crate::types::GraphQLMatcher> {
         use crate::types::{GraphQLMatcher, GraphQLOperationType};
 
         match self {
@@ -741,7 +741,7 @@ impl GraphQLMatchConfig {
                 })
             }
             GraphQLMatchConfig::Boolean(false) => {
-                Err("match.graphql = false is invalid".to_string())
+                Err(crate::mp_err!("match.graphql = false is invalid"))
             }
 
             // Simple string syntax
@@ -847,7 +847,7 @@ impl GraphQLMatchConfig {
                     && introspection_matcher.is_none()
                 {
                     return Err(
-            "GraphQL matcher requires at least operation name, type, variables, or introspection".to_string(),
+            "GraphQL matcher requires at least operation name, type, variables, or introspection".to_string().into(),
           );
                 }
 

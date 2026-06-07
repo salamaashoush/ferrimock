@@ -16,7 +16,7 @@
 //!
 //! ```rust,no_run
 //! use mockpit::graphql::{MockGenerator, GeneratorOptions, ParsedSchema};
-//! use anyhow::Result;
+//! use crate::Result;
 //!
 //! fn generate_mocks(schema: ParsedSchema) -> Result<()> {
 //!     let options = GeneratorOptions {

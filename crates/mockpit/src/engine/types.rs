@@ -14,13 +14,13 @@ pub trait ResponseGeneratorExt {
     /// Generate the response as bytes (supports templates)
     fn generate(
         &self,
-    ) -> impl std::future::Future<Output = Result<bytes::Bytes, anyhow::Error>> + Send;
+    ) -> impl std::future::Future<Output = Result<bytes::Bytes, crate::MockpitError>> + Send;
 
     /// Generate the response with request context (supports templates)
     fn generate_with_context(
         &self,
         context: &RequestContext,
-    ) -> impl std::future::Future<Output = Result<bytes::Bytes, anyhow::Error>> + Send;
+    ) -> impl std::future::Future<Output = Result<bytes::Bytes, crate::MockpitError>> + Send;
 
     /// Generate response dynamically (for templates with request context)
     /// Returns DynamicResponse which may override status and headers
@@ -34,7 +34,7 @@ pub trait ResponseGeneratorExt {
         body: Option<&[u8]>,
         captures: FxHashMap<String, String>,
         vars: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> impl std::future::Future<Output = Result<DynamicResponse, anyhow::Error>> + Send;
+    ) -> impl std::future::Future<Output = Result<DynamicResponse, crate::MockpitError>> + Send;
 
     /// Synchronous response generation for Inline, FileCached, and Template bodies.
     ///
@@ -53,7 +53,7 @@ pub trait ResponseGeneratorExt {
         body: Option<&[u8]>,
         captures: FxHashMap<String, String>,
         vars: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<DynamicResponse, anyhow::Error>;
+    ) -> Result<DynamicResponse, crate::MockpitError>;
 
     /// Check if this response can be generated synchronously (no file I/O, no delay).
     fn can_generate_sync(&self) -> bool;
@@ -90,9 +90,9 @@ fn render_to_dynamic(
     context: &RequestContext,
     mock_id: Option<&str>,
     structured_response: bool,
-) -> Result<DynamicResponse, anyhow::Error> {
+) -> Result<DynamicResponse, crate::MockpitError> {
     let rendered = crate::template::render_template_with_hash(template, hash, context, mock_id)
-        .map_err(|e| anyhow::anyhow!("Template rendering failed: {e}"))?;
+        .map_err(|e| crate::mp_err!("Template rendering failed: {e}"))?;
 
     if let Some(decoded) = try_decode_base64(&rendered) {
         return Ok(DynamicResponse::body_only(decoded));
@@ -106,14 +106,14 @@ fn render_to_dynamic(
 }
 
 impl ResponseGeneratorExt for ResponseGenerator {
-    async fn generate(&self) -> Result<bytes::Bytes, anyhow::Error> {
+    async fn generate(&self) -> Result<bytes::Bytes, crate::MockpitError> {
         self.generate_with_context(&RequestContext::new()).await
     }
 
     async fn generate_with_context(
         &self,
         context: &RequestContext,
-    ) -> Result<bytes::Bytes, anyhow::Error> {
+    ) -> Result<bytes::Bytes, crate::MockpitError> {
         if let Some(delay) = self.delay {
             tokio::time::sleep(delay).await;
         }
@@ -148,14 +148,22 @@ impl ResponseGeneratorExt for ResponseGenerator {
         body: Option<&[u8]>,
         captures: FxHashMap<String, String>,
         vars: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<DynamicResponse, anyhow::Error> {
+    ) -> Result<DynamicResponse, crate::MockpitError> {
         if let Some(delay) = self.delay {
             tokio::time::sleep(delay).await;
         }
 
         match &self.body {
             BodySource::Template { source, hash } => {
-                let mut context = RequestContext::from_request(method, uri, query, headers, body);
+                let mut context = RequestContext::from_request_selective(
+                    method,
+                    uri,
+                    query,
+                    headers,
+                    body,
+                    self.context_uses_headers,
+                    self.context_uses_body,
+                );
                 context.captures = captures;
                 context.vars = vars.cloned();
                 render_to_dynamic(source, *hash, &context, None, self.structured_response)
@@ -183,17 +191,25 @@ impl ResponseGeneratorExt for ResponseGenerator {
         body: Option<&[u8]>,
         captures: FxHashMap<String, String>,
         vars: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<DynamicResponse, anyhow::Error> {
+    ) -> Result<DynamicResponse, crate::MockpitError> {
         if self.delay.is_some() {
-            return Err(anyhow::anyhow!("NEEDS_ASYNC"));
+            return Err(crate::mp_err!("NEEDS_ASYNC"));
         }
 
         match &self.body {
             BodySource::File(_) | BodySource::Handler(_) => {
-                Err(anyhow::anyhow!("NEEDS_ASYNC"))
+                Err(crate::mp_err!("NEEDS_ASYNC"))
             }
             BodySource::Template { source, hash } => {
-                let mut context = RequestContext::from_request(method, uri, query, headers, body);
+                let mut context = RequestContext::from_request_selective(
+                    method,
+                    uri,
+                    query,
+                    headers,
+                    body,
+                    self.context_uses_headers,
+                    self.context_uses_body,
+                );
                 context.captures = captures;
                 context.vars = vars.cloned();
                 render_to_dynamic(source, *hash, &context, None, self.structured_response)

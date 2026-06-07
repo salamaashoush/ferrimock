@@ -28,11 +28,11 @@ pub struct FakePdfResult {
 }
 
 /// Generate a fake PDF document.
-pub fn generate(input: FakePdfInput) -> Result<FakePdfResult, anyhow::Error> {
+pub fn generate(input: FakePdfInput) -> Result<FakePdfResult, crate::MockpitError> {
     let base64_data = crate::fake_data::fake_pdf(input.text.as_deref(), Some(input.pages));
 
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &base64_data)
-        .map_err(|e| anyhow::anyhow!("Failed to decode PDF: {e}"))?;
+        .map_err(|e| crate::mp_err!("Failed to decode PDF: {e}"))?;
 
     Ok(FakePdfResult {
         base64: base64_data,

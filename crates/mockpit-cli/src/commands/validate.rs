@@ -88,7 +88,7 @@ pub async fn validate_mocks(
     }
 
     let input_path = path.unwrap_or_else(|| {
-        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string())
+        crate::config::mocks_dir()
     });
 
     let path = PathBuf::from(&input_path);
@@ -164,7 +164,7 @@ fn output_text(results: &[ValidationResult], input_path: &str) -> anyhow::Result
         "{}",
         ui::action(&format!("Validating mocks in {}", ui::path(input_path)))
     );
-    println!();
+    crate::say!();
 
     let mut total_errors = 0;
     let mut total_warnings = 0;
@@ -181,10 +181,10 @@ fn output_text(results: &[ValidationResult], input_path: &str) -> anyhow::Result
         std::io::stdout().flush()?;
 
         if !result.has_errors() && !result.has_warnings() {
-            println!("{}", ui::success("OK"));
+            crate::say!("{}", ui::success("OK"));
         } else if result.has_errors() {
-            println!("{}", ui::error("FAILED"));
-            println!();
+            crate::say!("{}", ui::error("FAILED"));
+            crate::say!();
             let formatted = result.format_all();
             for line in formatted.lines() {
                 println!("{line}");
@@ -192,8 +192,8 @@ fn output_text(results: &[ValidationResult], input_path: &str) -> anyhow::Result
             total_errors += result.error_count();
             total_warnings += result.warning_count();
         } else {
-            println!("{}", ui::warning("WARN"));
-            println!();
+            crate::say!("{}", ui::warning("WARN"));
+            crate::say!();
             let formatted = result.format_warnings();
             for line in formatted.lines() {
                 println!("{line}");
@@ -202,7 +202,7 @@ fn output_text(results: &[ValidationResult], input_path: &str) -> anyhow::Result
         }
     }
 
-    println!();
+    crate::say!();
     if total_errors == 0 && total_warnings == 0 {
         println!(
             "{}",
@@ -230,7 +230,7 @@ fn output_text(results: &[ValidationResult], input_path: &str) -> anyhow::Result
                 ui::number(results.len())
             ))
         );
-        println!();
+        crate::say!();
         #[allow(clippy::exit)]
         std::process::exit(1);
     }

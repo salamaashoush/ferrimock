@@ -12,14 +12,14 @@ pub async fn export_to_har(
     use mockpit::engine::export_mocks_to_har;
 
     let collections_dir = dir.unwrap_or_else(|| {
-        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string())
+        crate::config::mocks_dir()
     });
 
-    println!("{}", ui::action("Exporting mocks to HAR format"));
-    println!();
-    println!("{}", ui::kv("Source", &ui::path(&collections_dir)));
-    println!("{}", ui::kv("Output", &ui::path(&output)));
-    println!();
+    crate::say!("{}", ui::action("Exporting mocks to HAR format"));
+    crate::say!();
+    crate::say!("{}", ui::kv("Source", &ui::path(&collections_dir)));
+    crate::say!("{}", ui::kv("Output", &ui::path(&output)));
+    crate::say!();
 
     // Load all mocks
     let spinner = ui::spinner("Loading mocks...");
@@ -35,7 +35,7 @@ pub async fn export_to_har(
         "{}",
         ui::success(&format!("Loaded {} mock definition(s)", ui::number(count)))
     );
-    println!();
+    crate::say!();
 
     // Get mocks and optionally filter by collection
     let mocks = registry.get_all_mocks();
@@ -56,7 +56,7 @@ pub async fn export_to_har(
     };
 
     if filtered_mocks.is_empty() {
-        println!("{}", ui::warning("No mocks found matching the filter"));
+        crate::say!("{}", ui::warning("No mocks found matching the filter"));
         return Ok(());
     }
 
@@ -67,7 +67,7 @@ pub async fn export_to_har(
             ui::number(filtered_mocks.len())
         ))
     );
-    println!();
+    crate::say!();
 
     // Convert to HAR
     let spinner = ui::spinner("Converting to HAR format...");
@@ -78,10 +78,10 @@ pub async fn export_to_har(
     let content = serde_json::to_string_pretty(&har)?;
     tokio::fs::write(&output, content).await?;
 
-    println!("{}", ui::success("Successfully exported mocks to HAR"));
-    println!();
-    println!("{}", ui::kv("Output", &ui::path(&output)));
-    println!("{}", ui::kv("Entries", &ui::number(filtered_mocks.len())));
+    crate::say!("{}", ui::success("Successfully exported mocks to HAR"));
+    crate::say!();
+    crate::say!("{}", ui::kv("Output", &ui::path(&output)));
+    crate::say!("{}", ui::kv("Entries", &ui::number(filtered_mocks.len())));
 
     Ok(())
 }

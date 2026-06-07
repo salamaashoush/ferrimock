@@ -6,11 +6,19 @@
   "bin": {
     "mockpit": "./bin/mockpit.mjs"
   },
+  "main": "./dist/cli.mjs",
+  "types": "./dist/cli.d.mts",
   "exports": {
     ".": {
-      "import": "./src/cli.ts",
-      "default": "./src/cli.ts"
+      "development": "./src/cli.ts",
+      "types": "./dist/cli.d.mts",
+      "import": "./dist/cli.mjs",
+      "default": "./dist/cli.mjs"
     }
+  },
+  "files": ["dist", "bin", "src"],
+  "scripts": {
+    "build": "tsdown"
   },
   "dependencies": {
     "@mockpit/core": "workspace:*",

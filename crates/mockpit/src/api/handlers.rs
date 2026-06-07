@@ -71,7 +71,7 @@ pub async fn create_mock(
         Err(e) => {
             let response = json!({
                 "success": false,
-                "error": e
+                "error": e.to_string()
             });
             (StatusCode::BAD_REQUEST, Json(response)).into_response()
         }
@@ -128,7 +128,7 @@ pub async fn update_mock(
             if let Err(e) = registry.update_mock(mock) {
                 let response = json!({
                     "success": false,
-                    "error": e
+                    "error": e.to_string()
                 });
                 return (StatusCode::BAD_REQUEST, Json(response)).into_response();
             }
@@ -144,7 +144,7 @@ pub async fn update_mock(
         Err(e) => {
             let response = json!({
                 "success": false,
-                "error": e
+                "error": e.to_string()
             });
             (StatusCode::BAD_REQUEST, Json(response)).into_response()
         }
@@ -215,7 +215,7 @@ pub async fn patch_mock(
         tracing::error!(mock_id = %id, error = %e, "Failed to update mock in registry");
         let response = json!({
             "success": false,
-            "error": e
+            "error": e.to_string()
         });
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(response)).into_response();
     }

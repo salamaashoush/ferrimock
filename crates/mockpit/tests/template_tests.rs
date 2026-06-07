@@ -10,6 +10,7 @@ use mockpit::template::{TemplateError, render_template, validate_template};
 use mockpit::template::{get_global_persistence_store, set_global_persistence_store};
 use mockpit::types::RequestContext;
 use serde_json::Value;
+use serial_test::serial;
 use std::sync::Arc;
 
 // ============================================================================
@@ -149,7 +150,7 @@ fn test_template_error_from_tera_error_function() {
 
     // Should fail with error about unknown function
     assert!(result.is_err(), "Expected error for unknown function");
-    let err_msg = result.unwrap_err().to_lowercase();
+    let err_msg = result.unwrap_err().to_string().to_lowercase();
     // Verify the error message contains relevant keywords about the failure
     assert!(
         err_msg.contains("function")
@@ -647,6 +648,7 @@ fn test_fake_unix_timestamp() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_store_set_and_get_string() {
     let ctx = RequestContext::new();
 
@@ -661,6 +663,7 @@ fn test_store_set_and_get_string() {
 }
 
 #[test]
+#[serial]
 fn test_store_set_and_get_number() {
     let ctx = RequestContext::new();
 
@@ -673,6 +676,7 @@ fn test_store_set_and_get_number() {
 }
 
 #[test]
+#[serial]
 fn test_store_get_nonexistent() {
     let ctx = RequestContext::new();
     let template = r#"{{ store_get(key="nonexistent_key_xyz") }}"#;
@@ -681,6 +685,7 @@ fn test_store_get_nonexistent() {
 }
 
 #[test]
+#[serial]
 fn test_store_incr_from_zero() {
     let ctx = RequestContext::new();
 
@@ -694,6 +699,7 @@ fn test_store_incr_from_zero() {
 }
 
 #[test]
+#[serial]
 fn test_store_incr_multiple_times() {
     let ctx = RequestContext::new();
 
@@ -706,6 +712,7 @@ fn test_store_incr_multiple_times() {
 }
 
 #[test]
+#[serial]
 fn test_store_decr_from_zero() {
     let ctx = RequestContext::new();
 
@@ -718,6 +725,7 @@ fn test_store_decr_from_zero() {
 }
 
 #[test]
+#[serial]
 fn test_store_decr_after_incr() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -741,6 +749,7 @@ fn test_store_decr_after_incr() {
 }
 
 #[test]
+#[serial]
 fn test_store_has_existing() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -759,6 +768,7 @@ fn test_store_has_existing() {
 }
 
 #[test]
+#[serial]
 fn test_store_has_nonexistent() {
     let ctx = RequestContext::new();
     let template = r#"{{ store_has(key="nonexistent_has_key") }}"#;
@@ -767,6 +777,7 @@ fn test_store_has_nonexistent() {
 }
 
 #[test]
+#[serial]
 fn test_store_del_removes_key() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -792,6 +803,7 @@ fn test_store_del_removes_key() {
 }
 
 #[test]
+#[serial]
 fn test_store_keys_returns_array() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -829,6 +841,7 @@ fn test_store_keys_returns_array() {
 }
 
 #[test]
+#[serial]
 fn test_store_set_nx_when_not_exists() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -852,6 +865,7 @@ fn test_store_set_nx_when_not_exists() {
 }
 
 #[test]
+#[serial]
 fn test_store_set_nx_when_exists() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -877,6 +891,7 @@ fn test_store_set_nx_when_exists() {
 }
 
 #[test]
+#[serial]
 fn test_store_get_or_set_nonexistent() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -903,6 +918,7 @@ fn test_store_get_or_set_nonexistent() {
 }
 
 #[test]
+#[serial]
 fn test_store_get_or_set_existing() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -923,6 +939,7 @@ fn test_store_get_or_set_existing() {
 }
 
 #[test]
+#[serial]
 fn test_store_ttl_nonexistent() {
     let ctx = RequestContext::new();
     let template = r#"{{ store_ttl(key="nonexistent_ttl_key") }}"#;
@@ -931,6 +948,7 @@ fn test_store_ttl_nonexistent() {
 }
 
 #[test]
+#[serial]
 fn test_store_set_with_ttl() {
     let ctx = RequestContext::new();
 
@@ -947,6 +965,7 @@ fn test_store_set_with_ttl() {
 }
 
 #[test]
+#[serial]
 fn test_store_set_nx_with_ttl() {
     let ctx = RequestContext::new();
 
@@ -965,6 +984,7 @@ fn test_store_set_nx_with_ttl() {
 }
 
 #[test]
+#[serial]
 fn test_store_get_or_set_with_ttl() {
     use uuid::Uuid;
     let ctx = RequestContext::new();
@@ -990,6 +1010,7 @@ fn test_store_get_or_set_with_ttl() {
 }
 
 #[test]
+#[serial]
 fn test_store_clear() {
     let ctx = RequestContext::new();
 
@@ -1012,6 +1033,7 @@ fn test_store_clear() {
 }
 
 #[test]
+#[serial]
 fn test_store_dot_notation_keys() {
     let ctx = RequestContext::new();
 
@@ -1220,7 +1242,7 @@ fn test_render_template_invalid_variable() {
         assert!(output.is_empty() || !output.is_empty()); // Function completes successfully
     } else if let Err(err) = result {
         // If it fails, verify we get an error
-        assert!(!err.is_empty());
+        assert!(!err.to_string().is_empty());
     }
 }
 
@@ -1278,6 +1300,7 @@ fn test_multiple_uuid_calls_different() {
 }
 
 #[test]
+#[serial]
 fn test_store_operations_with_numeric_keys() {
     let ctx = RequestContext::new();
 

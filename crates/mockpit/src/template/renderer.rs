@@ -41,7 +41,7 @@ fn build_tera_context(context: &RequestContext) -> Context {
 }
 
 /// Render a template string with the given request context (uses thread-local engine)
-pub fn render_template(template: &str, context: &RequestContext) -> Result<String, String> {
+pub fn render_template(template: &str, context: &RequestContext) -> crate::Result<String> {
     render_template_with_id(template, context, None)
 }
 
@@ -50,7 +50,7 @@ pub fn render_template_with_id(
     template: &str,
     context: &RequestContext,
     mock_id: Option<&str>,
-) -> Result<String, String> {
+) -> crate::Result<String> {
     TEMPLATE_ENGINE.with(|engine| {
         let mut engine = engine.borrow_mut();
         let tera_context = build_tera_context(context);
@@ -58,7 +58,7 @@ pub fn render_template_with_id(
         engine
             .render(template, &tera_context)
             .map_err(|e| match mock_id {
-                Some(id) => format!("[Mock: {id}] {e}"),
+                Some(id) => crate::MockpitError::Template(format!("[Mock: {id}] {e}")),
                 None => e,
             })
     })
@@ -70,7 +70,7 @@ pub fn render_template_with_hash(
     hash: u64,
     context: &RequestContext,
     mock_id: Option<&str>,
-) -> Result<String, String> {
+) -> crate::Result<String> {
     TEMPLATE_ENGINE.with(|engine| {
         let mut engine = engine.borrow_mut();
         let tera_context = build_tera_context(context);
@@ -78,7 +78,7 @@ pub fn render_template_with_hash(
         engine
             .render_with_hash(template, hash, &tera_context)
             .map_err(|e| match mock_id {
-                Some(id) => format!("[Mock: {id}] {e}"),
+                Some(id) => crate::MockpitError::Template(format!("[Mock: {id}] {e}")),
                 None => e,
             })
     })
@@ -95,7 +95,7 @@ pub fn render_patch_template(
     template: &str,
     context: &crate::types::PatchContext,
     mock_id: Option<&str>,
-) -> Result<String, String> {
+) -> crate::Result<String> {
     TEMPLATE_ENGINE.with(|engine| {
         let mut engine = engine.borrow_mut();
         let mut tera_context = build_tera_context(&context.request);
@@ -112,7 +112,7 @@ pub fn render_patch_template(
         engine
             .render(template, &tera_context)
             .map_err(|e| match mock_id {
-                Some(id) => format!("[Mock: {id}] {e}"),
+                Some(id) => crate::MockpitError::Template(format!("[Mock: {id}] {e}")),
                 None => e,
             })
     })

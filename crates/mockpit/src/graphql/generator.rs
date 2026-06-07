@@ -7,7 +7,8 @@ use super::type_mapper::TypeToFakeMapper;
 use crate::config::{
     GraphQLMatchConfig, MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig,
 };
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::Context;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Options for mock generation

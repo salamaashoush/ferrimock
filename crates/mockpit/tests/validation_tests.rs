@@ -1718,7 +1718,7 @@ mocks:
     let result = config.into_mock_definitions().await;
     assert!(result.is_err(), "Should fail with invalid duration format");
 
-    let err = result.unwrap_err();
+    let err = result.unwrap_err().to_string();
     assert!(
         err.contains("Invalid duration"),
         "Error should mention invalid duration, got: {err}"
@@ -1746,7 +1746,7 @@ mocks:
     let result = config.into_mock_definitions().await;
     assert!(result.is_err(), "Should fail with invalid regex pattern");
 
-    let err = result.unwrap_err();
+    let err = result.unwrap_err().to_string();
     assert!(
         err.contains("Invalid regex") || err.contains("regex"),
         "Error should mention invalid regex, got: {err}"
@@ -1805,7 +1805,7 @@ mocks:
         "Should fail when body conflicts with request transforms"
     );
 
-    let err = result.unwrap_err();
+    let err = result.unwrap_err().to_string();
     assert!(
         err.contains("Cannot combine full mock body"),
         "Error should mention conflicting modes, got: {err}"

@@ -92,7 +92,7 @@ pub async fn load_mocks(
     registry: &MockRegistry,
     mocks_dir: Option<&str>,
     mock_file: Option<&str>,
-) -> Result<Vec<LoadResult>, anyhow::Error> {
+) -> Result<Vec<LoadResult>, crate::MockpitError> {
     let mut results = Vec::new();
 
     // Load from directory
@@ -100,7 +100,7 @@ pub async fn load_mocks(
         let count = registry
             .load_from_directory(dir)
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(|e| crate::mp_err!(e))?;
         results.push(LoadResult {
             count,
             source: dir.to_string(),
@@ -112,7 +112,7 @@ pub async fn load_mocks(
         let count = registry
             .load_from_directory(&default_dir)
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(|e| crate::mp_err!(e))?;
         results.push(LoadResult {
             count,
             source: default_dir,
@@ -125,7 +125,7 @@ pub async fn load_mocks(
         let count = registry
             .load_collection_file(path)
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(|e| crate::mp_err!(e))?;
         results.push(LoadResult {
             count,
             source: file.to_string(),
@@ -138,7 +138,7 @@ pub async fn load_mocks(
 /// Start a mock server with the given configuration.
 ///
 /// Returns a [`ServeHandle`] that can be used to control the server.
-pub async fn start(input: ServeInput) -> Result<ServeHandle, anyhow::Error> {
+pub async fn start(input: ServeInput) -> Result<ServeHandle, crate::MockpitError> {
     let registry = Arc::new(MockRegistry::new());
 
     // Load mocks
@@ -231,7 +231,7 @@ fn build_router(
 fn init_hot_reload(
     collections_dir: &str,
     registry: Arc<MockRegistry>,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), crate::MockpitError> {
     use crate::server::hot_reload::{HotReloadConfig, HotReloadManager};
     use std::path::PathBuf;
 
@@ -252,11 +252,11 @@ fn init_hot_reload(
 fn init_hot_reload(
     _collections_dir: &str,
     _registry: Arc<MockRegistry>,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), crate::MockpitError> {
     Ok(()) // Hot reload requires the "server" feature
 }
 
-// -- Internal server implementation (same as napi server) --
+// -- Internal server implementation --
 
 #[derive(Clone)]
 struct ServerState {
@@ -265,19 +265,94 @@ struct ServerState {
     registry: Arc<MockRegistry>,
 }
 
-#[allow(clippy::expect_used)]
-async fn mock_handler(
-    axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
-    req: axum::extract::Request,
+/// Canonical mock-response builder shared by every mock server (this service,
+/// the NAPI `MockpitServer.listen()` path, and the CLI). Matches the request,
+/// generates the dynamic response, and builds an axum response with the
+/// `X-Mock-Id` header. This is the single source of truth — do not reimplement.
+pub async fn respond(
+    matcher: &MockMatcher,
+    method: &http::Method,
+    path: &str,
+    query: Option<&str>,
+    headers: &http::HeaderMap,
+    body: Option<&[u8]>,
 ) -> axum::response::Response {
+    use crate::engine::types::ResponseGeneratorExt;
     use axum::body::Body;
     use axum::response::IntoResponse;
     use http::header;
 
+    let Some(mock_match) = matcher.find_match(method, path, query, headers, body) else {
+        let body = serde_json::json!({
+            "error": "No matching mock found",
+            "method": method.as_str(),
+            "path": path,
+            "query": query
+        });
+        return (
+            http::StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            body.to_string(),
+        )
+            .into_response();
+    };
+
+    let mock_def = &mock_match.mock;
+    let dynamic = mock_def
+        .response
+        .generate_dynamic(
+            method.as_str(),
+            path,
+            query,
+            headers,
+            body,
+            mock_match.captures,
+            mock_def.vars.as_ref(),
+        )
+        .await;
+
+    match dynamic {
+        Ok(resp) => {
+            let status = resp.status.unwrap_or(mock_def.response.status);
+            let mut response = http::Response::builder().status(status);
+            for (key, value) in &mock_def.response.headers {
+                response = response.header(key.as_str(), value.as_str());
+            }
+            if let Some(dyn_headers) = &resp.headers {
+                for (key, value) in dyn_headers {
+                    response = response.header(key.as_str(), value.as_str());
+                }
+            }
+            response
+                .header("X-Mock-Id", mock_def.id.as_str())
+                .body(Body::from(resp.body))
+                .unwrap_or_else(|_| {
+                    (http::StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
+                        .into_response()
+                })
+        }
+        Err(e) => {
+            let body = serde_json::json!({
+                "error": "Mock response generation failed",
+                "mock_id": mock_def.id.as_str(),
+                "details": e.to_string()
+            });
+            (
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "application/json")],
+                body.to_string(),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn mock_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
+    req: axum::extract::Request,
+) -> axum::response::Response {
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path = uri.path();
-    let query = uri.query();
     let headers = req.headers().clone();
 
     let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
@@ -288,78 +363,13 @@ async fn mock_handler(
         .filter(|b| !b.is_empty())
         .map(|b| b.as_ref());
 
-    let mock_match = state
-        .matcher
-        .find_match(&method, path, query, &headers, body_ref);
-
-    if let Some(mock_match) = mock_match {
-        let mock_def = &mock_match.mock;
-        let captures = mock_match.captures;
-
-        use crate::engine::types::ResponseGeneratorExt;
-
-        let dynamic = mock_def
-            .response
-            .generate_dynamic(
-                method.as_str(),
-                path,
-                query,
-                &headers,
-                body_ref,
-                captures,
-                mock_def.vars.as_ref(),
-            )
-            .await;
-
-        match dynamic {
-            Ok(resp) => {
-                let status = resp.status.unwrap_or(mock_def.response.status);
-                let mut response = http::Response::builder().status(status);
-
-                for (key, value) in &mock_def.response.headers {
-                    response = response.header(key.as_str(), value.as_str());
-                }
-
-                if let Some(dyn_headers) = &resp.headers {
-                    for (key, value) in dyn_headers {
-                        response = response.header(key.as_str(), value.as_str());
-                    }
-                }
-
-                response
-                    .header("x-mockpit-id", mock_def.id.as_str())
-                    .body(Body::from(resp.body))
-                    .unwrap_or_else(|_| {
-                        (http::StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
-                            .into_response()
-                    })
-            }
-            Err(e) => {
-                let body = serde_json::json!({
-                    "error": "Mock response generation failed",
-                    "mock_id": mock_def.id.as_str(),
-                    "details": e.to_string()
-                });
-                (
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    [(header::CONTENT_TYPE, "application/json")],
-                    body.to_string(),
-                )
-                    .into_response()
-            }
-        }
-    } else {
-        let body = serde_json::json!({
-            "error": "No matching mock found",
-            "method": method.as_str(),
-            "path": path,
-            "query": query
-        });
-        (
-            http::StatusCode::NOT_FOUND,
-            [(http::header::CONTENT_TYPE, "application/json")],
-            body.to_string(),
-        )
-            .into_response()
-    }
+    respond(
+        &state.matcher,
+        &method,
+        uri.path(),
+        uri.query(),
+        &headers,
+        body_ref,
+    )
+    .await
 }

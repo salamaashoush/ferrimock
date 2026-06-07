@@ -87,7 +87,7 @@ async fn execute_operation(registry: Arc<MockRegistry>, operation: BulkOperation
                 id: None,
                 success: false,
                 affected: None,
-                error: Some(e),
+                error: Some(e.to_string()),
             },
         },
 
@@ -109,7 +109,7 @@ async fn execute_operation(registry: Arc<MockRegistry>, operation: BulkOperation
                             id: Some(lean_id),
                             success: false,
                             affected: None,
-                            error: Some(e),
+                            error: Some(e.to_string()),
                         },
                     }
                 }
@@ -118,7 +118,7 @@ async fn execute_operation(registry: Arc<MockRegistry>, operation: BulkOperation
                     id: Some(lean_id),
                     success: false,
                     affected: None,
-                    error: Some(e),
+                    error: Some(e.to_string()),
                 },
             }
         }
@@ -167,7 +167,7 @@ async fn execute_operation(registry: Arc<MockRegistry>, operation: BulkOperation
                             id: Some(lean_id),
                             success: false,
                             affected: None,
-                            error: Some(e),
+                            error: Some(e.to_string()),
                         },
                     }
                 }

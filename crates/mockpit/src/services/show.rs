@@ -8,7 +8,7 @@ use std::sync::Arc;
 pub async fn show(
     mock_id: &str,
     mocks_dir: Option<&str>,
-) -> Result<Option<Arc<MockDefinition>>, anyhow::Error> {
+) -> Result<Option<Arc<MockDefinition>>, crate::MockpitError> {
     let default_dir = std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
     let dir = mocks_dir.unwrap_or(&default_dir);
 
@@ -16,7 +16,7 @@ pub async fn show(
     registry
         .load_from_directory(dir)
         .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| crate::mp_err!(e))?;
 
     Ok(registry.get_mock(mock_id))
 }

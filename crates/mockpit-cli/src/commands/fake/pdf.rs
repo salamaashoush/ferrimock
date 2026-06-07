@@ -20,7 +20,7 @@ pub fn generate_fake_pdf(
             .decode(&base64_data)
             .map_err(|e| anyhow::anyhow!("Failed to decode base64: {e}"))?;
         std::fs::write(path, &bytes)?;
-        println!("{}", ui::success(&format!("Saved to {}", ui::path(path))));
+        crate::say!("{}", ui::success(&format!("Saved to {}", ui::path(path))));
 
         if open_file {
             let _ = open::that(path);

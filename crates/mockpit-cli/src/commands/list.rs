@@ -6,7 +6,7 @@ use mockpit::engine::MockRegistry;
 
 pub async fn list_mocks(collection_filter: Option<String>, verbose: bool) -> anyhow::Result<()> {
     let collections_dir =
-        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+        crate::config::mocks_dir();
 
     let spinner = ui::spinner(&format!(
         "Loading mocks from {}...",
@@ -37,12 +37,12 @@ pub async fn list_mocks(collection_filter: Option<String>, verbose: bool) -> any
         "{}",
         ui::success(&format!("Loaded {} mock definition(s)", ui::number(count)))
     );
-    println!();
+    crate::say!();
 
     let mocks = registry.get_all_mocks();
 
     if mocks.is_empty() {
-        println!("{}", ui::info("No mocks loaded"));
+        crate::say!("{}", ui::info("No mocks loaded"));
         return Ok(());
     }
 
@@ -120,8 +120,8 @@ pub async fn list_mocks(collection_filter: Option<String>, verbose: bool) -> any
     }
 
     println!("{table}");
-    println!();
-    println!("{}", ui::kv("Total", &ui::number(filtered_count)));
+    crate::say!();
+    crate::say!("{}", ui::kv("Total", &ui::number(filtered_count)));
 
     Ok(())
 }
