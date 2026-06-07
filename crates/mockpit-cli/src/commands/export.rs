@@ -11,9 +11,7 @@ pub async fn export_to_har(
 ) -> anyhow::Result<()> {
     use mockpit::engine::export_mocks_to_har;
 
-    let collections_dir = dir.unwrap_or_else(|| {
-        crate::config::mocks_dir()
-    });
+    let collections_dir = dir.unwrap_or_else(crate::config::mocks_dir);
 
     crate::say!("{}", ui::action("Exporting mocks to HAR format"));
     crate::say!();

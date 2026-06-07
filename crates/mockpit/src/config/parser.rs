@@ -6,8 +6,8 @@ use super::request_transform::RequestTransformConfig;
 use super::response::{
     ResponseConfig, ResponsePatchesConfig, parse_duration, parse_patches_config,
 };
-use crate::types::MockDefinition;
 use crate::Result;
+use crate::types::MockDefinition;
 use lean_string::LeanString;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -273,7 +273,8 @@ impl MockConfig {
         if is_full_mock && self.patch.is_some() {
             return Err("Cannot combine top-level `patch` with full mock response. \
          Use either `patch` (upstream passthrough) or `response` (full mock), not both."
-                .to_string().into());
+                .to_string()
+                .into());
         }
 
         // Build the resolved response
@@ -286,8 +287,8 @@ impl MockConfig {
 
         // Apply top-level delay
         if let Some(ref delay_str) = self.delay {
-            let delay =
-                parse_duration(delay_str).map_err(|e| crate::mp_err!("Invalid top-level delay: {e}"))?;
+            let delay = parse_duration(delay_str)
+                .map_err(|e| crate::mp_err!("Invalid top-level delay: {e}"))?;
             response = response.with_delay(delay);
         }
 
@@ -377,8 +378,9 @@ fn build_request_transforms(
 
     // Body patches - Regex
     for regex_config in config.body.regex {
-        let pattern = regex::Regex::new(&regex_config.pattern)
-            .map_err(|e| crate::mp_err!("Invalid regex pattern '{}': {}", regex_config.pattern, e))?;
+        let pattern = regex::Regex::new(&regex_config.pattern).map_err(|e| {
+            crate::mp_err!("Invalid regex pattern '{}': {}", regex_config.pattern, e)
+        })?;
         patches.push(RequestPatch::RegexReplace {
             pattern,
             replacement: regex_config.replacement,

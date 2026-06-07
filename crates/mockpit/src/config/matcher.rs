@@ -440,7 +440,9 @@ impl BodyMatcherConfig {
                 // Parse inline syntax from the map
                 // We expect exactly one entry for inline syntax
                 if map.len() != 1 {
-                    return Err(crate::mp_err!("Body matcher requires exactly one key-value pair"));
+                    return Err(crate::mp_err!(
+                        "Body matcher requires exactly one key-value pair"
+                    ));
                 }
 
                 let Some((key, value)) = map.iter().next() else {
@@ -472,16 +474,16 @@ impl BodyMatcherConfig {
                         // Create a combined matcher using the first one and verify others in matching
                         // For now, just use the first one as a simple contains check
                         // (Full AND logic would require changes to BodyMatcher type)
-                        return Ok(BodyMatcher::contains(
-                            text_list
-                                .first()
-                                .ok_or_else(|| crate::mp_err!("contains array cannot be empty"))?,
-                        ));
+                        return Ok(BodyMatcher::contains(text_list.first().ok_or_else(
+                            || crate::mp_err!("contains array cannot be empty"),
+                        )?));
                     } else if let Some(text) = value.as_str() {
                         // Single string
                         return Ok(BodyMatcher::contains(text));
                     }
-                    return Err(crate::mp_err!("contains value must be a string or array of strings"));
+                    return Err(crate::mp_err!(
+                        "contains value must be a string or array of strings"
+                    ));
                 } else if key == "regex" {
                     // Legacy syntax: regex = "pattern"
                     if let Some(pattern) = value.as_str() {
@@ -494,9 +496,9 @@ impl BodyMatcherConfig {
                     if let Some(obj) = value.as_object() {
                         // Should have exactly one entry
                         if obj.len() != 1 {
-                            return Err(
-                                "json_path object must have exactly one key-value pair".to_string().into()
-                            );
+                            return Err("json_path object must have exactly one key-value pair"
+                                .to_string()
+                                .into());
                         }
                         let Some((path, expected_value)) = obj.iter().next() else {
                             return Err(crate::mp_err!("json_path object is empty"));

@@ -31,6 +31,7 @@ pub struct GeneratorInfo {
 }
 
 /// Generate fake data values.
+#[allow(clippy::needless_pass_by_value)] // owned input is the service API boundary
 pub fn generate(input: FakeDataInput) -> Result<Vec<String>, crate::MockpitError> {
     let mut values = Vec::with_capacity(input.count.max(1));
 
@@ -49,7 +50,7 @@ pub fn generate(input: FakeDataInput) -> Result<Vec<String>, crate::MockpitError
 }
 
 /// Generate a single fake data value.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
 pub fn generate_single(
     generator: &str,
     min: Option<f64>,
@@ -147,8 +148,8 @@ pub fn generate_single(
 
         // Numbers
         "number" | "integer" | "int" => {
-            let min_val = min.map(|v| v as i64).unwrap_or(0);
-            let max_val = max.map(|v| v as i64).unwrap_or(1000);
+            let min_val = min.map_or(0, |v| v as i64);
+            let max_val = max.map_or(1000, |v| v as i64);
             fake_number(min_val, max_val).to_string()
         }
         "float" | "decimal" => {
@@ -166,7 +167,10 @@ pub fn generate_single(
         "building_number" => fake_building_number(),
 
         // Finance / web (extended)
-        "price" => format!("{:.2}", fake_price(min.unwrap_or(1.0), max.unwrap_or(999.99))),
+        "price" => format!(
+            "{:.2}",
+            fake_price(min.unwrap_or(1.0), max.unwrap_or(999.99))
+        ),
         "file_size" => {
             let min_val = min.map_or(1024, |v| v as i64);
             let max_val = max.map_or(1_048_576, |v| v as i64);
@@ -224,8 +228,7 @@ fn normalize_generator(generator: &str) -> &str {
         "buildingnumber" => "building_number",
         "alphanum" => "alphanumeric",
         "guid" => "uuid",
-        "id" => "numeric_id",
-        "numericid" => "numeric_id",
+        "id" | "numericid" => "numeric_id",
         "shorthash" | "hash" => "short_hash",
         "filesize" => "file_size",
         "mimetype" | "mime" => "mime_type",
@@ -270,23 +273,43 @@ fn all_generators() -> Vec<GeneratorInfo> {
         generator_info("domain", "Internet", "Domain name", "example.com"),
         generator_info("ipv4", "Internet", "IPv4 address", "192.168.1.1"),
         generator_info("ipv6", "Internet", "IPv6 address", "2001:db8::1"),
-        generator_info("uuid", "Identifiers", "UUID v4", "550e8400-e29b-41d4-a716-446655440000"),
+        generator_info(
+            "uuid",
+            "Identifiers",
+            "UUID v4",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ),
         generator_info("token", "Identifiers", "Auth token", "a1b2c3d4e5f6"),
         generator_info("date", "DateTime", "Date (RFC3339)", "2024-01-15T10:30:00Z"),
         generator_info("time", "DateTime", "Time", "14:30:00"),
         generator_info("iso_date", "DateTime", "ISO date", "2024-01-15"),
         generator_info("word", "Text", "Single word", "lorem"),
-        generator_info("sentence", "Text", "Sentence", "Lorem ipsum dolor sit amet."),
+        generator_info(
+            "sentence",
+            "Text",
+            "Sentence",
+            "Lorem ipsum dolor sit amet.",
+        ),
         generator_info("slug", "Text", "URL slug", "lorem-ipsum-dolor"),
         generator_info("city", "Location", "City name", "New York"),
         generator_info("country", "Location", "Country name", "United States"),
         generator_info("boolean", "Web", "Boolean", "true"),
         generator_info("number", "Web", "Integer (min/max)", "42"),
         generator_info("float", "Web", "Float (min/max)", "3.14"),
-        generator_info("credit_card", "Finance", "Credit card number", "4111111111111111"),
+        generator_info(
+            "credit_card",
+            "Finance",
+            "Credit card number",
+            "4111111111111111",
+        ),
         generator_info("currency_code", "Finance", "Currency code", "USD"),
         generator_info("hex_color", "Internet", "Hex color", "#FF5733"),
-        generator_info("user_agent", "Internet", "User agent string", "Mozilla/5.0 ..."),
+        generator_info(
+            "user_agent",
+            "Internet",
+            "User agent string",
+            "Mozilla/5.0 ...",
+        ),
     ]
 }
 

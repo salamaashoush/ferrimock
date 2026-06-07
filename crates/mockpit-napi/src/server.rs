@@ -171,10 +171,7 @@ impl MockpitServer {
     #[napi]
     pub async fn load_mock_file(&self, file_path: String) -> Result<u32> {
         let path = std::path::Path::new(&file_path);
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let count = if ext == "har" {
             use mockpit::config::HarLoader;
@@ -276,7 +273,10 @@ impl MockpitServer {
     #[napi]
     pub async fn listen(&self, port: Option<u32>) -> Result<String> {
         {
-            let guard = self.shutdown_tx.lock().map_err(|e| Error::from_reason(e.to_string()))?;
+            let guard = self
+                .shutdown_tx
+                .lock()
+                .map_err(|e| Error::from_reason(e.to_string()))?;
             if guard.is_some() {
                 return Err(Error::from_reason("Server is already running"));
             }
@@ -296,13 +296,12 @@ impl MockpitServer {
             .map_err(|e| Error::from_reason(format!("Failed to get address: {e}")))?
             .port();
 
-        self.port.store(actual_port, std::sync::atomic::Ordering::Relaxed);
+        self.port
+            .store(actual_port, std::sync::atomic::Ordering::Relaxed);
 
         let state = Arc::new(ServerState { matcher });
 
-        let app = axum::Router::new()
-            .fallback(mock_handler)
-            .with_state(state);
+        let app = axum::Router::new().fallback(mock_handler).with_state(state);
 
         tokio::spawn(async move {
             axum::serve(listener, app)
@@ -313,14 +312,19 @@ impl MockpitServer {
                 .ok();
         });
 
-        *self.shutdown_tx.lock().map_err(|e| Error::from_reason(e.to_string()))? = Some(shutdown_tx);
+        *self
+            .shutdown_tx
+            .lock()
+            .map_err(|e| Error::from_reason(e.to_string()))? = Some(shutdown_tx);
         Ok(format!("http://127.0.0.1:{actual_port}"))
     }
 
     /// Stop the mock server.
     #[napi]
     pub async fn close(&self) -> Result<()> {
-        let tx = self.shutdown_tx.lock()
+        let tx = self
+            .shutdown_tx
+            .lock()
             .map_err(|e| Error::from_reason(e.to_string()))?
             .take();
         if let Some(tx) = tx {
@@ -440,10 +444,17 @@ impl MockpitServer {
                             mock_def.vars.as_ref(),
                         )
                         .await
-                        .map_err(|e| Error::from_reason(format!("Response generation failed: {e}")))?;
+                        .map_err(|e| {
+                            Error::from_reason(format!("Response generation failed: {e}"))
+                        })?;
 
                     Ok(MatchPhaseResult::DeclarativeResponse(
-                        build_matched_response(&mock_def.id, mock_def.response.status, &mock_def.response.headers, dynamic),
+                        build_matched_response(
+                            &mock_def.id,
+                            mock_def.response.status,
+                            &mock_def.response.headers,
+                            dynamic,
+                        ),
                     ))
                 }
             },
@@ -451,14 +462,17 @@ impl MockpitServer {
             move |env, result| -> Result<MaybePromise> {
                 match result {
                     MatchPhaseResult::NoMatch => Ok(MaybePromise::resolved(env, None)?),
-                    MatchPhaseResult::DeclarativeResponse(resp) => Ok(MaybePromise::resolved(env, Some(resp))?),
+                    MatchPhaseResult::DeclarativeResponse(resp) => {
+                        Ok(MaybePromise::resolved(env, Some(resp))?)
+                    }
                     MatchPhaseResult::HandlerMatch {
                         mock_id,
                         status: default_status,
                         def_headers,
                         context,
                     } => {
-                        let refs = handler_refs.read()
+                        let refs = handler_refs
+                            .read()
                             .map_err(|e| Error::from_reason(e.to_string()))?;
                         let fn_ref = refs.get(&mock_id).ok_or_else(|| {
                             Error::from_reason(format!("No FunctionRef for handler: {mock_id}"))
@@ -484,22 +498,28 @@ impl MockpitServer {
                             // Async handler — chain .then() to convert the resolved value.
                             // napi_resolve_deferred with a Promise auto-flattens per JS spec.
                             #[allow(unsafe_code)]
-                            let promise_raw: PromiseRaw<'_, Option<JsHandlerResponse>> = unsafe {
+                            let promise_raw: PromiseRaw<
+                                '_,
+                                Option<JsHandlerResponse>,
+                            > = unsafe {
                                 FromNapiValue::from_napi_value(env.raw(), raw_result.raw())?
                             };
-                            let chained = promise_raw.then(move |ctx| {
-                                match ctx.value {
-                                    Some(js_resp) => {
-                                        let dynamic = DynamicResponse::from(js_resp);
-                                        Ok(Some(build_matched_response(&mock_id, default_status, &def_headers, dynamic)))
-                                    }
-                                    None => Ok(Some(MatchedResponse {
-                                        status: 200,
-                                        headers: HashMap::new(),
-                                        body: Uint8Array::from(Vec::new()),
-                                        mock_id: mock_id.to_string(),
-                                    })),
+                            let chained = promise_raw.then(move |ctx| match ctx.value {
+                                Some(js_resp) => {
+                                    let dynamic = DynamicResponse::from(js_resp);
+                                    Ok(Some(build_matched_response(
+                                        &mock_id,
+                                        default_status,
+                                        &def_headers,
+                                        dynamic,
+                                    )))
                                 }
+                                None => Ok(Some(MatchedResponse {
+                                    status: 200,
+                                    headers: HashMap::new(),
+                                    body: Uint8Array::from(Vec::new()),
+                                    mock_id: mock_id.to_string(),
+                                })),
                             })?;
                             Ok(MaybePromise(chained.value().value))
                         } else {
@@ -511,14 +531,25 @@ impl MockpitServer {
                             match resp {
                                 Some(js_resp) => {
                                     let dynamic = DynamicResponse::from(js_resp);
-                                    Ok(MaybePromise::resolved(env, Some(build_matched_response(&mock_id, default_status, &def_headers, dynamic)))?)
+                                    Ok(MaybePromise::resolved(
+                                        env,
+                                        Some(build_matched_response(
+                                            &mock_id,
+                                            default_status,
+                                            &def_headers,
+                                            dynamic,
+                                        )),
+                                    )?)
                                 }
-                                None => Ok(MaybePromise::resolved(env, Some(MatchedResponse {
-                                    status: 200,
-                                    headers: HashMap::new(),
-                                    body: Uint8Array::from(Vec::new()),
-                                    mock_id: mock_id.to_string(),
-                                }))?),
+                                None => Ok(MaybePromise::resolved(
+                                    env,
+                                    Some(MatchedResponse {
+                                        status: 200,
+                                        headers: HashMap::new(),
+                                        body: Uint8Array::from(Vec::new()),
+                                        mock_id: mock_id.to_string(),
+                                    }),
+                                )?),
                             }
                         }
                     }

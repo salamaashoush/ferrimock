@@ -84,8 +84,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         );
     } else if mock_file.is_none() {
         // Default directory if neither --mocks nor --mock-file given
-        let default_dir =
-            crate::config::mocks_dir();
+        let default_dir = crate::config::mocks_dir();
         let spinner = ui::spinner(&format!("Loading mocks from {}...", ui::path(&default_dir)));
         let count = registry
             .load_from_directory(&default_dir)
@@ -133,9 +132,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         ))
     );
 
-    let collections_dir = mocks_dir.unwrap_or_else(|| {
-        crate::config::mocks_dir()
-    });
+    let collections_dir = mocks_dir.unwrap_or_else(crate::config::mocks_dir);
 
     // Set up hot reload if enabled
     if watch {
@@ -385,16 +382,21 @@ async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -
 
     if state.verbose || state.log_matches {
         let elapsed = request_start.elapsed().as_secs_f64() * 1000.0;
-        match response.headers().get("X-Mock-Id").and_then(|v| v.to_str().ok()) {
-            Some(mock_id) => info!(
+        if let Some(mock_id) = response
+            .headers()
+            .get("X-Mock-Id")
+            .and_then(|v| v.to_str().ok())
+        {
+            info!(
                 mock_id = %mock_id, method = %method, path = %path,
                 status = %response.status().as_u16(), elapsed_ms = elapsed,
                 "Mock matched"
-            ),
-            None => warn!(
+            );
+        } else {
+            warn!(
                 method = %method, path = %path, query = ?query, elapsed_ms = elapsed,
                 "No matching mock found"
-            ),
+            );
         }
     }
 

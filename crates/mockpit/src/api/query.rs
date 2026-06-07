@@ -161,6 +161,7 @@ mod tests {
             id: id.into(),
             priority,
             enabled,
+            once: false,
             scope: scope.map(Into::into),
             source_file: None,
             request_transforms: None,

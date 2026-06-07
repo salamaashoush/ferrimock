@@ -1,4 +1,7 @@
 #![deny(clippy::all)]
+// `#[napi]` exports are invoked from JS, not Rust — rustc/clippy see them as
+// unused. Suppress crate-wide rather than annotating every binding.
+#![allow(dead_code)]
 
 //! Node.js NAPI bindings for the Mockpit HTTP mocking engine.
 //!
@@ -8,10 +11,10 @@
 
 mod config;
 mod fake_ns;
-mod handler_bridge;
-mod request_context;
-mod http_ns;
 mod graphql_ns;
+mod handler_bridge;
+mod http_ns;
+mod request_context;
 mod response_ns;
 mod server;
 mod services;

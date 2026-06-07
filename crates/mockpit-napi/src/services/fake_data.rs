@@ -33,20 +33,14 @@ pub fn fake_data(input: JsFakeDataInput) -> Result<Vec<String>> {
 }
 
 #[napi(namespace = "services")]
-pub fn list_generators(
-    category: Option<String>,
-    search: Option<String>,
-) -> Vec<JsGeneratorInfo> {
-    mockpit::services::fake_data::list_generators(
-        category.as_deref(),
-        search.as_deref(),
-    )
-    .into_iter()
-    .map(|g| JsGeneratorInfo {
-        name: g.name,
-        category: g.category,
-        description: g.description,
-        example: g.example,
-    })
-    .collect()
+pub fn list_generators(category: Option<String>, search: Option<String>) -> Vec<JsGeneratorInfo> {
+    mockpit::services::fake_data::list_generators(category.as_deref(), search.as_deref())
+        .into_iter()
+        .map(|g| JsGeneratorInfo {
+            name: g.name,
+            category: g.category,
+            description: g.description,
+            example: g.example,
+        })
+        .collect()
 }

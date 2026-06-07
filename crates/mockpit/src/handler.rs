@@ -1,7 +1,7 @@
 //! Ergonomic builder API for creating handler-based mock definitions.
 //!
 //! Provides an MSW-style API where handler functions are just another way to define mocks.
-//! Handlers produce [`MockDefinition`]s that go into the same [`MockRegistry`] as declarative mocks.
+//! Handlers produce `MockDefinition`s that go into the same `MockRegistry` as declarative mocks.
 //!
 //! # Examples
 //!
@@ -66,7 +66,7 @@ impl IntoHandlerFn for HandlerFn {
     }
 }
 
-/// Create a [`MockDefinition`] from method, path pattern, and handler function.
+/// Create a `MockDefinition` from method, path pattern, and handler function.
 fn build_handler_mock(
     method: Option<Method>,
     path: &str,
@@ -78,8 +78,7 @@ fn build_handler_mock(
         SmallVec::new() // empty url_patterns = match all
     } else if path.contains(':') || path.contains('*') {
         // Path pattern with :params or wildcards
-        let pattern = UrlPattern::path_pattern(path)
-            .unwrap_or_else(|_| UrlPattern::exact(path));
+        let pattern = UrlPattern::path_pattern(path).unwrap_or_else(|_| UrlPattern::exact(path));
         SmallVec::from_elem(pattern, 1)
     } else {
         // Exact path
@@ -99,9 +98,12 @@ fn build_handler_mock(
             url_patterns: url_pattern,
             ..RequestMatcher::default()
         },
-        response: ResponseGenerator::new(StatusCode::OK, BodySource::handler(handler.into_handler_fn())),
+        response: ResponseGenerator::new(
+            StatusCode::OK,
+            BodySource::handler(handler.into_handler_fn()),
+        ),
         enabled: true,
-            once: false,
+        once: false,
         scope: None,
         source_file: None,
         request_transforms: None,
@@ -111,8 +113,8 @@ fn build_handler_mock(
 
 /// HTTP method handler factories.
 ///
-/// Each function creates a [`MockDefinition`] with the specified method, path pattern,
-/// and handler function. The mock goes into the standard [`MockRegistry`].
+/// Each function creates a `MockDefinition` with the specified method, path pattern,
+/// and handler function. The mock goes into the standard `MockRegistry`.
 ///
 /// # Path patterns
 ///
@@ -177,7 +179,7 @@ pub mod http {
 
 /// GraphQL handler factories.
 ///
-/// Creates [`MockDefinition`]s with GraphQL operation matchers.
+/// Creates `MockDefinition`s with GraphQL operation matchers.
 ///
 /// # Examples
 ///
@@ -292,8 +294,7 @@ impl MockResponse {
         DynamicResponse {
             status: Some(StatusCode::OK),
             headers: Some(
-                std::iter::once(("content-type".to_string(), "text/plain".to_string()))
-                    .collect(),
+                std::iter::once(("content-type".to_string(), "text/plain".to_string())).collect(),
             ),
             body: bytes::Bytes::from(body.into()),
         }
@@ -306,8 +307,7 @@ impl MockResponse {
         DynamicResponse {
             status: Some(StatusCode::OK),
             headers: Some(
-                std::iter::once(("content-type".to_string(), "text/html".to_string()))
-                    .collect(),
+                std::iter::once(("content-type".to_string(), "text/html".to_string())).collect(),
             ),
             body: bytes::Bytes::from(body.into()),
         }
@@ -380,15 +380,15 @@ mod tests {
     fn test_path_pattern_captures() {
         let pattern = UrlPattern::path_pattern("/users/:id").unwrap();
         let captures = pattern.extract_captures("/users/456").unwrap();
-        assert_eq!(captures.get("id").unwrap(), "456");
+        assert_eq!(&captures["id"], "456");
     }
 
     #[test]
     fn test_path_pattern_multiple_captures() {
         let pattern = UrlPattern::path_pattern("/users/:userId/posts/:postId").unwrap();
         let captures = pattern.extract_captures("/users/7/posts/99").unwrap();
-        assert_eq!(captures.get("userId").unwrap(), "7");
-        assert_eq!(captures.get("postId").unwrap(), "99");
+        assert_eq!(&captures["userId"], "7");
+        assert_eq!(&captures["postId"], "99");
     }
 
     #[test]
@@ -402,9 +402,10 @@ mod tests {
 
     #[test]
     fn test_http_get_creates_mock_definition() {
-        let mock = http::get("/users/:id", |_ctx| async move {
-            Ok(MockResponse::text("ok"))
-        });
+        let mock = http::get(
+            "/users/:id",
+            |_ctx| async move { Ok(MockResponse::text("ok")) },
+        );
 
         assert!(mock.enabled);
         assert_eq!(mock.priority, 100);
@@ -415,9 +416,7 @@ mod tests {
 
     #[test]
     fn test_http_all_matches_any_method() {
-        let mock = http::all("/test", |_ctx| async move {
-            Ok(MockResponse::text("ok"))
-        });
+        let mock = http::all("/test", |_ctx| async move { Ok(MockResponse::text("ok")) });
 
         // Empty methods = match all
         assert!(mock.request.methods.is_empty());
@@ -507,15 +506,19 @@ mod tests {
 
         assert!(result.is_some());
         let mock_match = result.unwrap();
-        assert!(matches!(mock_match.mock.response.body, BodySource::Handler(_)));
+        assert!(matches!(
+            mock_match.mock.response.body,
+            BodySource::Handler(_)
+        ));
     }
 
     #[tokio::test]
     async fn test_handler_with_params_matching() {
         let registry = MockRegistry::new();
-        let mock = http::get("/users/:id", |_ctx| async move {
-            Ok(MockResponse::text("ok"))
-        });
+        let mock = http::get(
+            "/users/:id",
+            |_ctx| async move { Ok(MockResponse::text("ok")) },
+        );
 
         registry.add_mock(mock);
 
@@ -531,7 +534,7 @@ mod tests {
         );
         assert!(result.is_some());
         let mock_match = result.unwrap();
-        assert_eq!(mock_match.captures.get("id").unwrap(), "123");
+        assert_eq!(&mock_match.captures["id"], "123");
 
         // Should not match wrong method
         let result = matcher.find_match(
@@ -565,10 +568,10 @@ mod tests {
                 .get("name")
                 .cloned()
                 .unwrap_or_else(|| "world".to_string());
-            Ok(MockResponse::json(
-                &serde_json::json!({"greeting": format!("Hello, {name}!")}),
+            Ok(
+                MockResponse::json(&serde_json::json!({"greeting": format!("Hello, {name}!")}))
+                    .unwrap(),
             )
-            .unwrap())
         });
 
         registry.add_mock(mock);
@@ -622,7 +625,10 @@ mod tests {
                 url_patterns: SmallVec::from_elem(UrlPattern::exact("/api/static"), 1),
                 ..RequestMatcher::default()
             },
-            response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"static":true}"#)),
+            response: ResponseGenerator::new(
+                StatusCode::OK,
+                BodySource::inline(r#"{"static":true}"#),
+            ),
             vars: None,
         };
         registry.add_mock(declarative);
@@ -636,17 +642,41 @@ mod tests {
         let matcher = MockMatcher::new(registry);
 
         // Both should match their respective paths
-        assert!(matcher
-            .find_match(&Method::GET, "/api/static", None, &::http::HeaderMap::new(), None)
-            .is_some());
-        assert!(matcher
-            .find_match(&Method::GET, "/api/dynamic", None, &::http::HeaderMap::new(), None)
-            .is_some());
+        assert!(
+            matcher
+                .find_match(
+                    &Method::GET,
+                    "/api/static",
+                    None,
+                    &::http::HeaderMap::new(),
+                    None
+                )
+                .is_some()
+        );
+        assert!(
+            matcher
+                .find_match(
+                    &Method::GET,
+                    "/api/dynamic",
+                    None,
+                    &::http::HeaderMap::new(),
+                    None
+                )
+                .is_some()
+        );
 
         // Neither should match wrong paths
-        assert!(matcher
-            .find_match(&Method::GET, "/api/other", None, &::http::HeaderMap::new(), None)
-            .is_none());
+        assert!(
+            matcher
+                .find_match(
+                    &Method::GET,
+                    "/api/other",
+                    None,
+                    &::http::HeaderMap::new(),
+                    None
+                )
+                .is_none()
+        );
     }
 
     // ---- GraphQL handler tests ----

@@ -48,14 +48,16 @@ pub struct ConvertResult {
 
 /// Convert a HAR file to mock definitions.
 pub async fn convert(input: ConvertInput) -> Result<ConvertResult, crate::MockpitError> {
-    let mut options = HarLoadOptions::default();
-    options.exclude_preflight = input.exclude_preflight;
-    options.exclude_redirects = input.exclude_redirects;
-    options.strip_browser_headers = input.strip_browser_headers;
-    options.normalize_urls = input.normalize_urls;
-    options.exclude_static_assets = input.exclude_static_assets;
-    options.strip_sensitive_headers = input.strip_sensitive_headers;
-    options.strip_infrastructure_headers = input.strip_infrastructure_headers;
+    let mut options = HarLoadOptions {
+        exclude_preflight: input.exclude_preflight,
+        exclude_redirects: input.exclude_redirects,
+        strip_browser_headers: input.strip_browser_headers,
+        normalize_urls: input.normalize_urls,
+        exclude_static_assets: input.exclude_static_assets,
+        strip_sensitive_headers: input.strip_sensitive_headers,
+        strip_infrastructure_headers: input.strip_infrastructure_headers,
+        ..Default::default()
+    };
 
     if !input.allowed_domains.is_empty() {
         let domains = input.allowed_domains.clone();
@@ -71,9 +73,7 @@ pub async fn convert(input: ConvertInput) -> Result<ConvertResult, crate::Mockpi
     }
 
     let loader = HarLoader::with_options(options);
-    let mocks = loader
-        .load_from_file(&input.input)
-        .await?;
+    let mocks = loader.load_from_file(&input.input).await?;
 
     let entries_processed = mocks.len();
 
@@ -90,8 +90,8 @@ pub async fn convert(input: ConvertInput) -> Result<ConvertResult, crate::Mockpi
     };
 
     Ok(ConvertResult {
-        entries_processed,
         mocks,
+        entries_processed,
         content,
     })
 }

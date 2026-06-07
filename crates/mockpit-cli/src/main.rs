@@ -1,10 +1,10 @@
 mod self_update;
 
 use anyhow::Result;
-use mockpit_cli::config;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint, builder::styling};
 use colored::Colorize;
 use mockpit_cli::commands::{FakeCommand, MockCommand};
+use mockpit_cli::config;
 use std::process::ExitCode;
 
 /// Color output mode

@@ -27,8 +27,8 @@ pub struct JsFakeImageResult {
 #[napi(namespace = "services")]
 pub fn fake_image(input: JsFakeImageInput) -> Result<JsFakeImageResult> {
     let defaults = mockpit::services::fake_image::FakeImageInput::default();
-    let result = mockpit::services::fake_image::generate(
-        mockpit::services::fake_image::FakeImageInput {
+    let result =
+        mockpit::services::fake_image::generate(mockpit::services::fake_image::FakeImageInput {
             image_type: input.image_type.unwrap_or(defaults.image_type),
             width: input.width.unwrap_or(defaults.width),
             height: input.height.unwrap_or(defaults.height),
@@ -42,9 +42,8 @@ pub fn fake_image(input: JsFakeImageInput) -> Result<JsFakeImageResult> {
             image_format: input.image_format.unwrap_or(defaults.image_format),
             quality: input.quality.unwrap_or(u32::from(defaults.quality)) as u8,
             colored: input.colored.unwrap_or(defaults.colored),
-        },
-    )
-    .map_err(|e| Error::from_reason(e.to_string()))?;
+        })
+        .map_err(|e| Error::from_reason(e.to_string()))?;
 
     Ok(JsFakeImageResult {
         base64: result.base64,

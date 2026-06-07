@@ -5,8 +5,7 @@ use anyhow::Context;
 use mockpit::engine::MockRegistry;
 
 pub async fn list_mocks(collection_filter: Option<String>, verbose: bool) -> anyhow::Result<()> {
-    let collections_dir =
-        crate::config::mocks_dir();
+    let collections_dir = crate::config::mocks_dir();
 
     let spinner = ui::spinner(&format!(
         "Loading mocks from {}...",

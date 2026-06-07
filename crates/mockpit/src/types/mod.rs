@@ -23,7 +23,8 @@ use std::time::Duration;
 pub type HandlerFn = Arc<
     dyn Fn(
             RequestContext,
-        ) -> Pin<Box<dyn Future<Output = Result<DynamicResponse, crate::MockpitError>> + Send>>
+        )
+            -> Pin<Box<dyn Future<Output = Result<DynamicResponse, crate::MockpitError>> + Send>>
         + Send
         + Sync,
 >;
@@ -608,11 +609,9 @@ impl BodyMatcher {
                     false
                 }
             }
-            BodyMatcher::JsonPath { path, value } => {
-                Self::with_json(body, parsed_json, |json| {
-                    Self::json_path_match(json, path, value)
-                })
-            }
+            BodyMatcher::JsonPath { path, value } => Self::with_json(body, parsed_json, |json| {
+                Self::json_path_match(json, path, value)
+            }),
             BodyMatcher::JsonEquals(expected) => {
                 Self::with_json(body, parsed_json, |json| json == expected)
             }
@@ -629,8 +628,7 @@ impl BodyMatcher {
     ) -> bool {
         match parsed_json {
             Some(json) => f(json),
-            None => serde_json::from_slice::<serde_json::Value>(body)
-                .map_or(false, |json| f(&json)),
+            None => serde_json::from_slice::<serde_json::Value>(body).is_ok_and(|json| f(&json)),
         }
     }
 

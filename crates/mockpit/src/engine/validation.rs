@@ -97,7 +97,8 @@ impl MockValidator {
             }
             Err(e) => {
                 // Parse error - extract line number if possible
-                let (line_number, snippet) = Self::extract_parse_error_info(&e.to_string(), &content);
+                let (line_number, snippet) =
+                    Self::extract_parse_error_info(&e.to_string(), &content);
 
                 ValidationResult {
                     file_path,
@@ -156,7 +157,8 @@ impl MockValidator {
                     .await
             }
             Err(e) => {
-                let (line_number, snippet) = Self::extract_parse_error_info(&e.to_string(), content);
+                let (line_number, snippet) =
+                    Self::extract_parse_error_info(&e.to_string(), content);
                 ValidationResult {
                     file_path: None,
                     errors: vec![ValidationError {

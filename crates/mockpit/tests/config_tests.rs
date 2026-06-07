@@ -152,7 +152,7 @@ async fn test_from_file_unsupported_extension() {
     assert!(result.is_err());
     assert!(
         result
-            .unwrap_err().to_string()
+            .unwrap_err()
             .to_string()
             .contains("Unsupported file format")
     );
@@ -360,7 +360,8 @@ async fn test_mock_config_missing_match() {
     assert!(result.is_err());
     assert!(
         result
-            .unwrap_err().to_string()
+            .unwrap_err()
+            .to_string()
             .contains("Missing 'match' configuration")
     );
 }
@@ -478,7 +479,7 @@ mocks:
     assert!(result.is_err());
     assert!(
         result
-            .unwrap_err().to_string()
+            .unwrap_err()
             .to_string()
             .contains("Invalid HTTP method")
     );
@@ -779,7 +780,7 @@ mocks:
     assert!(result.is_err());
     assert!(
         result
-            .unwrap_err().to_string()
+            .unwrap_err()
             .to_string()
             .contains("Cannot mix status shortcuts")
     );
@@ -1643,7 +1644,12 @@ fn test_request_config_invalid_header_name() {
 
     let result = config.into_request_matcher();
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid header name"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid header name")
+    );
 }
 
 #[test]
@@ -1683,7 +1689,12 @@ mocks:
     let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid status code"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid status code")
+    );
 }
 
 #[tokio::test]
@@ -1700,7 +1711,12 @@ mocks:
     let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid status code"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid status code")
+    );
 }
 
 // ============================================================================
@@ -1740,7 +1756,12 @@ mocks:
     let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Failed to read template file"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to read template file")
+    );
 }
 
 #[tokio::test]

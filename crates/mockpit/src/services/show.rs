@@ -9,7 +9,8 @@ pub async fn show(
     mock_id: &str,
     mocks_dir: Option<&str>,
 ) -> Result<Option<Arc<MockDefinition>>, crate::MockpitError> {
-    let default_dir = std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+    let default_dir =
+        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
     let dir = mocks_dir.unwrap_or(&default_dir);
 
     let registry = MockRegistry::new();
@@ -22,9 +23,6 @@ pub async fn show(
 }
 
 /// Show a mock from an existing registry.
-pub fn show_from_registry(
-    registry: &MockRegistry,
-    mock_id: &str,
-) -> Option<Arc<MockDefinition>> {
+pub fn show_from_registry(registry: &MockRegistry, mock_id: &str) -> Option<Arc<MockDefinition>> {
     registry.get_mock(mock_id)
 }

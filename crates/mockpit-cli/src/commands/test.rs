@@ -184,8 +184,7 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
         spinner.finish_and_clear();
         count
     } else {
-        let collections_dir =
-            crate::config::mocks_dir();
+        let collections_dir = crate::config::mocks_dir();
         let spinner = ui::spinner(&format!(
             "Loading mocks from {}...",
             ui::path(&collections_dir)
@@ -424,8 +423,7 @@ async fn test_mock_match_json(
             .await
             .map_err(|e| anyhow::anyhow!("Failed to load mocks from file: {e}"))?;
     } else {
-        let collections_dir =
-            crate::config::mocks_dir();
+        let collections_dir = crate::config::mocks_dir();
         registry
             .load_from_directory(&collections_dir)
             .await

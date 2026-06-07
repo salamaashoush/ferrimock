@@ -14,6 +14,7 @@ pub struct TemplateInput {
 }
 
 /// Render a template with optional context.
+#[allow(clippy::needless_pass_by_value)] // owned input is the service API boundary
 pub fn render(input: TemplateInput) -> Result<Vec<String>, crate::MockpitError> {
     let ctx = build_context(input.context.as_ref());
 

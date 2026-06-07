@@ -22,11 +22,11 @@ pub use pattern::{PathNormalizer, register_path_normalizer};
 )]
 mod tests;
 
+use crate::Result;
 use crate::codegen::TemplateGenerator;
 use crate::config::{MockCollectionConfig, MockConfig, ReturnConfig};
-use analysis::{ResponseAnalysis, ResponseAnalyzer};
-use crate::Result;
 use crate::error::Context;
+use analysis::{ResponseAnalysis, ResponseAnalyzer};
 use pattern::PatternDetector;
 use rustc_hash::FxHashMap;
 use std::path::Path;

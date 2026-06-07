@@ -297,7 +297,10 @@ pub async fn start_recording(
         Err(e) => {
             let mut response = serde_json::Map::new();
             response.insert("success".to_string(), serde_json::Value::Bool(false));
-            response.insert("error".to_string(), serde_json::Value::String(e.to_string()));
+            response.insert(
+                "error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            );
             (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::Value::Object(response)),

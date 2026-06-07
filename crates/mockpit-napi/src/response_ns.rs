@@ -33,10 +33,7 @@ pub fn json(data: serde_json::Value, init: Option<JsResponseInit>) -> JsHandlerR
 
     JsHandlerResponse {
         status: init.as_ref().and_then(|i| i.status),
-        headers: Some(merge_headers(
-            default_headers,
-            init.and_then(|i| i.headers),
-        )),
+        headers: Some(merge_headers(default_headers, init.and_then(|i| i.headers))),
         body: Some(body),
         body_json: Some(data),
         body_bytes: None,
@@ -51,15 +48,11 @@ pub fn json(data: serde_json::Value, init: Option<JsResponseInit>) -> JsHandlerR
 /// @param init - Optional status code and headers.
 #[napi(namespace = "MockResponse")]
 pub fn text(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
-    let default_headers =
-        HashMap::from([("content-type".to_string(), "text/plain".to_string())]);
+    let default_headers = HashMap::from([("content-type".to_string(), "text/plain".to_string())]);
 
     JsHandlerResponse {
         status: init.as_ref().and_then(|i| i.status),
-        headers: Some(merge_headers(
-            default_headers,
-            init.and_then(|i| i.headers),
-        )),
+        headers: Some(merge_headers(default_headers, init.and_then(|i| i.headers))),
         body: Some(body),
         body_json: None,
         body_bytes: None,
@@ -74,15 +67,11 @@ pub fn text(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
 /// @param init - Optional status code and headers.
 #[napi(namespace = "MockResponse")]
 pub fn html(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
-    let default_headers =
-        HashMap::from([("content-type".to_string(), "text/html".to_string())]);
+    let default_headers = HashMap::from([("content-type".to_string(), "text/html".to_string())]);
 
     JsHandlerResponse {
         status: init.as_ref().and_then(|i| i.status),
-        headers: Some(merge_headers(
-            default_headers,
-            init.and_then(|i| i.headers),
-        )),
+        headers: Some(merge_headers(default_headers, init.and_then(|i| i.headers))),
         body: Some(body),
         body_json: None,
         body_bytes: None,
@@ -102,10 +91,7 @@ pub fn xml(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
 
     JsHandlerResponse {
         status: init.as_ref().and_then(|i| i.status),
-        headers: Some(merge_headers(
-            default_headers,
-            init.and_then(|i| i.headers),
-        )),
+        headers: Some(merge_headers(default_headers, init.and_then(|i| i.headers))),
         body: Some(body),
         body_json: None,
         body_bytes: None,
@@ -119,7 +105,10 @@ pub fn xml(body: String, init: Option<JsResponseInit>) -> JsHandlerResponse {
 /// @param data - Binary data as Buffer.
 /// @param init - Optional status code and headers.
 #[napi(namespace = "MockResponse")]
-pub fn array_buffer(data: napi::bindgen_prelude::Uint8Array, init: Option<JsResponseInit>) -> JsHandlerResponse {
+pub fn array_buffer(
+    data: napi::bindgen_prelude::Uint8Array,
+    init: Option<JsResponseInit>,
+) -> JsHandlerResponse {
     let default_headers = HashMap::from([(
         "content-type".to_string(),
         "application/octet-stream".to_string(),
@@ -127,10 +116,7 @@ pub fn array_buffer(data: napi::bindgen_prelude::Uint8Array, init: Option<JsResp
 
     JsHandlerResponse {
         status: init.as_ref().and_then(|i| i.status),
-        headers: Some(merge_headers(
-            default_headers,
-            init.and_then(|i| i.headers),
-        )),
+        headers: Some(merge_headers(default_headers, init.and_then(|i| i.headers))),
         body: None,
         body_json: None,
         // Binary-safe: bytes pass through untouched.
