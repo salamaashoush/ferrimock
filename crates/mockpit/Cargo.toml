@@ -141,5 +141,11 @@ harness = false
 name = "type_detection"
 harness = false
 
+# Uses the `graphql` module — only build under the `graphql` feature so default
+# `cargo test`/`nextest` runs don't fail to compile it.
+[[example]]
+name = "test_username_graphql"
+required-features = ["graphql"]
+
 [lints]
 workspace = true
