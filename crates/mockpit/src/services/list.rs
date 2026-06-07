@@ -23,12 +23,22 @@ impl From<&MockDefinition> for MockSummary {
             id: m.id.to_string(),
             priority: m.priority,
             enabled: m.enabled,
-            methods: m.request.methods.iter().map(|m| m.to_string()).collect(),
-            url_patterns: m.request.url_patterns.iter().map(|p| format!("{p:?}")).collect(),
+            methods: m
+                .request
+                .methods
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            url_patterns: m
+                .request
+                .url_patterns
+                .iter()
+                .map(|p| format!("{p:?}"))
+                .collect(),
             status: m.response.status.as_u16(),
             has_header_matchers: !m.request.header_matchers.is_empty(),
             has_delay: m.response.delay.is_some(),
-            scope: m.scope.as_ref().map(|s| s.to_string()),
+            scope: m.scope.as_ref().map(std::string::ToString::to_string),
         }
     }
 }
@@ -65,12 +75,7 @@ pub async fn list(input: ListInput) -> Result<ListOutput, crate::MockpitError> {
 
     let mocks: Vec<MockSummary> = all_mocks
         .iter()
-        .filter(|m| {
-            input
-                .filter
-                .as_ref()
-                .is_none_or(|f| m.id.contains(f))
-        })
+        .filter(|m| input.filter.as_ref().is_none_or(|f| m.id.contains(f)))
         .map(|m| MockSummary::from(m.as_ref()))
         .collect();
 

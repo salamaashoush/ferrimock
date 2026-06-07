@@ -16,14 +16,10 @@ pub struct JsTestMatchInput {
 
 #[napi(namespace = "services")]
 pub async fn test_match(input: JsTestMatchInput) -> Result<serde_json::Value> {
-    let headers: Vec<(String, String)> = input
-        .headers
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let headers: Vec<(String, String)> = input.headers.unwrap_or_default().into_iter().collect();
 
-    let result = mockpit::services::test_match::test_match(
-        mockpit::services::test_match::TestMatchInput {
+    let result =
+        mockpit::services::test_match::test_match(mockpit::services::test_match::TestMatchInput {
             method: input.method,
             path: input.path,
             query: input.query,
@@ -32,10 +28,9 @@ pub async fn test_match(input: JsTestMatchInput) -> Result<serde_json::Value> {
             render: input.render.unwrap_or(false),
             mocks_dir: input.mocks_dir,
             mock_file: input.mock_file,
-        },
-    )
-    .await
-    .map_err(|e| Error::from_reason(e.to_string()))?;
+        })
+        .await
+        .map_err(|e| Error::from_reason(e.to_string()))?;
 
     serde_json::to_value(&result).map_err(|e| Error::from_reason(e.to_string()))
 }

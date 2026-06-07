@@ -4,10 +4,10 @@ use super::introspection::{
     FieldDefinition, OperationType, ParsedSchema, TypeDefinition, TypeKind, TypeRef,
 };
 use super::type_mapper::TypeToFakeMapper;
+use crate::Result;
 use crate::config::{
     GraphQLMatchConfig, MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig,
 };
-use crate::Result;
 use crate::error::Context;
 use rustc_hash::{FxHashMap, FxHashSet};
 

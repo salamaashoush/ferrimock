@@ -42,22 +42,22 @@ pub struct ConsolidateResult {
 }
 
 /// Consolidate a mock collection file.
-pub async fn consolidate(input: ConsolidateInput) -> Result<ConsolidateResult, crate::MockpitError> {
+pub async fn consolidate(
+    input: ConsolidateInput,
+) -> Result<ConsolidateResult, crate::MockpitError> {
     let options = ConsolidatorOptions {
         enable_consolidation: true,
         enable_templates: input.enable_templates,
         min_pattern_threshold: input.min_pattern,
         enable_stateful_pagination: true,
         pagination_storage_key_template: "api.{path}.total".into(),
-        ..ConsolidatorOptions::default()
     };
 
     let mut consolidator = MockConsolidator::with_options(options);
 
     let input_size = tokio::fs::metadata(&input.input)
         .await
-        .map(|m| m.len())
-        .unwrap_or(0);
+        .map_or(0, |m| m.len());
 
     let collection = consolidator
         .consolidate_file(&input.input)

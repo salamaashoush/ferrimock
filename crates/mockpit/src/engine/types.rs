@@ -197,9 +197,7 @@ impl ResponseGeneratorExt for ResponseGenerator {
         }
 
         match &self.body {
-            BodySource::File(_) | BodySource::Handler(_) => {
-                Err(crate::mp_err!("NEEDS_ASYNC"))
-            }
+            BodySource::File(_) | BodySource::Handler(_) => Err(crate::mp_err!("NEEDS_ASYNC")),
             BodySource::Template { source, hash } => {
                 let mut context = RequestContext::from_request_selective(
                     method,
@@ -221,7 +219,6 @@ impl ResponseGeneratorExt for ResponseGenerator {
     }
 
     fn can_generate_sync(&self) -> bool {
-        self.delay.is_none()
-            && !matches!(&self.body, BodySource::File(_) | BodySource::Handler(_))
+        self.delay.is_none() && !matches!(&self.body, BodySource::File(_) | BodySource::Handler(_))
     }
 }

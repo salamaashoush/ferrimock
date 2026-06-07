@@ -1,9 +1,9 @@
 //! Response analysis and pagination detection for mock consolidation
 
+use crate::Result;
 use crate::config::MockConfig;
 use crate::consolidator::pattern::QueryParamAnalysis;
 use crate::type_detector::{FieldType, TypeDetector};
-use crate::Result;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;

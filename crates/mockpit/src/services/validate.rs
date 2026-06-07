@@ -59,9 +59,13 @@ pub async fn validate(input: ValidateInput) -> Result<ValidateOutput, crate::Moc
 }
 
 /// Validate mock content from a string.
-pub async fn validate_content(input: ValidateContentInput) -> Result<ValidateOutput, crate::MockpitError> {
+pub async fn validate_content(
+    input: ValidateContentInput,
+) -> Result<ValidateOutput, crate::MockpitError> {
     let validator = MockValidator::new();
-    let result = validator.validate_content(&input.content, &input.file_format).await;
+    let result = validator
+        .validate_content(&input.content, &input.file_format)
+        .await;
     let results = vec![result];
 
     let total_errors: usize = results.iter().map(ValidationResult::error_count).sum();

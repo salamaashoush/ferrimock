@@ -645,9 +645,7 @@ fn apply_jsonpath_patch(
                     if let Some(obj) = current.as_object_mut() {
                         let available = format_available_keys(obj);
                         let arr = obj.get_mut(*field).ok_or_else(|| {
-                            crate::mp_err!(
-                                "Field '{field}' not found. Available keys: {available}"
-                            )
+                            crate::mp_err!("Field '{field}' not found. Available keys: {available}")
                         })?;
                         if let Some(arr_mut) = arr.as_array_mut() {
                             if *index < arr_mut.len() {

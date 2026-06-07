@@ -87,9 +87,7 @@ pub async fn validate_mocks(
         return validate_stdin(format, file_format.as_deref()).await;
     }
 
-    let input_path = path.unwrap_or_else(|| {
-        crate::config::mocks_dir()
-    });
+    let input_path = path.unwrap_or_else(crate::config::mocks_dir);
 
     let path = PathBuf::from(&input_path);
     if !path.exists() {

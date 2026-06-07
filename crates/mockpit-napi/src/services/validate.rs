@@ -32,11 +32,12 @@ pub struct JsValidateOutput {
 
 #[napi(namespace = "services")]
 pub async fn validate(input: JsValidateInput) -> Result<JsValidateOutput> {
-    let result = mockpit::services::validate::validate(mockpit::services::validate::ValidateInput {
-        path: input.path,
-    })
-    .await
-    .map_err(|e| Error::from_reason(e.to_string()))?;
+    let result =
+        mockpit::services::validate::validate(mockpit::services::validate::ValidateInput {
+            path: input.path,
+        })
+        .await
+        .map_err(|e| Error::from_reason(e.to_string()))?;
 
     let mut errors = Vec::new();
     let mut warnings = Vec::new();

@@ -1,4 +1,8 @@
 //! Mock registry for storing and managing mock definitions
+//!
+//! `Arc<Vec<Arc<MockDefinition>>>` is intentional: the sorted-mocks cache is
+//! shared by refcount clone, and the elements are already `Arc`. Allow rc_buffer.
+#![allow(clippy::rc_buffer)]
 
 use super::scope::{ScopeInfo, ScopeManager};
 use crate::core::PersistenceStore;
@@ -343,7 +347,9 @@ impl MockRegistry {
         let definitions = collection
             .into_mock_definitions_with_dir(config_dir, global_vars.as_ref())
             .await
-            .map_err(|e| crate::mp_err!("Failed to convert mocks from {}: {}", path.display(), e))?;
+            .map_err(|e| {
+                crate::mp_err!("Failed to convert mocks from {}: {}", path.display(), e)
+            })?;
 
         // Validate all templates after conversion
         for def in &definitions {
@@ -665,7 +671,6 @@ impl MockRegistry {
         }
     }
 
-
     // ===== Recording Methods =====
 
     /// Add a recorded interaction
@@ -952,7 +957,8 @@ impl MockRegistry {
         {
             return Err(crate::mp_err!(
                 "Mock '{}': Template validation failed: {}",
-                mock.id, e
+                mock.id,
+                e
             ));
         }
 

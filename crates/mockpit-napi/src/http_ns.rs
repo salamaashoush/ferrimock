@@ -1,7 +1,7 @@
 //! HTTP namespace bindings: `http.get()`, `http.post()`, etc.
 
-use crate::handler_bridge::js_to_handler_bridge;
 pub(crate) use crate::handler_bridge::HandlerFnRef;
+use crate::handler_bridge::js_to_handler_bridge;
 use crate::request_context::MockpitRequest;
 use crate::types::JsHandlerResponse;
 use mockpit::handler;
@@ -70,7 +70,9 @@ fn build_handler(
         // Assume RegExp — extract source and flags properties
         #[allow(unsafe_code)]
         let obj: Object = unsafe { FromNapiValue::from_napi_value(env.raw(), path.raw())? };
-        let source: String = obj.get("source")?.ok_or_else(|| Error::from_reason("Not a RegExp: missing 'source'"))?;
+        let source: String = obj
+            .get("source")?
+            .ok_or_else(|| Error::from_reason("Not a RegExp: missing 'source'"))?;
         let flags: String = obj.get("flags")?.unwrap_or_default();
 
         let pattern = if flags.contains('i') {

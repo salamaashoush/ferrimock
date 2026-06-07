@@ -15,9 +15,7 @@ pub fn format_mocks(
         return format_stdin(file_format);
     }
 
-    let input_path = path.unwrap_or_else(|| {
-        crate::config::mocks_dir()
-    });
+    let input_path = path.unwrap_or_else(crate::config::mocks_dir);
 
     let path = PathBuf::from(&input_path);
     if !path.exists() {
@@ -109,9 +107,8 @@ fn format_stdin(file_format: Option<&str>) -> anyhow::Result<()> {
     let mut content = String::new();
     std::io::stdin().read_to_string(&mut content)?;
 
-    let fmt = match file_format {
-        Some(f @ ("json" | "yaml" | "yml")) => f,
-        _ => anyhow::bail!("Cannot determine format: use --file-format with json, yaml, or yml"),
+    let Some(fmt @ ("json" | "yaml" | "yml")) = file_format else {
+        anyhow::bail!("Cannot determine format: use --file-format with json, yaml, or yml");
     };
     print!("{}", format_str(&content, fmt)?);
     Ok(())

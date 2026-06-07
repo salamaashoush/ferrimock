@@ -6,7 +6,7 @@ use super::ui;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use mockpit::services::create::{create, generate_template_body, CreateInput};
+use mockpit::services::create::{CreateInput, create, generate_template_body};
 
 /// Wizard state holding all configuration
 #[derive(Debug, Clone)]
@@ -612,8 +612,7 @@ fn step_metadata(state: &mut WizardState, output: Option<String>) -> anyhow::Res
     crate::say!();
 
     // Output path and format
-    let default_dir =
-        crate::config::mocks_dir();
+    let default_dir = crate::config::mocks_dir();
     let default_path = output.unwrap_or_else(|| format!("{}/{}.yaml", default_dir, state.mock_id));
     print!(
         "{} [{}]: ",
@@ -691,7 +690,11 @@ fn step_review_and_save(state: &WizardState) -> anyhow::Result<()> {
         state.template_body.clone()
     };
 
-    let format = if state.format == "json" { "json" } else { "yaml" };
+    let format = if state.format == "json" {
+        "json"
+    } else {
+        "yaml"
+    };
     let mock_config = generate_mock_content(state, &body, format)?;
 
     ui::preview_box("Generated Configuration", &mock_config);
@@ -890,14 +893,14 @@ fn generate_error_template(status: u16) -> String {
     )
 }
 
-fn generate_mock_content(
-    state: &WizardState,
-    body: &str,
-    format: &str,
-) -> anyhow::Result<String> {
+fn generate_mock_content(state: &WizardState, body: &str, format: &str) -> anyhow::Result<String> {
     let result = create(CreateInput {
         url: state.url_pattern.clone(),
-        method: state.methods.first().map_or("GET", String::as_str).to_string(),
+        method: state
+            .methods
+            .first()
+            .map_or("GET", String::as_str)
+            .to_string(),
         status: state.status,
         body: Some(body.to_string()),
         template: matches!(state.body_source, BodySource::Template),

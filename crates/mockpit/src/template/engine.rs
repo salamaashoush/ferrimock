@@ -116,7 +116,9 @@ impl TemplateEngine {
         // Use peek() to get a shared reference - avoids cloning the template ID.
         // The template was just inserted or confirmed present via get() above.
         let Some(template_id) = self.template_cache.peek(&template_hash) else {
-            return Err(crate::mp_err!("internal error: template cache inconsistency"));
+            return Err(crate::mp_err!(
+                "internal error: template cache inconsistency"
+            ));
         };
 
         // Render the template

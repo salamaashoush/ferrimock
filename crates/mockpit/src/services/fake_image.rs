@@ -23,11 +23,18 @@ impl Default for FakeImageInput {
     fn default() -> Self {
         Self {
             image_type: "placeholder".into(),
-            width: 200, height: 200,
-            bg_color: None, text_color: None, text: None, initials: None,
-            start_color: None, end_color: None,
-            direction: "horizontal".into(), image_format: "png".into(),
-            quality: 85, colored: false,
+            width: 200,
+            height: 200,
+            bg_color: None,
+            text_color: None,
+            text: None,
+            initials: None,
+            start_color: None,
+            end_color: None,
+            direction: "horizontal".into(),
+            image_format: "png".into(),
+            quality: 85,
+            colored: false,
         }
     }
 }
@@ -41,6 +48,7 @@ pub struct FakeImageResult {
 }
 
 /// Generate a fake image.
+#[allow(clippy::needless_pass_by_value)] // owned input is the service API boundary
 pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, crate::MockpitError> {
     use crate::fake_data::*;
 
@@ -49,7 +57,8 @@ pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, crate::Mockpit
 
     let base64_data = match input.image_type.as_str() {
         "placeholder" => fake_placeholder(
-            w, h,
+            w,
+            h,
             input.text.as_deref(),
             input.bg_color.as_deref(),
             input.text_color.as_deref(),
@@ -61,20 +70,23 @@ pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, crate::Mockpit
             input.text_color.as_deref(),
         ),
         "gradient" => fake_image_gradient(
-            w, h,
+            w,
+            h,
             input.start_color.as_deref(),
             input.end_color.as_deref(),
             Some(input.direction.as_str()),
         ),
         "checkerboard" => fake_image_checkerboard(
-            w, h,
+            w,
+            h,
             input.bg_color.as_deref(),
             input.text_color.as_deref(),
             None, // square_size
         ),
         "noise" => fake_image_noise(w, h, Some(input.colored)),
         "stripes" => fake_image_stripes(
-            w, h,
+            w,
+            h,
             input.bg_color.as_deref(),
             input.text_color.as_deref(),
             None, // stripe_width
@@ -82,7 +94,8 @@ pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, crate::Mockpit
         ),
         "text" => fake_image_with_text(
             input.text.as_deref(),
-            w, h,
+            w,
+            h,
             input.bg_color.as_deref(),
             input.text_color.as_deref(),
             None, // font_size
@@ -100,5 +113,9 @@ pub fn generate(input: FakeImageInput) -> Result<FakeImageResult, crate::Mockpit
         "image/png".into()
     };
 
-    Ok(FakeImageResult { base64: base64_data, mime_type, bytes })
+    Ok(FakeImageResult {
+        base64: base64_data,
+        mime_type,
+        bytes,
+    })
 }

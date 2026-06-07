@@ -179,12 +179,11 @@ pub async fn start(input: ServeInput) -> Result<ServeHandle, crate::MockpitError
 
     // Spawn server
     tokio::spawn(async move {
-        axum::serve(listener, app)
+        let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async {
                 let _ = shutdown_rx.await;
             })
-            .await
-            .ok();
+            .await;
     });
 
     Ok(ServeHandle {
@@ -241,8 +240,7 @@ fn init_hot_reload(
     }
 
     let hot_reload_config = HotReloadConfig { debounce_ms: 300 };
-    let mut manager =
-        HotReloadManager::new(registry, vec![collections_path], hot_reload_config)?;
+    let mut manager = HotReloadManager::new(registry, vec![collections_path], hot_reload_config)?;
     manager.start_watching()?;
     manager.spawn();
     Ok(())
@@ -265,10 +263,11 @@ struct ServerState {
     registry: Arc<MockRegistry>,
 }
 
-/// Canonical mock-response builder shared by every mock server (this service,
-/// the NAPI `MockpitServer.listen()` path, and the CLI). Matches the request,
-/// generates the dynamic response, and builds an axum response with the
-/// `X-Mock-Id` header. This is the single source of truth — do not reimplement.
+/// Canonical mock-response builder shared by every mock server.
+///
+/// Used by this service, the NAPI `MockpitServer.listen()` path, and the CLI:
+/// matches the request, generates the dynamic response, and builds an axum
+/// response with the `X-Mock-Id` header. Single source of truth — do not reimplement.
 pub async fn respond(
     matcher: &MockMatcher,
     method: &http::Method,
@@ -327,7 +326,10 @@ pub async fn respond(
                 .header("X-Mock-Id", mock_def.id.as_str())
                 .body(Body::from(resp.body))
                 .unwrap_or_else(|_| {
-                    (http::StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
+                    (
+                        http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "Response build error",
+                    )
                         .into_response()
                 })
         }
@@ -361,7 +363,7 @@ async fn mock_handler(
     let body_ref = body_bytes
         .as_ref()
         .filter(|b| !b.is_empty())
-        .map(|b| b.as_ref());
+        .map(std::convert::AsRef::as_ref);
 
     respond(
         &state.matcher,

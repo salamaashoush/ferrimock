@@ -5,8 +5,7 @@ use anyhow::Context;
 use mockpit::engine::MockRegistry;
 
 pub async fn show_mock(mock_id: &str) -> anyhow::Result<()> {
-    let collections_dir =
-        crate::config::mocks_dir();
+    let collections_dir = crate::config::mocks_dir();
 
     let spinner = ui::spinner("Loading mock definition...");
     let registry = MockRegistry::new();

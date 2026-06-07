@@ -658,9 +658,9 @@ impl ResolvedResponse {
                     std::path::PathBuf::from(&template_file)
                 };
 
-                let template = tokio::fs::read_to_string(&path)
-                    .await
-                    .map_err(|e| crate::mp_err!("Failed to read template file {}: {e}", path.display()))?;
+                let template = tokio::fs::read_to_string(&path).await.map_err(|e| {
+                    crate::mp_err!("Failed to read template file {}: {e}", path.display())
+                })?;
 
                 BodySource::template(template)
             }
@@ -694,8 +694,9 @@ pub fn parse_patches_config(config: ResponsePatchesConfig) -> crate::Result<Vec<
 
     // Parse regex replacements
     for regex_config in config.regex {
-        let pattern = regex::Regex::new(&regex_config.pattern)
-            .map_err(|e| crate::mp_err!("Invalid regex pattern '{}': {}", regex_config.pattern, e))?;
+        let pattern = regex::Regex::new(&regex_config.pattern).map_err(|e| {
+            crate::mp_err!("Invalid regex pattern '{}': {}", regex_config.pattern, e)
+        })?;
         operations.push(PatchOperation::RegexReplace {
             pattern,
             replacement: regex_config.replacement,

@@ -31,7 +31,6 @@ pub struct JsResponseInit {
     pub headers: Option<HashMap<String, String>>,
 }
 
-
 impl From<JsHandlerResponse> for mockpit::types::DynamicResponse {
     fn from(resp: JsHandlerResponse) -> Self {
         let status = resp

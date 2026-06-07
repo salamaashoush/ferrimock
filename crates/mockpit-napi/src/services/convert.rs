@@ -28,14 +28,26 @@ pub async fn convert(input: JsConvertInput) -> Result<JsConvertResult> {
     let result = mockpit::services::convert::convert(mockpit::services::convert::ConvertInput {
         input: input.input,
         format: input.format.unwrap_or(defaults.format),
-        exclude_preflight: input.exclude_preflight.unwrap_or(defaults.exclude_preflight),
-        exclude_redirects: input.exclude_redirects.unwrap_or(defaults.exclude_redirects),
-        strip_browser_headers: input.strip_browser_headers.unwrap_or(defaults.strip_browser_headers),
+        exclude_preflight: input
+            .exclude_preflight
+            .unwrap_or(defaults.exclude_preflight),
+        exclude_redirects: input
+            .exclude_redirects
+            .unwrap_or(defaults.exclude_redirects),
+        strip_browser_headers: input
+            .strip_browser_headers
+            .unwrap_or(defaults.strip_browser_headers),
         normalize_urls: input.normalize_urls.unwrap_or(defaults.normalize_urls),
         allowed_domains: input.allowed_domains.unwrap_or_default(),
-        exclude_static_assets: input.exclude_static_assets.unwrap_or(defaults.exclude_static_assets),
-        strip_sensitive_headers: input.strip_sensitive_headers.unwrap_or(defaults.strip_sensitive_headers),
-        strip_infrastructure_headers: input.strip_infrastructure_headers.unwrap_or(defaults.strip_infrastructure_headers),
+        exclude_static_assets: input
+            .exclude_static_assets
+            .unwrap_or(defaults.exclude_static_assets),
+        strip_sensitive_headers: input
+            .strip_sensitive_headers
+            .unwrap_or(defaults.strip_sensitive_headers),
+        strip_infrastructure_headers: input
+            .strip_infrastructure_headers
+            .unwrap_or(defaults.strip_infrastructure_headers),
         extract_bodies: false,
         body_threshold_kb: 100,
     })

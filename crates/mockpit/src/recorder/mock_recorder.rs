@@ -1388,7 +1388,7 @@ mod tests {
         // Save as HAR format
         let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
         assert!(file_path.exists());
-        assert!(file_path.extension().unwrap() == "har");
+        assert_eq!(file_path.extension().unwrap(), "har");
 
         // Load and verify HAR structure
         let content = tokio::fs::read_to_string(&file_path).await.unwrap();

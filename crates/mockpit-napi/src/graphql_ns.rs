@@ -35,7 +35,10 @@ pub fn mutation(
 ) -> Result<JsHandler> {
     let bridge = js_to_handler_bridge(handler_fn)?;
     Ok(JsHandler {
-        inner: Some(handler::graphql::mutation(&operation_name, bridge.handler_fn)),
+        inner: Some(handler::graphql::mutation(
+            &operation_name,
+            bridge.handler_fn,
+        )),
         fn_ref: Some(bridge.fn_ref),
     })
 }

@@ -3,7 +3,7 @@
 //! Canonical, domain-aware formatter (key ordering + body expansion) shared by
 //! the CLI `mock format` command and the NAPI `services.format` binding.
 
-use crate::config::{format_body, MockCollectionConfig};
+use crate::config::{MockCollectionConfig, format_body};
 use std::path::{Path, PathBuf};
 
 /// Input for formatting mock files.
@@ -49,6 +49,7 @@ pub struct FormatOutput {
 }
 
 /// Format mock files at a path.
+#[allow(clippy::needless_pass_by_value)] // owned input is the service API boundary
 pub fn format_path(input: FormatInput) -> Result<FormatOutput, crate::MockpitError> {
     let path = PathBuf::from(&input.path);
     crate::mp_ensure!(path.exists(), "Path does not exist: {}", input.path);
@@ -98,6 +99,7 @@ pub fn format_path(input: FormatInput) -> Result<FormatOutput, crate::MockpitErr
 }
 
 /// Format content from a string.
+#[allow(clippy::needless_pass_by_value)] // owned input is the service API boundary
 pub fn format_content(input: FormatContentInput) -> Result<String, crate::MockpitError> {
     match input.file_format.as_str() {
         "json" => format_json(&input.content),
@@ -111,10 +113,10 @@ fn collect_mock_files(dir: &Path) -> Result<Vec<PathBuf>, crate::MockpitError> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if matches!(ext, "json" | "yaml" | "yml") {
-                files.push(path);
-            }
+        if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && matches!(ext, "json" | "yaml" | "yml")
+        {
+            files.push(path);
         }
     }
     files.sort();
@@ -124,10 +126,7 @@ fn collect_mock_files(dir: &Path) -> Result<Vec<PathBuf>, crate::MockpitError> {
 fn format_single_file(path: &Path, check: bool) -> Result<bool, crate::MockpitError> {
     let original = std::fs::read_to_string(path)?;
 
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("yaml");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("yaml");
 
     let formatted = match ext {
         "json" => format_json(&original)?,

@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use super::ui;
-use mockpit::services::create::{create, CreateInput};
+use mockpit::services::create::{CreateInput, create};
 
 /// Create a new mock definition
 #[allow(clippy::too_many_arguments)]
@@ -26,9 +26,22 @@ pub fn create_mock(
     // Output format is derived from the output path extension (default yaml).
     let format = output
         .as_deref()
-        .and_then(|out| PathBuf::from(out).extension().and_then(|e| e.to_str()).map(str::to_string))
-        .map(|ext| if ext == "yml" { "yaml".to_string() } else { ext })
-        .unwrap_or_else(|| "yaml".to_string());
+        .and_then(|out| {
+            PathBuf::from(out)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_string)
+        })
+        .map_or_else(
+            || "yaml".to_string(),
+            |ext| {
+                if ext == "yml" {
+                    "yaml".to_string()
+                } else {
+                    ext
+                }
+            },
+        );
     if format != "yaml" && format != "json" {
         anyhow::bail!("Unsupported format: {format}");
     }
@@ -57,12 +70,11 @@ pub fn create_mock(
     })?;
 
     // Resolve the output path (default: <mocks-dir>/<mock-id>.<ext>).
-    let output_path = match output {
-        Some(out) => PathBuf::from(out),
-        None => {
-            let dir = crate::config::mocks_dir();
-            PathBuf::from(dir).join(format!("{}.{format}", result.mock_id))
-        }
+    let output_path = if let Some(out) = output {
+        PathBuf::from(out)
+    } else {
+        let dir = crate::config::mocks_dir();
+        PathBuf::from(dir).join(format!("{}.{format}", result.mock_id))
     };
 
     if interactive {
@@ -75,7 +87,10 @@ pub fn create_mock(
             crate::say!("{}", ui::kv("Collection", coll));
         }
         crate::say!("{}", ui::kv("Format", &format));
-        crate::say!("{}", ui::kv("Template", if template { "Yes" } else { "No" }));
+        crate::say!(
+            "{}",
+            ui::kv("Template", if template { "Yes" } else { "No" })
+        );
         crate::say!();
         print!("{} ", ui::emphasis("Continue? (y/N):"));
         io::stdout().flush()?;
@@ -95,7 +110,10 @@ pub fn create_mock(
         .map_err(|e| anyhow::anyhow!("Failed to write mock file: {e}"))?;
 
     let output_display = output_path.display().to_string();
-    crate::say!("{}", ui::success(&format!("Created mock: {}", ui::path(&output_display))));
+    crate::say!(
+        "{}",
+        ui::success(&format!("Created mock: {}", ui::path(&output_display)))
+    );
     crate::say!();
     crate::say!("{}", ui::kv("Mock ID", &result.mock_id));
     crate::say!("{}", ui::kv("Method", &method.to_uppercase()));
@@ -105,7 +123,10 @@ pub fn create_mock(
     crate::say!();
     crate::say!(
         "{}",
-        ui::dim(&format!("Tip: Edit {} to customize the mock", ui::path(&output_display)))
+        ui::dim(&format!(
+            "Tip: Edit {} to customize the mock",
+            ui::path(&output_display)
+        ))
     );
 
     Ok(())

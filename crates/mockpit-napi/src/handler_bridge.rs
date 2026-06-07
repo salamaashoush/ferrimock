@@ -55,7 +55,6 @@ pub fn js_to_handler_bridge(
     let fn_ref: HandlerFnRef = unsafe { FromNapiValue::from_napi_value(v.env, v.value)? };
     let fn_ref = Arc::new(fn_ref);
 
-
     // Build TSFN for server mode (cross-thread calls)
     let tsfn: HandlerCallbackTsfn = callback
         .build_threadsafe_function()
@@ -86,10 +85,7 @@ pub fn js_to_handler_bridge(
         })
     });
 
-    Ok(HandlerBridge {
-        handler_fn,
-        fn_ref,
-    })
+    Ok(HandlerBridge { handler_fn, fn_ref })
 }
 
 /// Legacy: Convert a JS function into a Rust `HandlerFn` only (TSFN path).

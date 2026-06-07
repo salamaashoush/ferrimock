@@ -5,9 +5,7 @@ use anyhow::Context;
 use mockpit::engine::MockRegistry;
 
 pub async fn reload_mocks(dir: Option<String>) -> anyhow::Result<()> {
-    let collections_dir = dir.unwrap_or_else(|| {
-        crate::config::mocks_dir()
-    });
+    let collections_dir = dir.unwrap_or_else(crate::config::mocks_dir);
 
     println!(
         "{}",

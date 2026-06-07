@@ -39,16 +39,16 @@ pub fn parse_config_file(path: &str) -> Result<MockpitConfig, crate::MockpitErro
     crate::mp_ensure!(path.exists(), "Config file not found: {}", path.display());
 
     let content = std::fs::read_to_string(path)?;
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     parse_config_string(&content, ext)
 }
 
 /// Parse a config from a string with explicit format.
-pub fn parse_config_string(content: &str, format: &str) -> Result<MockpitConfig, crate::MockpitError> {
+pub fn parse_config_string(
+    content: &str,
+    format: &str,
+) -> Result<MockpitConfig, crate::MockpitError> {
     match format {
         "json" => Ok(serde_json::from_str(content)?),
         "yaml" | "yml" => Ok(serde_yaml::from_str(content)?),

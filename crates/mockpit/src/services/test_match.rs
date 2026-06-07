@@ -73,7 +73,8 @@ pub async fn test_match(input: TestMatchInput) -> Result<TestMatchResult, crate:
             .await
             .map_err(|e| crate::mp_err!(e))?;
     } else {
-        let default_dir = std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+        let default_dir =
+            std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
         let dir = input.mocks_dir.as_deref().unwrap_or(&default_dir);
         registry
             .load_from_directory(dir)
@@ -129,8 +130,8 @@ pub async fn test_match(input: TestMatchInput) -> Result<TestMatchResult, crate:
             headers.extend(dyn_headers);
         }
 
-        let body_str = String::from_utf8(dynamic.body.to_vec())
-            .unwrap_or_else(|_| "<binary>".to_string());
+        let body_str =
+            String::from_utf8(dynamic.body.to_vec()).unwrap_or_else(|_| "<binary>".to_string());
 
         let body_base64 = if body_str == "<binary>" {
             Some(base64::Engine::encode(

@@ -28,6 +28,7 @@ pub struct FakePdfResult {
 }
 
 /// Generate a fake PDF document.
+#[allow(clippy::needless_pass_by_value)] // owned input is the service API boundary
 pub fn generate(input: FakePdfInput) -> Result<FakePdfResult, crate::MockpitError> {
     let base64_data = crate::fake_data::fake_pdf(input.text.as_deref(), Some(input.pages));
 
