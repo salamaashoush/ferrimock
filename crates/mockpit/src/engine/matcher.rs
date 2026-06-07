@@ -122,8 +122,7 @@ impl MockMatcher {
         // This is O(1) and avoids all lock contention on the LRU cache.
         if query.is_none()
             && body.is_none()
-            && !self.registry.has_conditional_mocks()
-            && let Some(mock) = self.registry.try_exact_match(method, path)
+            && let Some(mock) = self.registry.try_exact_match_simple(method, path)
             && mock.enabled
         {
             self.record_call_if_needed(&mock, method, path, query, headers, body);
@@ -165,8 +164,9 @@ impl MockMatcher {
             } // Mutex dropped here
         }
 
-        // SLOW PATH: Linear scan through all enabled mocks
-        let all_mocks = self.registry.get_enabled_mocks();
+        // SLOW PATH: Linear scan through all enabled mocks.
+        // Arc clone (refcount only) — no per-request Vec clone.
+        let all_mocks = self.registry.get_enabled_mocks_arc();
 
         // Pre-parse query params once for all matchers (optimization)
         let parsed_query = if query.is_some()
@@ -179,15 +179,36 @@ impl MockMatcher {
             None
         };
 
+        // Pre-parse the request body as JSON once, shared across graphql/json-body
+        // matchers for every candidate (was parsed per-matcher, per-candidate).
+        let parsed_body_json = if body.is_some()
+            && all_mocks.iter().any(|m| {
+                m.request.graphql_matcher.is_some()
+                    || matches!(
+                        m.request.body_matcher,
+                        Some(
+                            crate::types::BodyMatcher::JsonPath { .. }
+                                | crate::types::BodyMatcher::JsonEquals(_)
+                        )
+                    )
+            }) {
+            body.and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+        } else {
+            None
+        };
+
         // Find the first mock that matches all criteria (cheapest checks first)
-        let matched_mock = all_mocks.into_iter().find(|mock| {
-            self.matches_method(mock, method)
-                && self.matches_url(mock, path, query)
-                && self.matches_headers(mock, headers)
-                && self.matches_query(mock, query, parsed_query.as_ref())
-                && self.matches_graphql(mock, body)
-                && self.matches_body(mock, body)
-        });
+        let matched_mock = all_mocks
+            .iter()
+            .find(|&mock| {
+                self.matches_method(mock, method)
+                    && self.matches_url(mock, path, query)
+                    && self.matches_headers(mock, headers)
+                    && self.matches_query(mock, query, parsed_query.as_ref())
+                    && self.matches_graphql(mock, body, parsed_body_json.as_ref())
+                    && self.matches_body(mock, body, parsed_body_json.as_ref())
+            })
+            .map(Arc::clone);
 
         if let Some(mock) = matched_mock {
             self.record_call_if_needed(&mock, method, path, query, headers, body);
@@ -327,21 +348,34 @@ impl MockMatcher {
             .all(|matcher| matcher.matches(headers))
     }
 
-    /// Check if the mock's GraphQL matcher matches the request
-    fn matches_graphql(&self, mock: &MockDefinition, body: Option<&[u8]>) -> bool {
+    /// Check if the mock's GraphQL matcher matches the request.
+    /// `parsed_json` is the request body parsed once per request (shared).
+    fn matches_graphql(
+        &self,
+        mock: &MockDefinition,
+        body: Option<&[u8]>,
+        parsed_json: Option<&serde_json::Value>,
+    ) -> bool {
         // If no GraphQL matcher is specified, match all
         let Some(graphql_matcher) = &mock.request.graphql_matcher else {
             return true;
         };
 
-        // If GraphQL matcher is specified but no body provided, no match
-        let Some(body_bytes) = body else {
+        // GraphQL requires a JSON body; reuse the shared parse, parsing on demand
+        // only when a caller did not supply it.
+        if body.is_none() {
             return false;
-        };
-
-        // Parse body as JSON
-        let Ok(json) = serde_json::from_slice::<serde_json::Value>(body_bytes) else {
-            return false;
+        }
+        let owned;
+        let json = match parsed_json {
+            Some(json) => json,
+            None => match body.and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok()) {
+                Some(j) => {
+                    owned = j;
+                    &owned
+                }
+                None => return false,
+            },
         };
 
         // Wildcard match - any GraphQL operation
@@ -351,7 +385,7 @@ impl MockMatcher {
 
         // Check introspection matcher if specified
         if let Some(introspection_matcher) = &graphql_matcher.introspection_matcher
-            && !self.matches_introspection(introspection_matcher, &json)
+            && !self.matches_introspection(introspection_matcher, json)
         {
             return false;
         }
@@ -478,7 +512,12 @@ impl MockMatcher {
 
     /// Check if the mock's body matcher matches the request body
     #[allow(clippy::unused_self)]
-    fn matches_body(&self, mock: &MockDefinition, body: Option<&[u8]>) -> bool {
+    fn matches_body(
+        &self,
+        mock: &MockDefinition,
+        body: Option<&[u8]>,
+        parsed_json: Option<&serde_json::Value>,
+    ) -> bool {
         // If no body matcher is specified, match all
         let Some(body_matcher) = &mock.request.body_matcher else {
             return true;
@@ -489,8 +528,8 @@ impl MockMatcher {
             return false;
         };
 
-        // Check if body matches
-        body_matcher.matches(body_bytes)
+        // Check if body matches (reusing the shared JSON parse for json matchers)
+        body_matcher.matches(body_bytes, parsed_json)
     }
 
     /// Check if the mock's query matchers match
@@ -709,7 +748,7 @@ impl MockMatcher {
         mock_id: impl AsRef<str>,
         upstream_response: http::Response<bytes::Bytes>,
         request_context: Option<crate::types::RequestContext>,
-    ) -> Result<http::Response<bytes::Bytes>, anyhow::Error> {
+    ) -> Result<http::Response<bytes::Bytes>, crate::MockpitError> {
         use http::Response;
 
         let (upstream_parts, upstream_bytes) = upstream_response.into_parts();

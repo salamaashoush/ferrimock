@@ -8,7 +8,7 @@ use crate::recorder::RecordedInteraction;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use rustc_hash::{FxHashMap, FxHasher};
 use serde::Serialize;
 #[allow(clippy::disallowed_types)]
@@ -83,8 +83,9 @@ impl MockCall {
 /// Cached sorted list of enabled mocks
 /// Uses a version counter to track invalidation
 struct SortedMocksCache {
-    /// Cached sorted mocks (highest priority first)
-    mocks: RwLock<Vec<Arc<MockDefinition>>>,
+    /// Cached sorted mocks (highest priority first), shared via Arc so readers
+    /// clone only a refcount, never the Vec.
+    mocks: RwLock<Arc<Vec<Arc<MockDefinition>>>>,
     /// Version counter for cache invalidation
     version: AtomicU64,
     /// Version of the mocks DashMap when cache was last built
@@ -94,9 +95,11 @@ struct SortedMocksCache {
 impl SortedMocksCache {
     fn new() -> Self {
         Self {
-            mocks: RwLock::new(Vec::new()),
+            mocks: RwLock::new(Arc::new(Vec::new())),
             version: AtomicU64::new(0),
-            cached_version: AtomicU64::new(0),
+            // u64::MAX never equals the initial version (0) → forces first build,
+            // so a legitimately empty result is still cached correctly afterwards.
+            cached_version: AtomicU64::new(u64::MAX),
         }
     }
 
@@ -106,22 +109,19 @@ impl SortedMocksCache {
         self.version.fetch_add(1, Ordering::Release);
     }
 
-    /// Get cached mocks if still valid, otherwise None
-    fn get_if_valid(&self) -> Option<Vec<Arc<MockDefinition>>> {
+    /// Get cached mocks if still valid, otherwise None. Clones only the outer Arc.
+    fn get_if_valid(&self) -> Option<Arc<Vec<Arc<MockDefinition>>>> {
         let current_version = self.version.load(Ordering::Acquire);
         let cached_version = self.cached_version.load(Ordering::Acquire);
 
         if current_version == cached_version {
-            let guard = self.mocks.read();
-            if !guard.is_empty() {
-                return Some(guard.clone());
-            }
+            return Some(Arc::clone(&self.mocks.read()));
         }
         None
     }
 
     /// Update the cache with new sorted mocks
-    fn update(&self, mocks: Vec<Arc<MockDefinition>>) {
+    fn update(&self, mocks: Arc<Vec<Arc<MockDefinition>>>) {
         let current_version = self.version.load(Ordering::Acquire);
         {
             let mut guard = self.mocks.write();
@@ -163,9 +163,17 @@ pub struct MockRegistry {
     exact_match_index: Arc<RwLock<ExactMatchIndex>>,
     /// Version counter for the exact match index (tracks when to rebuild)
     exact_index_version: Arc<AtomicU64>,
+    /// Single-flight guard: ensures only one thread rebuilds the exact index at
+    /// a time, preventing a thundering-herd rebuild when the index goes stale
+    /// under concurrent load (e.g. after a `once` mock is consumed).
+    index_rebuild_lock: Arc<Mutex<()>>,
     /// Whether any enabled mock has conditional matchers (header/body/query/graphql).
     /// When false, the LRU cache can be used more aggressively.
     has_conditional_mocks: Arc<AtomicBool>,
+    /// Whether any enabled mock matches on the request body (body or graphql matcher).
+    /// Lets callers (e.g. the fetch interceptor) skip reading the request body when
+    /// no mock could ever use it.
+    has_body_dependent_mocks: Arc<AtomicBool>,
     /// Global variables from MockConfig.vars, cascaded into all loaded collections
     global_vars: Arc<RwLock<Option<serde_json::Map<String, serde_json::Value>>>>,
 }
@@ -191,7 +199,9 @@ impl MockRegistry {
                 Arc::new(RwLock::new(idx))
             },
             exact_index_version: Arc::new(AtomicU64::new(0)),
+            index_rebuild_lock: Arc::new(Mutex::new(())),
             has_conditional_mocks: Arc::new(AtomicBool::new(false)),
+            has_body_dependent_mocks: Arc::new(AtomicBool::new(false)),
             global_vars: Arc::new(RwLock::new(None)),
         }
     }
@@ -221,7 +231,7 @@ impl MockRegistry {
     /// Scans the given directory for mock definition files and loads all mock definitions.
     /// Also scans for scenario files in the scenarios subdirectory.
     /// Returns the number of mocks loaded.
-    pub async fn load_from_directory(&self, dir_path: &str) -> Result<usize, String> {
+    pub async fn load_from_directory(&self, dir_path: &str) -> crate::Result<usize> {
         use std::path::Path;
 
         let path = Path::new(dir_path);
@@ -231,13 +241,13 @@ impl MockRegistry {
         }
 
         if !path.is_dir() {
-            return Err(format!("{dir_path} is not a directory"));
+            return Err(crate::mp_err!("{dir_path} is not a directory"));
         }
 
         // Read directory entries
         let mut entries = tokio::fs::read_dir(path)
             .await
-            .map_err(|e| format!("Failed to read directory {dir_path}: {e}"))?;
+            .map_err(|e| crate::mp_err!("Failed to read directory {dir_path}: {e}"))?;
 
         // Collect all mock collection files (JSON, YAML) and HAR files
         let mut collection_files = Vec::new();
@@ -245,7 +255,7 @@ impl MockRegistry {
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| format!("Failed to read directory entry: {e}"))?
+            .map_err(|e| crate::mp_err!("Failed to read directory entry: {e}"))?
         {
             let entry_path = entry.path();
             if let Some(ext) = entry_path.extension().and_then(|s| s.to_str()) {
@@ -312,12 +322,12 @@ impl MockRegistry {
     }
 
     /// Load a single mock collection file
-    pub async fn load_collection_file(&self, path: &std::path::Path) -> Result<usize, String> {
+    pub async fn load_collection_file(&self, path: &std::path::Path) -> crate::Result<usize> {
         use crate::config::MockCollectionConfig;
 
         let collection = MockCollectionConfig::from_file(path)
             .await
-            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+            .map_err(|e| crate::mp_err!("Failed to parse {}: {}", path.display(), e))?;
 
         // Only load if collection is enabled
         if !collection.enabled {
@@ -333,7 +343,7 @@ impl MockRegistry {
         let definitions = collection
             .into_mock_definitions_with_dir(config_dir, global_vars.as_ref())
             .await
-            .map_err(|e| format!("Failed to convert mocks from {}: {}", path.display(), e))?;
+            .map_err(|e| crate::mp_err!("Failed to convert mocks from {}: {}", path.display(), e))?;
 
         // Validate all templates after conversion
         for def in &definitions {
@@ -352,14 +362,14 @@ impl MockRegistry {
     }
 
     /// Load a single HAR file and convert to mocks
-    async fn load_har_file(&self, path: &std::path::Path) -> Result<usize, String> {
+    async fn load_har_file(&self, path: &std::path::Path) -> crate::Result<usize> {
         use crate::config::HarLoader;
 
         let loader = HarLoader::new();
         let mock_configs = loader
             .load_from_file(path)
             .await
-            .map_err(|e| format!("Failed to load HAR file {}: {}", path.display(), e))?;
+            .map_err(|e| crate::mp_err!("Failed to load HAR file {}: {}", path.display(), e))?;
 
         let count = mock_configs.len();
         let source_path = path.to_string_lossy().to_string();
@@ -369,7 +379,7 @@ impl MockRegistry {
             let mut definition = config
                 .into_mock_definition()
                 .await
-                .map_err(|e| format!("Failed to convert HAR entry to mock: {e}"))?;
+                .map_err(|e| crate::mp_err!("Failed to convert HAR entry to mock: {e}"))?;
             // Set source file for hot reload tracking
             definition.source_file = Some(source_path.clone());
             self.add_mock(definition);
@@ -424,6 +434,12 @@ impl MockRegistry {
     /// Uses an internal cache to avoid re-sorting on every request.
     /// Cache is invalidated when mocks are added, removed, enabled, or disabled.
     pub fn get_enabled_mocks(&self) -> Vec<Arc<MockDefinition>> {
+        (*self.get_enabled_mocks_arc()).clone()
+    }
+
+    /// Hot-path variant: returns the shared `Arc<Vec<..>>` directly, so callers
+    /// on the request path clone only a refcount instead of the whole Vec.
+    pub fn get_enabled_mocks_arc(&self) -> Arc<Vec<Arc<MockDefinition>>> {
         // Try to return cached result
         if let Some(cached) = self.sorted_mocks_cache.get_if_valid() {
             return cached;
@@ -440,10 +456,9 @@ impl MockRegistry {
         // Sort by priority (highest first)
         mocks.sort_by_key(|m| std::cmp::Reverse(m.priority));
 
-        // Update cache and return the same Vec (no double clone)
-        let result = mocks.clone();
-        self.sorted_mocks_cache.update(mocks);
-        result
+        let arc = Arc::new(mocks);
+        self.sorted_mocks_cache.update(Arc::clone(&arc));
+        arc
     }
 
     /// Invalidate the exact match index (called when mocks change)
@@ -451,34 +466,58 @@ impl MockRegistry {
         self.exact_index_version.fetch_add(1, Ordering::Release);
     }
 
-    /// Rebuild the exact match index if needed.
-    fn ensure_exact_index(&self) {
-        // Fast check: compare sorted cache version with index version.
-        // If sorted cache is valid and our index was built from the same version, skip rebuild.
+    /// Returns true when the exact index is current (no rebuild needed).
+    #[inline]
+    fn exact_index_is_current(&self) -> bool {
         let sorted_version = self.sorted_mocks_cache.version.load(Ordering::Acquire);
         let sorted_cached = self
             .sorted_mocks_cache
             .cached_version
             .load(Ordering::Acquire);
         let index_version = self.exact_index_version.load(Ordering::Acquire);
+        sorted_version == sorted_cached && index_version == sorted_version
+    }
 
-        // If sorted cache is valid AND our index was built at the current sorted version, skip
-        if sorted_version == sorted_cached && index_version == sorted_version {
+    /// Rebuild the exact match index if needed.
+    ///
+    /// Single-flighted: when stale under concurrent load, only one thread
+    /// rebuilds (others block on `index_rebuild_lock` then see the fresh index
+    /// via the double-checked guard), instead of every request rebuilding and
+    /// contending on the index write lock.
+    fn ensure_exact_index(&self) {
+        // Fast, lock-free check on the common (already-current) path.
+        if self.exact_index_is_current() {
+            return;
+        }
+
+        // Stale: serialize rebuilds. The first thread rebuilds; the rest re-check
+        // under the guard and return early once the index is fresh.
+        let _rebuild_guard = self.index_rebuild_lock.lock();
+        if self.exact_index_is_current() {
             return;
         }
 
         // Rebuild: get all enabled mocks sorted by priority
-        let enabled = self.get_enabled_mocks();
+        let enabled = self.get_enabled_mocks_arc();
 
         #[allow(clippy::disallowed_types)]
         let mut index: ExactMatchIndex = HashMap::with_hasher(BuildNoHashHasher::default());
         let mut has_conditional = false;
+        let mut has_body_dependent = false;
 
-        for mock in &enabled {
-            let is_conditional = !mock.request.header_matchers.is_empty()
-                || mock.request.body_matcher.is_some()
-                || !mock.request.query_matchers.is_empty()
+        for mock in enabled.iter() {
+            // Body/graphql matchers need the body; handler mocks may read it
+            // (opaque JS), so treat them as body-dependent too (conservative).
+            let body_dependent = mock.request.body_matcher.is_some()
                 || mock.request.graphql_matcher.is_some()
+                || matches!(mock.response.body, crate::types::BodySource::Handler(_));
+            if body_dependent {
+                has_body_dependent = true;
+            }
+
+            let is_conditional = !mock.request.header_matchers.is_empty()
+                || body_dependent
+                || !mock.request.query_matchers.is_empty()
                 || matches!(mock.response.body, crate::types::BodySource::Handler(_));
 
             if is_conditional {
@@ -508,6 +547,8 @@ impl MockRegistry {
 
         self.has_conditional_mocks
             .store(has_conditional, Ordering::Release);
+        self.has_body_dependent_mocks
+            .store(has_body_dependent, Ordering::Release);
         *self.exact_match_index.write() = index;
         // Record that our index is now built at the current sorted version
         let current_sorted = self.sorted_mocks_cache.version.load(Ordering::Acquire);
@@ -528,11 +569,36 @@ impl MockRegistry {
         idx.get(&key).map(Arc::clone)
     }
 
+    /// Combined fast-path lookup: ensures the index once, returns an exact match
+    /// only when no conditional mocks exist (so the simple O(1) path is safe).
+    /// Folds `has_conditional_mocks()` + `try_exact_match()` into a single
+    /// `ensure_exact_index()` call, halving the index checks on the hot path.
+    pub fn try_exact_match_simple(
+        &self,
+        method: &http::Method,
+        path: &str,
+    ) -> Option<Arc<MockDefinition>> {
+        self.ensure_exact_index();
+        if self.has_conditional_mocks.load(Ordering::Acquire) {
+            return None;
+        }
+        let idx = self.exact_match_index.read();
+        let key = exact_match_key(method.as_str(), path);
+        idx.get(&key).map(Arc::clone)
+    }
+
     /// Check if any enabled mock has conditional matchers (headers, body, query, graphql).
     /// When false, cache lookups can be used more aggressively.
     pub fn has_conditional_mocks(&self) -> bool {
         self.ensure_exact_index();
         self.has_conditional_mocks.load(Ordering::Acquire)
+    }
+
+    /// Whether any enabled mock matches on the request body (body or graphql matcher).
+    /// Callers can skip reading the request body entirely when this is false.
+    pub fn needs_request_body(&self) -> bool {
+        self.ensure_exact_index();
+        self.has_body_dependent_mocks.load(Ordering::Acquire)
     }
 
     /// Clear all mocks from the registry
@@ -556,9 +622,9 @@ impl MockRegistry {
     }
 
     /// Update a mock definition
-    pub fn update_mock(&self, mock: MockDefinition) -> Result<(), String> {
+    pub fn update_mock(&self, mock: MockDefinition) -> crate::Result<()> {
         if !self.mocks.contains_key(&mock.id) {
-            return Err(format!("Mock with ID '{}' not found", mock.id));
+            return Err(crate::mp_err!("Mock with ID '{}' not found", mock.id));
         }
         self.mocks.insert(mock.id.clone(), Arc::new(mock));
         self.sorted_mocks_cache.invalidate();
@@ -567,7 +633,7 @@ impl MockRegistry {
     }
 
     /// Enable a specific mock by ID
-    pub fn enable_mock(&self, id: &str) -> Result<(), String> {
+    pub fn enable_mock(&self, id: &str) -> crate::Result<()> {
         // Clone the Arc first, then drop the read lock before inserting
         let arc_mock = self.mocks.get(id).map(|r| Arc::clone(r.value()));
 
@@ -579,12 +645,12 @@ impl MockRegistry {
             self.invalidate_exact_index();
             Ok(())
         } else {
-            Err(format!("Mock with ID '{id}' not found"))
+            Err(crate::mp_err!("Mock with ID '{id}' not found"))
         }
     }
 
     /// Disable a specific mock by ID
-    pub fn disable_mock(&self, id: &str) -> Result<(), String> {
+    pub fn disable_mock(&self, id: &str) -> crate::Result<()> {
         let arc_mock = self.mocks.get(id).map(|r| Arc::clone(r.value()));
 
         if let Some(arc_mock) = arc_mock {
@@ -595,7 +661,7 @@ impl MockRegistry {
             self.invalidate_exact_index();
             Ok(())
         } else {
-            Err(format!("Mock with ID '{id}' not found"))
+            Err(crate::mp_err!("Mock with ID '{id}' not found"))
         }
     }
 
@@ -627,12 +693,12 @@ impl MockRegistry {
         &self,
         id: LeanString,
         ttl: Option<std::time::Duration>,
-    ) -> Result<ScopeInfo, String> {
+    ) -> crate::Result<ScopeInfo> {
         self.scope_manager.create_scope(id, ttl)
     }
 
     /// Delete a scope and all its associated mocks
-    pub fn delete_scope(&self, scope_id: &str) -> Result<usize, String> {
+    pub fn delete_scope(&self, scope_id: &str) -> crate::Result<usize> {
         // First delete all mocks in this scope
         let mocks_deleted = self.remove_mocks_by_scope(scope_id);
 
@@ -838,7 +904,7 @@ impl MockRegistry {
     ///
     /// This removes all mocks from the given file and reloads them.
     /// Returns the number of mocks loaded.
-    pub async fn reload_file(&self, path: &std::path::Path) -> Result<usize, String> {
+    pub async fn reload_file(&self, path: &std::path::Path) -> crate::Result<usize> {
         let path_str = path.to_string_lossy().to_string();
 
         // Get all mocks from this file
@@ -854,10 +920,10 @@ impl MockRegistry {
             match ext {
                 "json" | "yaml" | "yml" => self.load_collection_file(path).await,
                 "har" => self.load_har_file(path).await,
-                _ => Err(format!("Unsupported file extension: {ext}")),
+                _ => Err(crate::mp_err!("Unsupported file extension: {ext}")),
             }
         } else {
-            Err("File has no extension".to_string())
+            Err(crate::mp_err!("File has no extension"))
         }
     }
 
@@ -877,14 +943,14 @@ impl MockRegistry {
     ///
     /// This validates template syntax after conversion to MockDefinition,
     /// to catch errors during config load rather than at runtime.
-    fn validate_mock_templates(mock: &crate::engine::types::MockDefinition) -> Result<(), String> {
+    fn validate_mock_templates(mock: &crate::engine::types::MockDefinition) -> crate::Result<()> {
         // Check if the response body is a template
         if let crate::engine::types::BodySource::Template {
             source: template, ..
         } = &mock.response.body
             && let Err(e) = crate::template::validate_template(template)
         {
-            return Err(format!(
+            return Err(crate::mp_err!(
                 "Mock '{}': Template validation failed: {}",
                 mock.id, e
             ));
@@ -1099,7 +1165,7 @@ mod tests {
 
         let result = registry.update_mock(mock);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]

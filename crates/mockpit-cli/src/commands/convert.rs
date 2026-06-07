@@ -26,12 +26,12 @@ pub struct ConvertHarOptions {
 pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
     use mockpit::config::{HarLoadOptions, HarLoader, MockCollectionConfig};
 
-    println!("{}", ui::action("Converting HAR file to mock collection"));
-    println!();
-    println!("{}", ui::kv("Input", &ui::path(&opts.input)));
-    println!("{}", ui::kv("Output", &ui::path(&opts.output)));
-    println!("{}", ui::kv("Format", &opts.format));
-    println!();
+    crate::say!("{}", ui::action("Converting HAR file to mock collection"));
+    crate::say!();
+    crate::say!("{}", ui::kv("Input", &ui::path(&opts.input)));
+    crate::say!("{}", ui::kv("Output", &ui::path(&opts.output)));
+    crate::say!("{}", ui::kv("Format", &opts.format));
+    crate::say!();
 
     // Derive body_output_dir from output file's parent directory if extraction is enabled
     let body_output_dir = if opts.extract_bodies {
@@ -93,7 +93,7 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
             ui::number(mocks.len())
         ))
     );
-    println!();
+    crate::say!();
 
     // Interactive mode: show each mock and allow editing
     let final_mocks = if opts.interactive {
@@ -101,37 +101,37 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
             "{}",
             ui::info("Interactive mode enabled - Review and edit each mock definition")
         );
-        println!();
+        crate::say!();
 
         let mut edited_mocks = Vec::new();
 
         for (idx, mock) in mocks.iter().enumerate() {
             ui::divider();
-            println!("{}", ui::step(idx + 1, mocks.len(), "Reviewing mock"));
+            crate::say!("{}", ui::step(idx + 1, mocks.len(), "Reviewing mock"));
             ui::divider();
-            println!();
-            println!("{}", ui::kv("ID", &mock.id));
+            crate::say!();
+            crate::say!("{}", ui::kv("ID", &mock.id));
             if let Some(ref match_config) = mock.match_config {
                 println!(
                     "{}",
                     ui::kv("Method", &format!("{:?}", match_config.methods))
                 );
-                println!("{}", ui::kv("Pattern", &format!("{:?}", match_config.urls)));
+                crate::say!("{}", ui::kv("Pattern", &format!("{:?}", match_config.urls)));
             }
             if let Some(ref response_config) = mock.response_config
                 && let Some(status) = response_config.status()
             {
-                println!("{}", ui::kv("Status", &ui::number(status)));
+                crate::say!("{}", ui::kv("Status", &ui::number(status)));
             }
-            println!();
+            crate::say!();
 
             // Ask user what to do
             println!("{}:", ui::emphasis("Options"));
-            println!("{}", ui::list_item("[k]eep   - Include this mock"));
-            println!("{}", ui::list_item("[s]kip   - Exclude this mock"));
-            println!("{}", ui::list_item("[e]dit   - Edit URL pattern"));
-            println!("{}", ui::list_item("[q]uit   - Stop and save what we have"));
-            println!();
+            crate::say!("{}", ui::list_item("[k]eep   - Include this mock"));
+            crate::say!("{}", ui::list_item("[s]kip   - Exclude this mock"));
+            crate::say!("{}", ui::list_item("[e]dit   - Edit URL pattern"));
+            crate::say!("{}", ui::list_item("[q]uit   - Stop and save what we have"));
+            crate::say!();
 
             let mut input = String::new();
             print!("{} ", ui::emphasis("Your choice [k/s/e/q]:"));
@@ -142,21 +142,21 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
             match choice.as_str() {
                 "k" | "keep" | "" => {
                     edited_mocks.push(mock.clone());
-                    println!("{}", ui::success("Kept"));
-                    println!();
+                    crate::say!("{}", ui::success("Kept"));
+                    crate::say!();
                 }
                 "s" | "skip" => {
-                    println!("{}", ui::warning("Skipped"));
-                    println!();
+                    crate::say!("{}", ui::warning("Skipped"));
+                    crate::say!();
                 }
                 "e" | "edit" => {
-                    println!();
+                    crate::say!();
                     if let Some(ref match_config) = mock.match_config
                         && let Some(first_url) = match_config.urls.first()
                     {
-                        println!("{}", ui::kv("Current pattern", &format!("{first_url:?}")));
+                        crate::say!("{}", ui::kv("Current pattern", &format!("{first_url:?}")));
                     }
-                    println!();
+                    crate::say!();
                     print!("{} ", ui::emphasis("New pattern:"));
                     std::io::stdout().flush()?;
 
@@ -166,26 +166,26 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
 
                     if new_pattern.is_empty() {
                         edited_mocks.push(mock.clone());
-                        println!("{}", ui::info("Kept original pattern"));
-                        println!();
+                        crate::say!("{}", ui::info("Kept original pattern"));
+                        crate::say!();
                     } else {
                         let mut edited_mock = mock.clone();
                         if let Some(ref mut match_config) = edited_mock.match_config {
                             match_config.urls = vec![new_pattern.to_string()];
                         }
                         edited_mocks.push(edited_mock);
-                        println!("{}", ui::success("Updated pattern"));
-                        println!();
+                        crate::say!("{}", ui::success("Updated pattern"));
+                        crate::say!();
                     }
                 }
                 "q" | "quit" => {
-                    println!("{}", ui::info("Stopping..."));
-                    println!();
+                    crate::say!("{}", ui::info("Stopping..."));
+                    crate::say!();
                     break;
                 }
                 _ => {
-                    println!("{}", ui::warning("Invalid choice, keeping mock"));
-                    println!();
+                    crate::say!("{}", ui::warning("Invalid choice, keeping mock"));
+                    crate::say!();
                     edited_mocks.push(mock.clone());
                 }
             }
@@ -197,7 +197,7 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
     };
 
     if final_mocks.is_empty() {
-        println!("{}", ui::warning("No mocks to save (all were skipped)"));
+        crate::say!("{}", ui::warning("No mocks to save (all were skipped)"));
         return Ok(());
     }
 
@@ -237,9 +237,9 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
         "{}",
         ui::success("Successfully converted HAR to mock collection")
     );
-    println!();
-    println!("{}", ui::kv("Output", &ui::path(&opts.output)));
-    println!("{}", ui::kv("Mocks", &ui::number(collection.mocks.len())));
+    crate::say!();
+    crate::say!("{}", ui::kv("Output", &ui::path(&opts.output)));
+    crate::say!("{}", ui::kv("Mocks", &ui::number(collection.mocks.len())));
 
     Ok(())
 }

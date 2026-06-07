@@ -22,7 +22,7 @@
 //! use std::time::Duration;
 //!
 //! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
+//! async fn main() -> crate::Result<()> {
 //!     // Create a recorder
 //!     let recorder = MockRecorder::new("my-session", "./recordings");
 //!

@@ -1,6 +1,6 @@
 //! Recording format handling
 
-use anyhow::Result;
+use crate::Result;
 
 /// Recording format for saving sessions
 #[derive(Debug, Clone, Copy)]
@@ -24,7 +24,7 @@ impl RecordingFormat {
             "json" => Ok(RecordingFormat::Json),
             "yaml" | "yml" => Ok(RecordingFormat::Yaml),
             "har" => Ok(RecordingFormat::Har),
-            _ => Err(anyhow::anyhow!("Invalid recording format: {s}")),
+            _ => Err(crate::mp_err!("Invalid recording format: {s}")),
         }
     }
 }

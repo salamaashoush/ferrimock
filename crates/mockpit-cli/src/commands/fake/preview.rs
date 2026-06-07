@@ -37,7 +37,7 @@ pub async fn preview_template(
     } else {
         for (i, result) in results.iter().enumerate() {
             if count > 1 {
-                println!("{}", ui::dim(&format!("--- Render {} ---", i + 1)));
+                crate::say!("{}", ui::dim(&format!("--- Render {} ---", i + 1)));
             }
             // Try to pretty-print JSON
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result) {
@@ -46,7 +46,7 @@ pub async fn preview_template(
                 println!("{result}");
             }
             if count > 1 {
-                println!();
+                crate::say!();
             }
         }
     }

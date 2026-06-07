@@ -2,7 +2,7 @@
 //!
 //! Allows embedders to add template functions without depending on the
 //! underlying template engine (tera). Functions receive arguments as
-//! `HashMap<String, serde_json::Value>` and return `Result<serde_json::Value, String>`.
+//! `HashMap<String, serde_json::Value>` and return `crate::Result<serde_json::Value>`.
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -11,17 +11,17 @@ use std::sync::{Arc, Mutex};
 /// A custom template function that can be registered by embedders.
 ///
 /// Receives named arguments as a JSON value map and returns a JSON value.
-/// Closures with the signature `Fn(&HashMap<String, Value>) -> Result<Value, String>`
+/// Closures with the signature `Fn(&HashMap<String, Value>) -> crate::Result<Value>`
 /// automatically implement this trait.
 pub trait TemplateFunction: Send + Sync + 'static {
-    fn call(&self, args: &HashMap<String, Value>) -> Result<Value, String>;
+    fn call(&self, args: &HashMap<String, Value>) -> crate::Result<Value>;
 }
 
 impl<F> TemplateFunction for F
 where
-    F: Fn(&HashMap<String, Value>) -> Result<Value, String> + Send + Sync + 'static,
+    F: Fn(&HashMap<String, Value>) -> crate::Result<Value> + Send + Sync + 'static,
 {
-    fn call(&self, args: &HashMap<String, Value>) -> Result<Value, String> {
+    fn call(&self, args: &HashMap<String, Value>) -> crate::Result<Value> {
         self(args)
     }
 }

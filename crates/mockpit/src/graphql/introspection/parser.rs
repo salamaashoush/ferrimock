@@ -1,7 +1,8 @@
 //! GraphQL schema parser for introspection responses
 
 use super::types::*;
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::Context;
 use rustc_hash::FxHashMap;
 
 /// Parser for GraphQL introspection responses

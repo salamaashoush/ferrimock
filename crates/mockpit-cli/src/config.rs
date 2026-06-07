@@ -6,9 +6,10 @@
 /// 3. ~/.config/mockpit/config.toml
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Default, Deserialize)]
-#[allow(dead_code)] // Fields are deserialized from config file; will be wired to commands in future
 pub struct Config {
     /// Default mock collections directory
     pub collections_dir: Option<String>,
@@ -18,6 +19,56 @@ pub struct Config {
     pub port: Option<u16>,
     /// Default mock server host
     pub host: Option<String>,
+}
+
+static CONFIG: OnceLock<Config> = OnceLock::new();
+static QUIET: AtomicBool = AtomicBool::new(false);
+
+/// Install the loaded config as the process-wide default (call once from `main`).
+pub fn init(config: Config) {
+    let _ = CONFIG.set(config);
+}
+
+fn get() -> &'static Config {
+    CONFIG.get_or_init(Config::default)
+}
+
+/// Set quiet mode (suppresses decorative output; errors still print).
+pub fn set_quiet(quiet: bool) {
+    QUIET.store(quiet, Ordering::Relaxed);
+}
+
+/// Whether quiet mode is on.
+pub fn is_quiet() -> bool {
+    QUIET.load(Ordering::Relaxed)
+}
+
+/// Resolve the mock collections directory: `MOCKS_DIR` env > config > default.
+pub fn mocks_dir() -> String {
+    std::env::var("MOCKS_DIR")
+        .ok()
+        .or_else(|| get().collections_dir.clone())
+        .unwrap_or_else(|| "mocks/collections".to_string())
+}
+
+/// Configured default server port, if any.
+pub fn default_port() -> Option<u16> {
+    get().port
+}
+
+/// Configured default server host, if any.
+pub fn default_host() -> Option<String> {
+    get().host.clone()
+}
+
+/// Print a line of decorative output unless quiet mode is on.
+#[macro_export]
+macro_rules! say {
+    ($($arg:tt)*) => {
+        if !$crate::config::is_quiet() {
+            println!($($arg)*);
+        }
+    };
 }
 
 fn find_config_file(explicit_path: Option<&str>) -> Option<PathBuf> {

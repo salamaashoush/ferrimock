@@ -17,7 +17,7 @@ pub struct ExportResult {
 }
 
 /// Export mocks to HAR format.
-pub async fn export(input: ExportInput) -> Result<ExportResult, anyhow::Error> {
+pub async fn export(input: ExportInput) -> Result<ExportResult, crate::MockpitError> {
     let dir = input.mocks_dir.unwrap_or_else(|| {
         std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string())
     });
@@ -26,7 +26,7 @@ pub async fn export(input: ExportInput) -> Result<ExportResult, anyhow::Error> {
     registry
         .load_from_directory(&dir)
         .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+        .map_err(|e| crate::mp_err!(e))?;
 
     let all_mocks = registry.get_all_mocks();
 

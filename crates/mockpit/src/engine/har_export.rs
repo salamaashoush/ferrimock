@@ -3,7 +3,7 @@
 //! Export mock definitions to HAR format for static snapshots.
 //! Note: Templates and dynamic features are not preserved in HAR export.
 
-use anyhow::Result;
+use crate::Result;
 use har::{Har, Spec, v1_2};
 use std::sync::Arc;
 

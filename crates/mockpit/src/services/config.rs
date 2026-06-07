@@ -34,9 +34,9 @@ pub struct MockpitConfig {
 }
 
 /// Parse a config file from disk. Detects format from extension.
-pub fn parse_config_file(path: &str) -> Result<MockpitConfig, anyhow::Error> {
+pub fn parse_config_file(path: &str) -> Result<MockpitConfig, crate::MockpitError> {
     let path = std::path::Path::new(path);
-    anyhow::ensure!(path.exists(), "Config file not found: {}", path.display());
+    crate::mp_ensure!(path.exists(), "Config file not found: {}", path.display());
 
     let content = std::fs::read_to_string(path)?;
     let ext = path
@@ -48,11 +48,11 @@ pub fn parse_config_file(path: &str) -> Result<MockpitConfig, anyhow::Error> {
 }
 
 /// Parse a config from a string with explicit format.
-pub fn parse_config_string(content: &str, format: &str) -> Result<MockpitConfig, anyhow::Error> {
+pub fn parse_config_string(content: &str, format: &str) -> Result<MockpitConfig, crate::MockpitError> {
     match format {
         "json" => Ok(serde_json::from_str(content)?),
         "yaml" | "yml" => Ok(serde_yaml::from_str(content)?),
-        other => anyhow::bail!("Unsupported config format: .{other} (use .yaml, .yml, or .json)"),
+        other => crate::mp_bail!("Unsupported config format: .{other} (use .yaml, .yml, or .json)"),
     }
 }
 

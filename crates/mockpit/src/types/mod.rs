@@ -23,7 +23,7 @@ use std::time::Duration;
 pub type HandlerFn = Arc<
     dyn Fn(
             RequestContext,
-        ) -> Pin<Box<dyn Future<Output = Result<DynamicResponse, anyhow::Error>> + Send>>
+        ) -> Pin<Box<dyn Future<Output = Result<DynamicResponse, crate::MockpitError>> + Send>>
         + Send
         + Sync,
 >;
@@ -58,13 +58,31 @@ impl RequestContext {
         Self::default()
     }
 
-    /// Create request context from HTTP components
+    /// Create request context from HTTP components (materializes all fields).
     pub fn from_request(
         method: &str,
         uri: &str,
         query: Option<&str>,
         headers: &HeaderMap,
         body: Option<&[u8]>,
+    ) -> Self {
+        Self::from_request_selective(method, uri, query, headers, body, true, true)
+    }
+
+    /// Create request context, materializing only the fields the consumer needs.
+    ///
+    /// `want_headers` / `want_body` are computed once at load time from the
+    /// template source (a template that never references `headers`/`body` does not
+    /// pay for building the header map or parsing the body JSON per request).
+    /// Handlers and non-template paths pass `true` for both (full context).
+    pub fn from_request_selective(
+        method: &str,
+        uri: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+        want_headers: bool,
+        want_body: bool,
     ) -> Self {
         // Parse query string
         let query_params = if let Some(q) = query {
@@ -83,17 +101,24 @@ impl RequestContext {
         // Extract path (uri without query string)
         let path = uri.split('?').next().unwrap_or_default().to_string();
 
-        // Extract headers
-        let header_map: FxHashMap<_, _> = headers
-            .iter()
-            .filter_map(|(k, v)| v.to_str().ok().map(|val| (k.to_string(), val.to_string())))
-            .collect();
+        // Extract headers only when the consumer references them.
+        let header_map: FxHashMap<_, _> = if want_headers {
+            headers
+                .iter()
+                .filter_map(|(k, v)| v.to_str().ok().map(|val| (k.to_string(), val.to_string())))
+                .collect()
+        } else {
+            FxHashMap::default()
+        };
 
-        // Validate UTF-8 in-place (no copy), then allocate String only if valid
-        let body_str = body.and_then(|b| std::str::from_utf8(b).ok().map(String::from));
-
-        // Parse body as JSON if possible
-        let body_json = body_str.as_ref().and_then(|s| serde_json::from_str(s).ok());
+        // Validate UTF-8 in-place (no copy) and parse JSON only when referenced.
+        let (body_str, body_json) = if want_body {
+            let s = body.and_then(|b| std::str::from_utf8(b).ok().map(String::from));
+            let json = s.as_ref().and_then(|s| serde_json::from_str(s).ok());
+            (s, json)
+        } else {
+            (None, None)
+        };
 
         Self {
             method: method.to_string(),
@@ -562,8 +587,12 @@ impl BodyMatcher {
         BodyMatcher::JsonEquals(value)
     }
 
-    /// Check if the matcher matches the given body
-    pub fn matches(&self, body: &[u8]) -> bool {
+    /// Check if the matcher matches the given body.
+    ///
+    /// `parsed_json` is an optional request-body JSON parsed once per request and
+    /// shared across all matchers; JSON matchers reuse it instead of re-parsing.
+    /// Pass `None` to have JSON matchers parse the body themselves.
+    pub fn matches(&self, body: &[u8], parsed_json: Option<&serde_json::Value>) -> bool {
         match self {
             BodyMatcher::Contains(substr) => {
                 if let Ok(body_str) = std::str::from_utf8(body) {
@@ -580,21 +609,28 @@ impl BodyMatcher {
                 }
             }
             BodyMatcher::JsonPath { path, value } => {
-                // Parse body as JSON
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
-                    // Use simple JSONPath-like matching
-                    Self::json_path_match(&json, path, value)
-                } else {
-                    false
-                }
+                Self::with_json(body, parsed_json, |json| {
+                    Self::json_path_match(json, path, value)
+                })
             }
             BodyMatcher::JsonEquals(expected) => {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
-                    &json == expected
-                } else {
-                    false
-                }
+                Self::with_json(body, parsed_json, |json| json == expected)
             }
+        }
+    }
+
+    /// Resolve request-body JSON: use the shared pre-parsed value when present,
+    /// otherwise parse from bytes. Returns false if no valid JSON is available.
+    #[inline]
+    fn with_json<F: FnOnce(&serde_json::Value) -> bool>(
+        body: &[u8],
+        parsed_json: Option<&serde_json::Value>,
+        f: F,
+    ) -> bool {
+        match parsed_json {
+            Some(json) => f(json),
+            None => serde_json::from_slice::<serde_json::Value>(body)
+                .map_or(false, |json| f(&json)),
         }
     }
 
@@ -856,7 +892,7 @@ impl DynamicResponse {
     /// It checks for structured response format: { status?, headers?, body }
     /// - If the response has status/headers/body fields, parse them
     /// - If not, use the entire JSON as the body
-    pub fn from_json(json: &serde_json::Value) -> Result<Self, anyhow::Error> {
+    pub fn from_json(json: &serde_json::Value) -> Result<Self, crate::MockpitError> {
         if let Some(obj) = json.as_object() {
             // Check for structured response format: { status, headers, body }
             let has_status = obj.contains_key("status");
@@ -952,12 +988,19 @@ pub struct ResponseGenerator {
     /// Whether the template may produce a structured response (`{ "status": ..., "headers": ..., "body": ... }`).
     /// When false, the rendered output is used directly as the body (skips JSON parse).
     pub structured_response: bool,
+    /// Whether the template body references request headers (computed at load time).
+    /// When false, the per-request context skips building the header map.
+    pub context_uses_headers: bool,
+    /// Whether the template body references the request body (computed at load time).
+    /// When false, the per-request context skips the body string + JSON parse.
+    pub context_uses_body: bool,
 }
 
 impl ResponseGenerator {
     /// Create a new response generator with the given status and body
     pub fn new(status: StatusCode, body: BodySource) -> Self {
         let structured_response = body.may_produce_structured_response();
+        let (context_uses_headers, context_uses_body) = body.context_needs();
         Self {
             status,
             headers: FxHashMap::default(),
@@ -965,6 +1008,8 @@ impl ResponseGenerator {
             delay: None,
             mode: ResponseMode::default(),
             structured_response,
+            context_uses_headers,
+            context_uses_body,
         }
     }
 
@@ -992,6 +1037,9 @@ impl ResponseGenerator {
     /// Replace the body source and recalculate the structured response flag
     pub fn set_body(&mut self, body: BodySource) {
         self.structured_response = body.may_produce_structured_response();
+        let (uses_headers, uses_body) = body.context_needs();
+        self.context_uses_headers = uses_headers;
+        self.context_uses_body = uses_body;
         self.body = body;
     }
 
@@ -999,7 +1047,7 @@ impl ResponseGenerator {
     ///
     /// Note: Template rendering is not available in bdg-mock-types.
     /// Use bdg-mock-template or bdg-mock-engine for template support.
-    pub async fn generate_static(&self) -> Result<bytes::Bytes, anyhow::Error> {
+    pub async fn generate_static(&self) -> Result<bytes::Bytes, crate::MockpitError> {
         // Apply delay if configured
         if let Some(delay) = self.delay {
             tokio::time::sleep(delay).await;
@@ -1018,17 +1066,17 @@ impl ResponseGenerator {
                 // Zero-copy cached file content
                 Ok((**cached_bytes).clone())
             }
-            BodySource::Template { .. } => Err(anyhow::anyhow!(
+            BodySource::Template { .. } => Err(crate::mp_err!(
                 "Template rendering not available in bdg-mock-types. Use bdg-mock-template or bdg-mock-engine."
             )),
-            BodySource::Handler(_) => Err(anyhow::anyhow!(
+            BodySource::Handler(_) => Err(crate::mp_err!(
                 "Handler-based responses require generate_dynamic(). Use the engine's ResponseGeneratorExt."
             )),
         }
     }
 
     /// Build header map from the configured headers
-    pub fn build_headers(&self) -> Result<HeaderMap, anyhow::Error> {
+    pub fn build_headers(&self) -> Result<HeaderMap, crate::MockpitError> {
         let mut header_map = HeaderMap::new();
         for (name, value) in &self.headers {
             let header_name = HeaderName::try_from(name.as_str())?;
@@ -1123,6 +1171,23 @@ impl BodySource {
     /// Create a handler body source from a function
     pub fn handler(f: HandlerFn) -> Self {
         BodySource::Handler(f)
+    }
+
+    /// Which request-context fields this body may reference: `(headers, body)`.
+    ///
+    /// For templates this is a substring scan of the source — template *functions*
+    /// (fake/store) never read the request context, so the only access path to
+    /// headers/body is the `{{ headers }}` / `{{ body }}` / `{{ body_json }}`
+    /// variables, both of which contain "header"/"body". A false positive only
+    /// costs a little extra work; there is no false-negative path. Non-template
+    /// bodies (handlers, etc.) get the full context.
+    fn context_needs(&self) -> (bool, bool) {
+        match self {
+            BodySource::Template { source, .. } => {
+                (source.contains("header"), source.contains("body"))
+            }
+            _ => (true, true),
+        }
     }
 
     /// Whether this body source may produce a structured response with status/headers/body fields.
@@ -1390,18 +1455,18 @@ mod tests {
 
         // Array index access
         let matcher = BodyMatcher::json_path("$.users[0].name", serde_json::json!("Alice"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         let matcher = BodyMatcher::json_path("$.users[1].role", serde_json::json!("user"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         // Wrong value
         let matcher = BodyMatcher::json_path("$.users[0].name", serde_json::json!("Bob"));
-        assert!(!matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(!matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         // Out of bounds
         let matcher = BodyMatcher::json_path("$.users[2].name", serde_json::json!("Charlie"));
-        assert!(!matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(!matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
     }
 
     #[test]
@@ -1423,14 +1488,14 @@ mod tests {
 
         // Nested array access
         let matcher = BodyMatcher::json_path("$.data.items[0].tags[0]", serde_json::json!("rust"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         let matcher = BodyMatcher::json_path("$.data.items[1].tags[1]", serde_json::json!("web"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         // Access nested object in array
         let matcher = BodyMatcher::json_path("$.data.items[0].id", serde_json::json!(1));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
     }
 
     #[test]
@@ -1454,13 +1519,13 @@ mod tests {
             "$.response.users[0].addresses[0].city",
             serde_json::json!("New York"),
         );
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         let matcher = BodyMatcher::json_path(
             "$.response.users[0].addresses[1].zip",
             serde_json::json!("02101"),
         );
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
     }
 
     #[test]
@@ -1473,11 +1538,11 @@ mod tests {
 
         // Without $ prefix
         let matcher = BodyMatcher::json_path("users[0].name", serde_json::json!("Alice"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         // Without $. prefix
         let matcher = BodyMatcher::json_path("users[0].name", serde_json::json!("Alice"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
     }
 
     #[test]
@@ -1488,10 +1553,10 @@ mod tests {
 
         // Direct array access
         let matcher = BodyMatcher::json_path("$.tags[0]", serde_json::json!("rust"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         let matcher = BodyMatcher::json_path("$.tags[2]", serde_json::json!("testing"));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
     }
 
     #[test]
@@ -1506,13 +1571,13 @@ mod tests {
 
         // Consecutive array indices (2D array)
         let matcher = BodyMatcher::json_path("$.matrix[0][0]", serde_json::json!(1));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         let matcher = BodyMatcher::json_path("$.matrix[1][2]", serde_json::json!(6));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
 
         let matcher = BodyMatcher::json_path("$.matrix[2][1]", serde_json::json!(8));
-        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes()));
+        assert!(matcher.matches(serde_json::to_string(&json).unwrap().as_bytes(), None));
     }
 
     #[test]

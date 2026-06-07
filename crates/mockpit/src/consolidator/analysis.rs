@@ -3,7 +3,7 @@
 use crate::config::MockConfig;
 use crate::consolidator::pattern::QueryParamAnalysis;
 use crate::type_detector::{FieldType, TypeDetector};
-use anyhow::Result;
+use crate::Result;
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;

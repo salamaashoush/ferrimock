@@ -38,6 +38,10 @@ use std::sync::Arc;
 #[napi]
 pub struct MockpitServer {
     registry: Arc<MockRegistry>,
+    /// Single long-lived matcher reused across all `match_request` calls.
+    /// Shares the registry internals (Arc), so newly added mocks are visible.
+    /// Its LRU cache warms across requests; cleared on any mock mutation.
+    matcher: MockMatcher,
     /// FunctionRef map for interceptor fast path: mock_id -> handler FunctionRef.
     /// Used by match_request to call JS handlers directly without TSFN overhead.
     handler_refs: Arc<std::sync::RwLock<HashMap<String, Arc<HandlerFnRef>>>>,
@@ -51,8 +55,10 @@ impl MockpitServer {
     #[napi(constructor)]
     pub fn new() -> Self {
         let registry = Arc::new(MockRegistry::new());
+        let matcher = MockMatcher::new((*registry).clone());
         Self {
             registry,
+            matcher,
             handler_refs: Arc::new(std::sync::RwLock::new(HashMap::new())),
             shutdown_tx: Arc::new(std::sync::Mutex::new(None)),
             port: Arc::new(std::sync::atomic::AtomicU16::new(0)),
@@ -77,6 +83,7 @@ impl MockpitServer {
                 self.handler_refs.write().unwrap().insert(mock_id, fn_ref);
             }
         }
+        self.matcher.clear_cache();
         Ok(())
     }
 
@@ -100,6 +107,7 @@ impl MockpitServer {
                 self.handler_refs.write().unwrap().insert(mock_id, fn_ref);
             }
         }
+        self.matcher.clear_cache();
         Ok(())
     }
 
@@ -115,6 +123,7 @@ impl MockpitServer {
                 let _ = self.registry.enable_mock(mock.id.as_str());
             }
         }
+        self.matcher.clear_cache();
         Ok(())
     }
 
@@ -135,6 +144,7 @@ impl MockpitServer {
             self.registry.remove_mock(id);
             self.handler_refs.write().unwrap().remove(id);
         }
+        self.matcher.clear_cache();
         Ok(())
     }
 
@@ -149,6 +159,7 @@ impl MockpitServer {
             .load_from_directory(&dir_path)
             .await
             .map_err(|e| Error::from_reason(format!("Failed to load mocks: {e}")))?;
+        self.matcher.clear_cache();
         #[allow(clippy::cast_possible_truncation)]
         Ok(count as u32)
     }
@@ -189,6 +200,7 @@ impl MockpitServer {
                 .map_err(|e| Error::from_reason(format!("Failed to load mock file: {e}")))?
         };
 
+        self.matcher.clear_cache();
         #[allow(clippy::cast_possible_truncation)]
         Ok(count as u32)
     }
@@ -209,6 +221,7 @@ impl MockpitServer {
 
         let id = mock_def.id.to_string();
         self.registry.add_mock(mock_def);
+        self.matcher.clear_cache();
         Ok(id)
     }
 
@@ -218,13 +231,25 @@ impl MockpitServer {
     /// @returns `true` if the mock was found and removed.
     #[napi]
     pub fn remove_mock(&self, id: String) -> bool {
-        self.registry.remove_mock(&id).is_some()
+        let removed = self.registry.remove_mock(&id).is_some();
+        if removed {
+            self.matcher.clear_cache();
+        }
+        removed
     }
 
     /// Get the number of registered mocks.
     #[napi(getter)]
     pub fn mock_count(&self) -> u32 {
         self.registry.len() as u32
+    }
+
+    /// Whether any registered mock matches on the request body (body or GraphQL
+    /// matcher). Lets the interceptor skip reading the request body when no mock
+    /// could use it.
+    #[napi(getter)]
+    pub fn needs_request_body(&self) -> bool {
+        self.registry.needs_request_body()
     }
 
     /// List all registered handlers.
@@ -260,8 +285,7 @@ impl MockpitServer {
         let port = port.unwrap_or(0) as u16;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-        let registry = Arc::clone(&self.registry);
-        let matcher = MockMatcher::new((*registry).clone());
+        let matcher = self.matcher.clone();
 
         let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
             .await
@@ -333,7 +357,8 @@ impl MockpitServer {
     ///    - Handler: FunctionRef direct call (~1us)
     ///
     /// Returns null if no mock matches.
-    #[napi]
+    #[allow(private_interfaces)] // MaybePromise is an internal raw-value wrapper
+    #[napi(ts_return_type = "Promise<MatchedResponse | null>")]
     pub fn match_request<'env>(
         &self,
         env: &'env Env,
@@ -343,8 +368,10 @@ impl MockpitServer {
         headers: Option<HashMap<String, String>>,
         body: Option<String>,
     ) -> Result<PromiseRaw<'env, MaybePromise>> {
-        let registry = Arc::clone(&self.registry);
         let handler_refs = Arc::clone(&self.handler_refs);
+        // Reuse the long-lived matcher (cheap Arc-based clone) instead of
+        // building a fresh one with an empty LRU per request.
+        let matcher = self.matcher.clone();
 
         env.spawn_future_with_callback(
             // === Phase 1: Rust matching on tokio ===
@@ -367,7 +394,6 @@ impl MockpitServer {
 
                 let body_bytes = body.as_deref().map(str::as_bytes);
 
-                let matcher = MockMatcher::new((*registry).clone());
                 let mock_match = matcher.find_match(
                     &http_method,
                     &path,
@@ -470,7 +496,7 @@ impl MockpitServer {
                                     None => Ok(Some(MatchedResponse {
                                         status: 200,
                                         headers: HashMap::new(),
-                                        body: String::new(),
+                                        body: Uint8Array::from(Vec::new()),
                                         mock_id: mock_id.to_string(),
                                     })),
                                 }
@@ -490,7 +516,7 @@ impl MockpitServer {
                                 None => Ok(MaybePromise::resolved(env, Some(MatchedResponse {
                                     status: 200,
                                     headers: HashMap::new(),
-                                    body: String::new(),
+                                    body: Uint8Array::from(Vec::new()),
                                     mock_id: mock_id.to_string(),
                                 }))?),
                             }
@@ -511,11 +537,15 @@ pub struct HandlerInfo {
 }
 
 /// Result of matching a request against the mock registry.
+///
+/// `body` is raw bytes (`Uint8Array`) so binary responses (images, protobuf,
+/// gzip) round-trip losslessly. Build a `Response` directly from it; decode with
+/// `TextDecoder` when a string is needed.
 #[napi(object)]
 pub struct MatchedResponse {
     pub status: u32,
     pub headers: HashMap<String, String>,
-    pub body: String,
+    pub body: Uint8Array,
     pub mock_id: String,
 }
 
@@ -548,6 +578,9 @@ impl MaybePromise {
 }
 
 /// Phase 1 result, sent from tokio to the JS-thread resolver.
+// Short-lived stack value moved once per request into the resolver; boxing the
+// large variant would add a hot-path allocation for no real benefit.
+#[allow(clippy::large_enum_variant)]
 enum MatchPhaseResult {
     NoMatch,
     DeclarativeResponse(MatchedResponse),
@@ -574,7 +607,8 @@ fn build_matched_response(
     if let Some(dyn_headers) = dynamic.headers {
         headers.extend(dyn_headers);
     }
-    let body = String::from_utf8(dynamic.body.to_vec()).unwrap_or_default();
+    // Raw bytes — no UTF-8 round-trip, binary-safe.
+    let body = Uint8Array::from(dynamic.body.to_vec());
     MatchedResponse {
         status: u32::from(status),
         headers,
@@ -590,19 +624,14 @@ struct ServerState {
     matcher: MockMatcher,
 }
 
-/// Catch-all handler that matches incoming requests against the mock registry.
+/// Catch-all handler — delegates to the canonical `services::serve::respond`
+/// so the standalone server and the CLI share one mock-response implementation.
 async fn mock_handler(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
-    use axum::body::Body;
-    use axum::response::IntoResponse;
-    use http::header;
-
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path = uri.path();
-    let query = uri.query();
     let headers = req.headers().clone();
 
     let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
@@ -613,78 +642,13 @@ async fn mock_handler(
         .filter(|b| !b.is_empty())
         .map(|b| b.as_ref());
 
-    let mock_match = state
-        .matcher
-        .find_match(&method, path, query, &headers, body_ref);
-
-    if let Some(mock_match) = mock_match {
-        let mock_def = &mock_match.mock;
-        let captures = mock_match.captures;
-
-        let dynamic = mock_def
-            .response
-            .generate_dynamic(
-                method.as_str(),
-                path,
-                query,
-                &headers,
-                body_ref,
-                captures,
-                mock_def.vars.as_ref(),
-            )
-            .await;
-
-        match dynamic {
-            Ok(resp) => {
-                let status = resp.status.unwrap_or(mock_def.response.status);
-                let mut response = axum::http::Response::builder().status(status);
-
-                for (key, value) in &mock_def.response.headers {
-                    response = response.header(key.as_str(), value.as_str());
-                }
-
-                if let Some(dyn_headers) = &resp.headers {
-                    for (key, value) in dyn_headers {
-                        response = response.header(key.as_str(), value.as_str());
-                    }
-                }
-
-                response
-                    .header("x-mockpit-id", mock_def.id.as_str())
-                    .body(Body::from(resp.body))
-                    .unwrap_or_else(|_| {
-                        (http::StatusCode::INTERNAL_SERVER_ERROR, "Response build error")
-                            .into_response()
-                    })
-            }
-            Err(e) => {
-                let error_body = serde_json::json!({
-                    "error": "Mock response generation failed",
-                    "mock_id": mock_def.id.as_str(),
-                    "details": e.to_string()
-                });
-
-                (
-                    http::StatusCode::INTERNAL_SERVER_ERROR,
-                    [(header::CONTENT_TYPE, "application/json")],
-                    error_body.to_string(),
-                )
-                    .into_response()
-            }
-        }
-    } else {
-        let error_body = serde_json::json!({
-            "error": "No matching mock found",
-            "method": method.as_str(),
-            "path": path,
-            "query": query
-        });
-
-        (
-            http::StatusCode::NOT_FOUND,
-            [(header::CONTENT_TYPE, "application/json")],
-            error_body.to_string(),
-        )
-            .into_response()
-    }
+    mockpit::services::serve::respond(
+        &state.matcher,
+        &method,
+        uri.path(),
+        uri.query(),
+        &headers,
+        body_ref,
+    )
+    .await
 }

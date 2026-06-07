@@ -1,6 +1,7 @@
 //! File watcher using the notify crate
 
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::Context;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};

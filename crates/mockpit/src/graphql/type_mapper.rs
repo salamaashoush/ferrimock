@@ -1,6 +1,7 @@
 //! Maps GraphQL types to fake data template functions using the advanced type detector
 
-use anyhow::{Context, Result};
+use crate::Result;
+use crate::error::Context;
 use rustc_hash::FxHashMap;
 use std::path::Path;
 
@@ -146,7 +147,7 @@ impl TypeToFakeMapper {
                     .unwrap_or_default()
             }
             _ => {
-                anyhow::bail!("Unsupported file extension '{extension}'. Use .json");
+                crate::mp_bail!("Unsupported file extension '{extension}'. Use .json");
             }
         };
 

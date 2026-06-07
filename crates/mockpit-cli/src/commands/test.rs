@@ -98,23 +98,23 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
     }
 
     // Human-readable UI output path
-    println!("{}", ui::action("Testing mock match"));
-    println!("{}", ui::kv("Method", method_str));
-    println!("{}", ui::kv("Path", &clean_path));
+    crate::say!("{}", ui::action("Testing mock match"));
+    crate::say!("{}", ui::kv("Method", method_str));
+    crate::say!("{}", ui::kv("Path", &clean_path));
     if let Some(q) = &final_query {
-        println!("{}", ui::kv("Query", q));
+        crate::say!("{}", ui::kv("Query", q));
     }
 
     // Parse headers
     let mut header_map = HeaderMap::new();
     if !headers.is_empty() {
-        println!();
-        println!("{}", ui::header("Request Headers"));
+        crate::say!();
+        crate::say!("{}", ui::header("Request Headers"));
         for header_str in headers {
             if let Some((name, value)) = header_str.split_once(':') {
                 let name = name.trim();
                 let value = value.trim();
-                println!("{}", ui::kv(name, value));
+                crate::say!("{}", ui::kv(name, value));
 
                 if let (Ok(header_name), Ok(header_value)) =
                     (HeaderName::try_from(name), HeaderValue::from_str(value))
@@ -140,7 +140,7 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
             let file_path = &b[1..];
             match std::fs::read(file_path) {
                 Ok(content) => {
-                    println!();
+                    crate::say!();
                     println!(
                         "{}",
                         ui::kv("Body", &format!("(from file: {})", ui::path(file_path)))
@@ -155,20 +155,20 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
             }
         }
         Some(b) => {
-            println!();
+            crate::say!();
             if b.len() > 100 {
                 #[allow(clippy::string_slice)]
                 let truncated = &b[..100];
-                println!("{}", ui::kv("Body", &format!("{truncated}...")));
+                crate::say!("{}", ui::kv("Body", &format!("{truncated}...")));
             } else {
-                println!("{}", ui::kv("Body", b));
+                crate::say!("{}", ui::kv("Body", b));
             }
             Some(b.as_bytes().to_vec())
         }
         None => None,
     };
 
-    println!();
+    crate::say!();
 
     let registry = MockRegistry::new();
     let count = if let Some(file) = mock_file {
@@ -185,7 +185,7 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
         count
     } else {
         let collections_dir =
-            std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+            crate::config::mocks_dir();
         let spinner = ui::spinner(&format!(
             "Loading mocks from {}...",
             ui::path(&collections_dir)
@@ -202,7 +202,7 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
         "{}",
         ui::success(&format!("Loaded {} mock definition(s)", ui::number(count)))
     );
-    println!();
+    crate::say!();
 
     let method = method_str
         .to_uppercase()
@@ -221,7 +221,7 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
             &header_map,
             body_bytes.as_deref(),
         );
-        println!();
+        crate::say!();
     }
 
     // Find the match
@@ -232,9 +232,9 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
         &header_map,
         body_bytes.as_deref(),
     ) {
-        println!("{}", ui::success("Match found!"));
-        println!();
-        println!("{}", ui::kv("Mock ID", &mock_match.mock.id));
+        crate::say!("{}", ui::success("Match found!"));
+        crate::say!();
+        crate::say!("{}", ui::kv("Mock ID", &mock_match.mock.id));
         println!(
             "{}",
             ui::kv("Priority", &ui::number(mock_match.mock.priority))
@@ -256,37 +256,37 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
 
         // Show source file if available
         if let Some(ref source_file) = mock_match.mock.source_file {
-            println!("{}", ui::kv("Source File", source_file));
+            crate::say!("{}", ui::kv("Source File", source_file));
         }
 
         // Print captures if any
         if !mock_match.captures.is_empty() {
-            println!();
-            println!("{}", ui::header("URL Captures"));
+            crate::say!();
+            crate::say!("{}", ui::header("URL Captures"));
             for (key, value) in &mock_match.captures {
-                println!("{}", ui::kv(key, value));
+                crate::say!("{}", ui::kv(key, value));
             }
         }
 
         // Render the response if requested
         if render {
-            println!();
-            println!("{}", ui::header("Rendered Response"));
+            crate::say!();
+            crate::say!("{}", ui::header("Rendered Response"));
 
             let response_generator = &mock_match.mock.response;
 
             // Show response headers
             if !response_generator.headers.is_empty() {
-                println!();
-                println!("{}", ui::emphasis("Headers:"));
+                crate::say!();
+                crate::say!("{}", ui::emphasis("Headers:"));
                 for (key, value) in &response_generator.headers {
                     println!("  {key}: {value}");
                 }
             }
 
             // Render body
-            println!();
-            println!("{}", ui::emphasis("Body:"));
+            crate::say!();
+            crate::say!("{}", ui::emphasis("Body:"));
 
             match response_generator
                 .generate_dynamic(
@@ -313,7 +313,7 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
                     if let Some(ref headers) = dynamic_response.headers
                         && !headers.is_empty()
                     {
-                        println!("{}", ui::emphasis("Header Overrides:"));
+                        crate::say!("{}", ui::emphasis("Header Overrides:"));
                         for (key, value) in headers {
                             println!("  {key}: {value}");
                         }
@@ -345,15 +345,15 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
                     }
                 }
                 Err(e) => {
-                    println!("{}", ui::error(&format!("Failed to render response: {e}")));
+                    crate::say!("{}", ui::error(&format!("Failed to render response: {e}")));
                 }
             }
         }
     } else {
-        println!("{}", ui::warning("No matching mock found for this request"));
+        crate::say!("{}", ui::warning("No matching mock found for this request"));
 
         if !debug {
-            println!();
+            crate::say!();
             println!(
                 "{}",
                 ui::dim("Tip: Use --debug to see why each mock didn't match")
@@ -425,7 +425,7 @@ async fn test_mock_match_json(
             .map_err(|e| anyhow::anyhow!("Failed to load mocks from file: {e}"))?;
     } else {
         let collections_dir =
-            std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+            crate::config::mocks_dir();
         registry
             .load_from_directory(&collections_dir)
             .await
@@ -538,13 +538,13 @@ fn show_debug_matching(
     headers: &HeaderMap,
     body: Option<&[u8]>,
 ) {
-    println!("{}", ui::header("Debug: Mock Matching Analysis"));
-    println!();
+    crate::say!("{}", ui::header("Debug: Mock Matching Analysis"));
+    crate::say!();
 
     let all_mocks = registry.get_enabled_mocks();
 
     if all_mocks.is_empty() {
-        println!("{}", ui::warning("No mocks loaded"));
+        crate::say!("{}", ui::warning("No mocks loaded"));
         return;
     }
 
@@ -681,7 +681,7 @@ fn show_debug_matching(
 
         // Check body matcher
         if let Some(ref body_matcher) = mock.request.body_matcher {
-            let body_match = body.is_some_and(|b| body_matcher.matches(b));
+            let body_match = body.is_some_and(|b| body_matcher.matches(b, None));
 
             if body_match {
                 match_details.push(format!("  {} Body: matcher passed", CHECK_ICON.green()));
@@ -746,6 +746,6 @@ fn show_debug_matching(
             println!("{detail}");
         }
 
-        println!();
+        crate::say!();
     }
 }

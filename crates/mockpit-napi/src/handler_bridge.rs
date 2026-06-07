@@ -77,9 +77,11 @@ pub fn js_to_handler_bridge(
                 Ok(promise) => match promise.await {
                     Ok(Some(resp)) => Ok(DynamicResponse::from(resp)),
                     Ok(None) => Ok(DynamicResponse::body_only(bytes::Bytes::new())),
-                    Err(e) => Err(anyhow::anyhow!("JS handler error: {e}")),
+                    Err(e) => Err(mockpit::MockpitError::msg(format!("JS handler error: {e}"))),
                 },
-                Err(e) => Err(anyhow::anyhow!("ThreadsafeFunction call error: {e}")),
+                Err(e) => Err(mockpit::MockpitError::msg(format!(
+                    "ThreadsafeFunction call error: {e}"
+                ))),
             }
         })
     });

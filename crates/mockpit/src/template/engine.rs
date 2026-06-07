@@ -80,7 +80,7 @@ impl TemplateEngine {
         &mut self,
         template: &str,
         tera_context: &Context,
-    ) -> Result<String, String> {
+    ) -> crate::Result<String> {
         let template_hash = Self::hash_template(template);
         self.render_with_hash(template, template_hash, tera_context)
     }
@@ -91,7 +91,7 @@ impl TemplateEngine {
         template: &str,
         template_hash: u64,
         tera_context: &Context,
-    ) -> Result<String, String> {
+    ) -> crate::Result<String> {
         // Check cache and compile if needed (get() updates LRU recency)
         if self.template_cache.get(&template_hash).is_none() {
             // Check if Tera has accumulated too many orphaned templates
@@ -105,7 +105,7 @@ impl TemplateEngine {
             // Add the template to Tera
             self.tera.add_raw_template(&new_id, template).map_err(|e| {
                 let error = super::error::TemplateError::from_tera_error(&e, template);
-                format!("{error}")
+                crate::MockpitError::Template(format!("{error}"))
             })?;
 
             // Store in cache and track total compiled
@@ -116,13 +116,13 @@ impl TemplateEngine {
         // Use peek() to get a shared reference - avoids cloning the template ID.
         // The template was just inserted or confirmed present via get() above.
         let Some(template_id) = self.template_cache.peek(&template_hash) else {
-            return Err("internal error: template cache inconsistency".to_string());
+            return Err(crate::mp_err!("internal error: template cache inconsistency"));
         };
 
         // Render the template
         self.tera.render(template_id, tera_context).map_err(|e| {
             let error = super::error::TemplateError::from_tera_error(&e, template);
-            format!("{error}")
+            crate::MockpitError::Template(error.to_string())
         })
     }
 

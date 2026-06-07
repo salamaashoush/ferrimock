@@ -14,13 +14,13 @@ pub struct TemplateInput {
 }
 
 /// Render a template with optional context.
-pub fn render(input: TemplateInput) -> Result<Vec<String>, anyhow::Error> {
+pub fn render(input: TemplateInput) -> Result<Vec<String>, crate::MockpitError> {
     let ctx = build_context(input.context.as_ref());
 
     let mut results = Vec::with_capacity(input.count.max(1));
     for _ in 0..input.count.max(1) {
         let rendered = crate::template::render_template(&input.template, &ctx)
-            .map_err(|e| anyhow::anyhow!("Template rendering failed: {e}"))?;
+            .map_err(|e| crate::mp_err!("Template rendering failed: {e}"))?;
         results.push(rendered);
     }
 

@@ -15,11 +15,11 @@ pub fn list_recordings(dir: Option<String>) -> anyhow::Result<()> {
             ui::path(&recordings_dir)
         ))
     );
-    println!();
+    crate::say!();
 
     let path = PathBuf::from(&recordings_dir);
     if !path.exists() {
-        println!("{}", ui::warning("Recordings directory does not exist"));
+        crate::say!("{}", ui::warning("Recordings directory does not exist"));
         return Ok(());
     }
 
@@ -37,7 +37,7 @@ pub fn list_recordings(dir: Option<String>) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
 
     if entries.is_empty() {
-        println!("{}", ui::info("No recordings found"));
+        crate::say!("{}", ui::info("No recordings found"));
         return Ok(());
     }
 
@@ -60,9 +60,9 @@ pub fn list_recordings(dir: Option<String>) -> anyhow::Result<()> {
             .unwrap_or("unknown");
         let size = entry.metadata().ok().map_or(0, |m| m.len());
 
-        println!();
-        println!("{}", ui::list_item(&ui::emphasis(name)));
-        println!("{}", ui::kv("  Size", &ui::format_bytes(size)));
+        crate::say!();
+        crate::say!("{}", ui::list_item(&ui::emphasis(name)));
+        crate::say!("{}", ui::kv("  Size", &ui::format_bytes(size)));
 
         if let Ok(modified) = entry.metadata().and_then(|m| m.modified())
             && let Ok(duration) = modified.duration_since(std::time::SystemTime::UNIX_EPOCH)
@@ -82,8 +82,8 @@ pub fn list_recordings(dir: Option<String>) -> anyhow::Result<()> {
         }
     }
 
-    println!();
-    println!("{}", ui::kv("Total", &ui::number(entries.len())));
+    crate::say!();
+    crate::say!("{}", ui::kv("Total", &ui::number(entries.len())));
 
     Ok(())
 }

@@ -52,7 +52,7 @@ pub struct RenderedResponse {
 }
 
 /// Test if a request matches any loaded mock.
-pub async fn test_match(input: TestMatchInput) -> Result<TestMatchResult, anyhow::Error> {
+pub async fn test_match(input: TestMatchInput) -> Result<TestMatchResult, crate::MockpitError> {
     let method: http::Method = input.method.parse()?;
 
     // Build headers
@@ -71,14 +71,14 @@ pub async fn test_match(input: TestMatchInput) -> Result<TestMatchResult, anyhow
         registry
             .load_collection_file(path)
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(|e| crate::mp_err!(e))?;
     } else {
         let default_dir = std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
         let dir = input.mocks_dir.as_deref().unwrap_or(&default_dir);
         registry
             .load_from_directory(dir)
             .await
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .map_err(|e| crate::mp_err!(e))?;
     }
 
     let matcher = MockMatcher::new(registry);

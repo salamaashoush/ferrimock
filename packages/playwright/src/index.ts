@@ -37,7 +37,7 @@ export async function routePage(
       await route.fulfill({
         status: match.status,
         headers: match.headers,
-        body: match.body,
+        body: Buffer.from(match.body),
       });
     } else {
       await route.continue();
@@ -59,7 +59,7 @@ export async function routeContext(
       await route.fulfill({
         status: match.status,
         headers: match.headers,
-        body: match.body,
+        body: Buffer.from(match.body),
       });
     } else {
       await route.continue();

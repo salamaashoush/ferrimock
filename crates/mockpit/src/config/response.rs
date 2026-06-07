@@ -602,7 +602,7 @@ impl ResolvedResponse {
     pub async fn into_response_generator_with_dir(
         self,
         config_dir: Option<&std::path::Path>,
-    ) -> Result<ResponseGenerator, String> {
+    ) -> crate::Result<ResponseGenerator> {
         self.into_response_generator_with_caching(true, config_dir)
             .await
     }
@@ -612,9 +612,9 @@ impl ResolvedResponse {
         self,
         cache_files: bool,
         config_dir: Option<&std::path::Path>,
-    ) -> Result<ResponseGenerator, String> {
+    ) -> crate::Result<ResponseGenerator> {
         let status = StatusCode::from_u16(self.status)
-            .map_err(|e| format!("Invalid status code {}: {}", self.status, e))?;
+            .map_err(|e| crate::mp_err!("Invalid status code {}: {}", self.status, e))?;
 
         let body = match self.body {
             BodyConfig::Inline { inline } => {
@@ -660,7 +660,7 @@ impl ResolvedResponse {
 
                 let template = tokio::fs::read_to_string(&path)
                     .await
-                    .map_err(|e| format!("Failed to read template file {}: {e}", path.display()))?;
+                    .map_err(|e| crate::mp_err!("Failed to read template file {}: {e}", path.display()))?;
 
                 BodySource::template(template)
             }
@@ -675,15 +675,15 @@ impl ResolvedResponse {
 }
 
 /// Convert ResponsePatchesConfig to PatchOperations
-pub fn parse_patches_config(config: ResponsePatchesConfig) -> Result<Vec<PatchOperation>, String> {
+pub fn parse_patches_config(config: ResponsePatchesConfig) -> crate::Result<Vec<PatchOperation>> {
     let mut operations = Vec::new();
 
     // Parse JSON Patch operations (RFC 6902)
     if !config.operations.is_empty() {
         let json_patch_str = serde_json::to_string(&config.operations)
-            .map_err(|e| format!("Failed to serialize JSON Patch operations: {e}"))?;
+            .map_err(|e| crate::mp_err!("Failed to serialize JSON Patch operations: {e}"))?;
         let json_patch: json_patch::Patch = serde_json::from_str(&json_patch_str)
-            .map_err(|e| format!("Failed to parse JSON Patch operations: {e}"))?;
+            .map_err(|e| crate::mp_err!("Failed to parse JSON Patch operations: {e}"))?;
         operations.push(PatchOperation::JsonPatch(json_patch));
     }
 
@@ -695,7 +695,7 @@ pub fn parse_patches_config(config: ResponsePatchesConfig) -> Result<Vec<PatchOp
     // Parse regex replacements
     for regex_config in config.regex {
         let pattern = regex::Regex::new(&regex_config.pattern)
-            .map_err(|e| format!("Invalid regex pattern '{}': {}", regex_config.pattern, e))?;
+            .map_err(|e| crate::mp_err!("Invalid regex pattern '{}': {}", regex_config.pattern, e))?;
         operations.push(PatchOperation::RegexReplace {
             pattern,
             replacement: regex_config.replacement,
@@ -716,7 +716,7 @@ pub fn parse_patches_config(config: ResponsePatchesConfig) -> Result<Vec<PatchOp
 }
 
 /// Parse duration string (e.g., "100ms", "1s", "500us")
-pub fn parse_duration(s: &str) -> Result<Duration, String> {
+pub fn parse_duration(s: &str) -> crate::Result<Duration> {
     let s = s.trim();
 
     // Check for microseconds first (before 's' check)
@@ -724,22 +724,22 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
         let value: u64 = us
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {s}"))?;
+            .map_err(|_| crate::mp_err!("Invalid duration: {s}"))?;
         Ok(Duration::from_micros(value))
     } else if let Some(ms) = s.strip_suffix("ms") {
         let value: u64 = ms
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {s}"))?;
+            .map_err(|_| crate::mp_err!("Invalid duration: {s}"))?;
         Ok(Duration::from_millis(value))
     } else if let Some(s_val) = s.strip_suffix('s') {
         let value: u64 = s_val
             .trim()
             .parse()
-            .map_err(|_| format!("Invalid duration: {s}"))?;
+            .map_err(|_| crate::mp_err!("Invalid duration: {s}"))?;
         Ok(Duration::from_secs(value))
     } else {
-        Err(format!(
+        Err(crate::mp_err!(
             "Invalid duration format: {s}. Expected format: '100ms', '1s', '500us'"
         ))
     }

@@ -7,7 +7,7 @@ use super::response::{
     ResponseConfig, ResponsePatchesConfig, parse_duration, parse_patches_config,
 };
 use crate::types::MockDefinition;
-use anyhow::Result;
+use crate::Result;
 use lean_string::LeanString;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -54,7 +54,7 @@ impl MockCollectionConfig {
     /// Parse from file (supports JSON, YAML, HAR based on extension)
     ///
     /// HAR files are automatically converted to static mocks with exact URL matching.
-    pub async fn from_file(path: impl Into<PathBuf>) -> Result<Self, anyhow::Error> {
+    pub async fn from_file(path: impl Into<PathBuf>) -> Result<Self, crate::MockpitError> {
         let path = path.into();
         let content = tokio::fs::read_to_string(&path).await?;
 
@@ -62,7 +62,7 @@ impl MockCollectionConfig {
         let extension = path
             .extension()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| anyhow::anyhow!("File has no extension"))?;
+            .ok_or_else(|| crate::mp_err!("File has no extension"))?;
 
         match extension {
             "json" => {
@@ -75,7 +75,7 @@ impl MockCollectionConfig {
             }
             "har" => Self::from_har(&content).await,
             "yaml" | "yml" => Ok(Self::from_yaml(&content)?),
-            _ => Err(anyhow::anyhow!("Unsupported file format: {extension}")),
+            _ => Err(crate::mp_err!("Unsupported file format: {extension}")),
         }
     }
 
@@ -83,7 +83,7 @@ impl MockCollectionConfig {
     ///
     /// Converts HAR entries to static mocks with exact URL matching.
     /// Use consolidator afterwards for pattern detection and optimization.
-    pub async fn from_har(content: &str) -> Result<Self, anyhow::Error> {
+    pub async fn from_har(content: &str) -> Result<Self, crate::MockpitError> {
         let har = serde_json::from_str(content)?;
         let loader = HarLoader::new();
         let mocks = loader.convert_har_to_mocks(har).await?;
@@ -100,7 +100,7 @@ impl MockCollectionConfig {
     }
 
     /// Convert to mock definitions
-    pub async fn into_mock_definitions(self) -> Result<Vec<MockDefinition>, String> {
+    pub async fn into_mock_definitions(self) -> crate::Result<Vec<MockDefinition>> {
         self.into_mock_definitions_with_dir(None, None).await
     }
 
@@ -110,7 +110,7 @@ impl MockCollectionConfig {
         self,
         config_dir: Option<&std::path::Path>,
         global_vars: Option<&serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<Vec<MockDefinition>, String> {
+    ) -> crate::Result<Vec<MockDefinition>> {
         // Merge: global <- collection
         let collection_merged = merge_vars(global_vars, self.vars.as_ref());
 
@@ -228,7 +228,7 @@ pub struct MockConfig {
 
 impl MockConfig {
     /// Convert to a MockDefinition
-    pub async fn into_mock_definition(self) -> Result<MockDefinition, String> {
+    pub async fn into_mock_definition(self) -> crate::Result<MockDefinition> {
         self.into_mock_definition_with_dir(None).await
     }
 
@@ -236,10 +236,10 @@ impl MockConfig {
     pub async fn into_mock_definition_with_dir(
         self,
         config_dir: Option<&std::path::Path>,
-    ) -> Result<MockDefinition, String> {
+    ) -> crate::Result<MockDefinition> {
         let match_config = self
             .match_config
-            .ok_or_else(|| "Missing 'match' configuration".to_string())?;
+            .ok_or_else(|| crate::mp_err!("Missing 'match' configuration"))?;
 
         let request_config = match_config.into_request_config();
 
@@ -265,7 +265,7 @@ impl MockConfig {
             return Err(
         "Cannot combine full mock body (response.body/response.json) with request transforms. \
          Use either a full mock OR passthrough with request transforms."
-          .to_string(),
+          .to_string().into(),
       );
         }
 
@@ -273,7 +273,7 @@ impl MockConfig {
         if is_full_mock && self.patch.is_some() {
             return Err("Cannot combine top-level `patch` with full mock response. \
          Use either `patch` (upstream passthrough) or `response` (full mock), not both."
-                .to_string());
+                .to_string().into());
         }
 
         // Build the resolved response
@@ -287,7 +287,7 @@ impl MockConfig {
         // Apply top-level delay
         if let Some(ref delay_str) = self.delay {
             let delay =
-                parse_duration(delay_str).map_err(|e| format!("Invalid top-level delay: {e}"))?;
+                parse_duration(delay_str).map_err(|e| crate::mp_err!("Invalid top-level delay: {e}"))?;
             response = response.with_delay(delay);
         }
 
@@ -312,7 +312,7 @@ impl MockConfig {
         let request_transforms = if has_request_transforms {
             let rt = self
                 .request
-                .ok_or_else(|| "request transforms missing".to_string())?;
+                .ok_or_else(|| crate::mp_err!("request transforms missing"))?;
             Some(build_request_transforms(rt)?)
         } else {
             None
@@ -340,7 +340,7 @@ fn default_priority() -> u32 {
 /// Convert RequestTransformConfig into ResolvedRequestTransforms
 fn build_request_transforms(
     config: RequestTransformConfig,
-) -> Result<crate::types::ResolvedRequestTransforms, String> {
+) -> crate::Result<crate::types::ResolvedRequestTransforms> {
     use crate::types::{RequestPatch, ResolvedRequestTransforms, UpstreamOptions};
 
     let mut patches = Vec::new();
@@ -369,16 +369,16 @@ fn build_request_transforms(
     // Body patches - RFC 6902
     if !config.body.operations.is_empty() {
         let json_patch_str = serde_json::to_string(&config.body.operations)
-            .map_err(|e| format!("Failed to serialize JSON Patch operations: {e}"))?;
+            .map_err(|e| crate::mp_err!("Failed to serialize JSON Patch operations: {e}"))?;
         let json_patch: json_patch::Patch = serde_json::from_str(&json_patch_str)
-            .map_err(|e| format!("Failed to parse JSON Patch operations: {e}"))?;
+            .map_err(|e| crate::mp_err!("Failed to parse JSON Patch operations: {e}"))?;
         patches.push(RequestPatch::JsonPatch(json_patch));
     }
 
     // Body patches - Regex
     for regex_config in config.body.regex {
         let pattern = regex::Regex::new(&regex_config.pattern)
-            .map_err(|e| format!("Invalid regex pattern '{}': {}", regex_config.pattern, e))?;
+            .map_err(|e| crate::mp_err!("Invalid regex pattern '{}': {}", regex_config.pattern, e))?;
         patches.push(RequestPatch::RegexReplace {
             pattern,
             replacement: regex_config.replacement,

@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// - "priority>100"
 /// - "enabled=true AND scope=test-*"
 /// - "match.url~=/api/users/.*"
-pub fn parse_query(query: &str) -> Result<Vec<QueryFilter>, String> {
+pub fn parse_query(query: &str) -> crate::Result<Vec<QueryFilter>> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -37,7 +37,7 @@ pub fn parse_query(query: &str) -> Result<Vec<QueryFilter>, String> {
 }
 
 /// Parse a single filter expression
-fn parse_single_filter(expr: &str) -> Result<QueryFilter, String> {
+fn parse_single_filter(expr: &str) -> crate::Result<QueryFilter> {
     // Try to match operators in order of length (longest first to avoid partial matches)
     let operators = [">=", "<=", "~=", "^=", "$=", "*=", "!=", "=", ">", "<"];
 
@@ -45,12 +45,12 @@ fn parse_single_filter(expr: &str) -> Result<QueryFilter, String> {
         if let Some(pos) = expr.find(op_str) {
             let field = expr
                 .get(..pos)
-                .ok_or_else(|| format!("Invalid filter expression: {expr}"))?
+                .ok_or_else(|| crate::mp_err!("Invalid filter expression: {expr}"))?
                 .trim()
                 .to_string();
             let value = expr
                 .get(pos + op_str.len()..)
-                .ok_or_else(|| format!("Invalid filter expression: {expr}"))?
+                .ok_or_else(|| crate::mp_err!("Invalid filter expression: {expr}"))?
                 .trim()
                 .to_string();
             let operator = op_str.parse::<FilterOperator>()?;
@@ -63,7 +63,7 @@ fn parse_single_filter(expr: &str) -> Result<QueryFilter, String> {
         }
     }
 
-    Err(format!("Invalid filter expression: {expr}"))
+    Err(crate::mp_err!("Invalid filter expression: {expr}"))
 }
 
 /// Apply query filters to mocks

@@ -4,7 +4,7 @@ import {
   http,
   graphql,
   MockResponse,
-  type JsRequestContext,
+  type MockpitRequest,
 } from "../index.js";
 
 describe("MockpitServer", () => {
@@ -59,7 +59,7 @@ describe("MockpitServer", () => {
 
   it("extracts :param captures", async () => {
     server.useHandlers([
-      http.get("/users/:id", async (ctx: JsRequestContext) => {
+      http.get("/users/:id", async (ctx: MockpitRequest) => {
         return MockResponse.json({ userId: ctx.params.id });
       }),
     ]);
@@ -75,7 +75,7 @@ describe("MockpitServer", () => {
     server.useHandlers([
       http.get(
         "/users/:userId/posts/:postId",
-        async (ctx: JsRequestContext) => {
+        async (ctx: MockpitRequest) => {
           return MockResponse.json({
             userId: ctx.params.userId,
             postId: ctx.params.postId,
@@ -94,7 +94,7 @@ describe("MockpitServer", () => {
 
   it("handles POST with JSON request body", async () => {
     server.useHandlers([
-      http.post("/api/login", async (ctx: JsRequestContext) => {
+      http.post("/api/login", async (ctx: MockpitRequest) => {
         if (ctx.bodyJson?.username === "admin") {
           return MockResponse.json({ token: "secret-token" });
         }
@@ -127,7 +127,7 @@ describe("MockpitServer", () => {
 
   it("handles PUT", async () => {
     server.useHandlers([
-      http.put("/api/items/:id", async (ctx: JsRequestContext) => {
+      http.put("/api/items/:id", async (ctx: MockpitRequest) => {
         return MockResponse.json({ updated: ctx.params.id });
       }),
     ]);
@@ -139,7 +139,7 @@ describe("MockpitServer", () => {
 
   it("handles DELETE", async () => {
     server.useHandlers([
-      http.delete("/api/items/:id", async (ctx: JsRequestContext) => {
+      http.delete("/api/items/:id", async (ctx: MockpitRequest) => {
         return MockResponse.empty(204);
       }),
     ]);
@@ -150,7 +150,7 @@ describe("MockpitServer", () => {
 
   it("handles PATCH", async () => {
     server.useHandlers([
-      http.patch("/api/items/:id", async (ctx: JsRequestContext) => {
+      http.patch("/api/items/:id", async (ctx: MockpitRequest) => {
         return MockResponse.json({ patched: true });
       }),
     ]);
@@ -164,7 +164,7 @@ describe("MockpitServer", () => {
 
   it("handles any method with http.all", async () => {
     server.useHandlers([
-      http.all("/api/any", async (ctx: JsRequestContext) => {
+      http.all("/api/any", async (ctx: MockpitRequest) => {
         return MockResponse.json({ method: ctx.method });
       }),
     ]);
@@ -261,7 +261,7 @@ describe("MockpitServer", () => {
 
   it("provides full request context to handler", async () => {
     server.useHandlers([
-      http.post("/ctx-test/:id", async (ctx: JsRequestContext) => {
+      http.post("/ctx-test/:id", async (ctx: MockpitRequest) => {
         return MockResponse.json({
           method: ctx.method,
           path: ctx.path,
@@ -312,7 +312,7 @@ describe("GraphQL handlers", () => {
 
   it("matches GraphQL query by operation name", async () => {
     server.useHandlers([
-      graphql.query("GetUser", async (ctx: JsRequestContext) => {
+      graphql.query("GetUser", async (ctx: MockpitRequest) => {
         const variables = ctx.bodyJson?.variables;
         return MockResponse.json({
           data: {

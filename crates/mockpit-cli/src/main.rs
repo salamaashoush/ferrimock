@@ -1,7 +1,7 @@
-mod config;
 mod self_update;
 
 use anyhow::Result;
+use mockpit_cli::config;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint, builder::styling};
 use colored::Colorize;
 use mockpit_cli::commands::{FakeCommand, MockCommand};
@@ -188,7 +188,8 @@ async fn main() -> ExitCode {
     setup_color(cli.color);
     setup_logging(&cli);
 
-    let _config = config::load_config(cli.config.as_deref());
+    config::set_quiet(cli.quiet);
+    config::init(config::load_config(cli.config.as_deref()));
 
     let result: Result<()> = match cli.command {
         Command::Mock(cmd) => mockpit_cli::commands::execute(cmd).await,

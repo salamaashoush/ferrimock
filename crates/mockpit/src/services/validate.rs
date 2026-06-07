@@ -33,9 +33,9 @@ pub struct ValidateOutput {
 }
 
 /// Validate mock files at a path (file or directory).
-pub async fn validate(input: ValidateInput) -> Result<ValidateOutput, anyhow::Error> {
+pub async fn validate(input: ValidateInput) -> Result<ValidateOutput, crate::MockpitError> {
     let path = PathBuf::from(&input.path);
-    anyhow::ensure!(path.exists(), "Path does not exist: {}", input.path);
+    crate::mp_ensure!(path.exists(), "Path does not exist: {}", input.path);
 
     let validator = MockValidator::new();
 
@@ -44,7 +44,7 @@ pub async fn validate(input: ValidateInput) -> Result<ValidateOutput, anyhow::Er
     } else if path.is_dir() {
         validator.validate_directory(&path).await
     } else {
-        anyhow::bail!("Path is neither a file nor a directory: {}", input.path);
+        crate::mp_bail!("Path is neither a file nor a directory: {}", input.path);
     };
 
     let total_errors: usize = results.iter().map(ValidationResult::error_count).sum();
@@ -59,7 +59,7 @@ pub async fn validate(input: ValidateInput) -> Result<ValidateOutput, anyhow::Er
 }
 
 /// Validate mock content from a string.
-pub async fn validate_content(input: ValidateContentInput) -> Result<ValidateOutput, anyhow::Error> {
+pub async fn validate_content(input: ValidateContentInput) -> Result<ValidateOutput, crate::MockpitError> {
     let validator = MockValidator::new();
     let result = validator.validate_content(&input.content, &input.file_format).await;
     let results = vec![result];

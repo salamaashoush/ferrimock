@@ -25,12 +25,12 @@ pub async fn serve_fake_data(
     };
     use std::collections::HashMap;
 
-    println!("{}", ui::header("Fake Data Server"));
-    println!();
-    println!("{}", ui::kv("Address", &format!("http://{host}:{port}")));
-    println!();
+    crate::say!("{}", ui::header("Fake Data Server"));
+    crate::say!();
+    crate::say!("{}", ui::kv("Address", &format!("http://{host}:{port}")));
+    crate::say!();
 
-    println!("{}", ui::emphasis("Endpoints:"));
+    crate::say!("{}", ui::emphasis("Endpoints:"));
     println!(
         "{}",
         ui::list_item("GET  /                     - API documentation")
@@ -51,7 +51,7 @@ pub async fn serve_fake_data(
         "{}",
         ui::list_item("POST /render               - Render template")
     );
-    println!();
+    crate::say!();
 
     // Index page handler
     async fn index_handler() -> Html<String> {
@@ -261,18 +261,18 @@ pub async fn serve_fake_data(
                 .allow_methods(Any)
                 .allow_headers(Any),
         );
-        println!("{}", ui::info("CORS enabled"));
+        crate::say!("{}", ui::info("CORS enabled"));
     }
 
     // Add logging if verbose
     if verbose {
         use tower_http::trace::TraceLayer;
         app = app.layer(TraceLayer::new_for_http());
-        println!("{}", ui::info("Verbose logging enabled"));
+        crate::say!("{}", ui::info("Verbose logging enabled"));
     }
 
-    println!();
-    println!("{}", ui::success("Server starting..."));
+    crate::say!();
+    crate::say!("{}", ui::success("Server starting..."));
 
     // Open browser if requested
     if open_browser {

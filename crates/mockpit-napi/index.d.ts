@@ -9,7 +9,7 @@ export declare namespace MockResponse {
    * @param data - Binary data as Buffer.
    * @param init - Optional status code and headers.
    */
-  export function arrayBuffer(data: Buffer, init?: JsResponseInit | undefined | null): JsHandlerResponse
+  export function arrayBuffer(data: Uint8Array, init?: JsResponseInit | undefined | null): JsHandlerResponse
   /**
    * Create an empty response with just a status code.
    *
@@ -188,6 +188,12 @@ export declare class MockpitServer {
   /** Get the number of registered mocks. */
   get mockCount(): number
   /**
+   * Whether any registered mock matches on the request body (body or GraphQL
+   * matcher). Lets the interceptor skip reading the request body when no mock
+   * could use it.
+   */
+  get needsRequestBody(): boolean
+  /**
    * List all registered handlers.
    *
    * Returns an array of handler info objects with id and method/path info.
@@ -223,7 +229,7 @@ export declare class MockpitServer {
    *
    * Returns null if no mock matches.
    */
-  matchRequest(method: string, path: string, query?: string | undefined | null, headers?: Record<string, string> | undefined | null, body?: string | undefined | null): Promise<MaybePromise>
+  matchRequest(method: string, path: string, query?: string | undefined | null, headers?: Record<string, string> | undefined | null, body?: string | undefined | null): Promise<MatchedResponse | null>
 }
 
 /**
@@ -253,30 +259,11 @@ export interface JsHandlerResponse {
   body?: string
   /** Response body as JSON (takes precedence over `body` if both set) */
   bodyJson?: any
-}
-
-/**
- * Request context passed to JS handler functions.
- *
- * Contains all HTTP request information plus captured path parameters.
- */
-export interface JsRequestContext {
-  /** HTTP method (GET, POST, etc.) */
-  method: string
-  /** Full URI including query string */
-  uri: string
-  /** Request path (without query string) */
-  path: string
-  /** Path parameter captures from `:param` patterns */
-  params: Record<string, string>
-  /** Parsed query parameters */
-  query: Record<string, string>
-  /** Request headers */
-  headers: Record<string, string>
-  /** Request body as string (if UTF-8) */
-  body?: string
-  /** Request body parsed as JSON (if valid JSON) */
-  bodyJson?: any
+  /**
+   * Raw binary response body (takes precedence over `body`/`body_json`).
+   * Set by `MockResponse.arrayBuffer()` for binary-safe responses.
+   */
+  bodyBytes?: Uint8Array
 }
 
 /** Options for response construction. */
@@ -287,11 +274,17 @@ export interface JsResponseInit {
   headers?: Record<string, string>
 }
 
-/** Result of matching a request against the mock registry. */
+/**
+ * Result of matching a request against the mock registry.
+ *
+ * `body` is raw bytes (`Uint8Array`) so binary responses (images, protobuf,
+ * gzip) round-trip losslessly. Build a `Response` directly from it; decode with
+ * `TextDecoder` when a string is needed.
+ */
 export interface MatchedResponse {
   status: number
   headers: Record<string, string>
-  body: string
+  body: Uint8Array
   mockId: string
 }
 

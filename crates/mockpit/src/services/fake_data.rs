@@ -31,7 +31,7 @@ pub struct GeneratorInfo {
 }
 
 /// Generate fake data values.
-pub fn generate(input: FakeDataInput) -> Result<Vec<String>, anyhow::Error> {
+pub fn generate(input: FakeDataInput) -> Result<Vec<String>, crate::MockpitError> {
     let mut values = Vec::with_capacity(input.count.max(1));
 
     for _ in 0..input.count.max(1) {
@@ -56,10 +56,10 @@ pub fn generate_single(
     max: Option<f64>,
     words: Option<usize>,
     length: Option<usize>,
-) -> Result<String, anyhow::Error> {
+) -> Result<String, crate::MockpitError> {
     use crate::fake_data::*;
 
-    let result = match generator {
+    let result = match normalize_generator(generator) {
         // Identity
         "name" | "full_name" => fake_name(),
         "first_name" => fake_first_name(),
@@ -157,10 +157,87 @@ pub fn generate_single(
             fake_float(min_val, max_val).to_string()
         }
 
-        other => anyhow::bail!("Unknown generator: {other}"),
+        // Location (extended)
+        "street" => fake_street(),
+        "street_address" => fake_street_address(),
+        "state" => fake_state(),
+        "state_abbr" => fake_state_abbr(),
+        "zip" => fake_zip(),
+        "building_number" => fake_building_number(),
+
+        // Finance / web (extended)
+        "price" => format!("{:.2}", fake_price(min.unwrap_or(1.0), max.unwrap_or(999.99))),
+        "file_size" => {
+            let min_val = min.map_or(1024, |v| v as i64);
+            let max_val = max.map_or(1_048_576, |v| v as i64);
+            fake_file_size(min_val, max_val).to_string()
+        }
+
+        // Composite objects
+        "user" => serde_json::to_string_pretty(&serde_json::json!({
+            "id": fake_uuid(),
+            "name": fake_name(),
+            "email": fake_email(),
+            "username": fake_username(),
+            "created_at": fake_iso_date(),
+        }))?,
+        "address" => serde_json::to_string_pretty(&serde_json::json!({
+            "street": fake_street_address(),
+            "city": fake_city(),
+            "state": fake_state(),
+            "zip": fake_zip(),
+            "country": fake_country(),
+        }))?,
+
+        other => crate::mp_bail!("Unknown generator: {other}"),
     };
 
     Ok(result)
+}
+
+/// Normalize alternate generator spellings (no-underscore, abbreviations) to the
+/// canonical name handled by [`generate_single`]. Keeps a single generator table.
+fn normalize_generator(generator: &str) -> &str {
+    match generator {
+        "firstname" => "first_name",
+        "lastname" => "last_name",
+        "freeemail" => "free_email",
+        "cellphone" | "mobile" => "cell_phone",
+        "companysuffix" => "company_suffix",
+        "jobtitle" | "job" => "job_title",
+        "jobfield" => "job_field",
+        "jobposition" | "position" => "job_position",
+        "jobseniority" | "seniority" => "job_seniority",
+        "macaddress" => "mac_address",
+        "useragent" | "ua" => "user_agent",
+        "creditcard" | "cc" => "credit_card",
+        "currencycode" => "currency_code",
+        "currencyname" => "currency_name",
+        "currencysymbol" => "currency_symbol",
+        "isodate" => "iso_date",
+        "unixtimestamp" | "timestamp" => "unix_timestamp",
+        "relativetime" => "relative_time",
+        "streetaddress" => "street_address",
+        "stateabbr" => "state_abbr",
+        "zipcode" | "postal_code" | "postalcode" => "zip",
+        "countrycode" => "country_code",
+        "buildingnumber" => "building_number",
+        "alphanum" => "alphanumeric",
+        "guid" => "uuid",
+        "id" => "numeric_id",
+        "numericid" => "numeric_id",
+        "shorthash" | "hash" => "short_hash",
+        "filesize" => "file_size",
+        "mimetype" | "mime" => "mime_type",
+        "fileextension" | "ext" => "file_extension",
+        "semver" => "version",
+        "hexcolor" => "hex_color",
+        "rgbcolor" => "rgb_color",
+        "tz" => "timezone",
+        "double" => "float",
+        "datetime" => "date",
+        other => other,
+    }
 }
 
 /// List all available generators.

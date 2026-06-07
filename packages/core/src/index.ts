@@ -31,7 +31,7 @@ export { graphqlLink } from "./graphql-link.js";
 
 export type {
   JsHandler,
-  JsRequestContext,
+  MockpitRequest,
   JsHandlerResponse,
   JsResponseInit,
 } from "@mockpit/node";

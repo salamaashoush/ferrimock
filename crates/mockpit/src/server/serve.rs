@@ -14,7 +14,7 @@ pub fn serve_with_graceful_shutdown(
     listener: TcpListener,
     app: Router,
     shutdown_signal: impl std::future::Future<Output = ()> + Send + 'static,
-) -> anyhow::Result<JoinHandle<()>> {
+) -> crate::Result<JoinHandle<()>> {
     let server_handle = tokio::spawn(async move {
         // Enable TCP_NODELAY on every accepted connection to disable Nagle's
         // algorithm and eliminate latency on the final TCP segment.

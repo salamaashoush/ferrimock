@@ -269,7 +269,7 @@ pub enum FilterOperator {
 }
 
 impl std::str::FromStr for FilterOperator {
-    type Err = String;
+    type Err = crate::MockpitError;
 
     fn from_str(op: &str) -> Result<Self, Self::Err> {
         match op {
@@ -283,7 +283,7 @@ impl std::str::FromStr for FilterOperator {
             "^=" => Ok(Self::StartsWith),
             "$=" => Ok(Self::EndsWith),
             "*=" => Ok(Self::Contains),
-            _ => Err(format!("Unknown operator: {op}")),
+            _ => Err(crate::mp_err!("Unknown operator: {op}")),
         }
     }
 }

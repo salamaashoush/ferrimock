@@ -47,7 +47,7 @@ pub struct ConvertResult {
 }
 
 /// Convert a HAR file to mock definitions.
-pub async fn convert(input: ConvertInput) -> Result<ConvertResult, anyhow::Error> {
+pub async fn convert(input: ConvertInput) -> Result<ConvertResult, crate::MockpitError> {
     let mut options = HarLoadOptions::default();
     options.exclude_preflight = input.exclude_preflight;
     options.exclude_redirects = input.exclude_redirects;

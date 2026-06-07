@@ -87,7 +87,7 @@ impl ResponsePatcher {
         &self,
         mut response: Response<Bytes>,
         patch_context: Option<&crate::types::PatchContext>,
-    ) -> Result<Response<Bytes>, anyhow::Error> {
+    ) -> Result<Response<Bytes>, crate::MockpitError> {
         // Check for gzip compression and decompress if needed.
         // Uses Option to avoid cloning body bytes when not compressed.
         let content_encoding = response
@@ -116,7 +116,7 @@ impl ResponsePatcher {
                     let mut json: serde_json::Value = serde_json::from_slice(&body).map_err(|e| {
             let preview_len = body.len().min(200);
             let body_preview = String::from_utf8_lossy(&body[..preview_len]);
-            anyhow::anyhow!(
+            crate::mp_err!(
               "Failed to parse JSON for patching: {}. Body length: {}, preview: {:?}",
               e,
               body.len(),
@@ -138,7 +138,7 @@ impl ResponsePatcher {
                                     render_json_value_templates(value, patch_context);
                                 apply_jsonpath_patch(&mut json, &rendered_path, rendered_value)
                                     .map_err(|e| {
-                                        anyhow::anyhow!(
+                                        crate::mp_err!(
                                             "JSONPath patch failed for '{rendered_path}': {e}"
                                         )
                                     })?;
@@ -304,10 +304,10 @@ enum PathSegment<'a> {
 /// - `"signers[1..3]"` -> ArrayRange("signers", 1, 3, false) (exclusive)
 /// - `"signers[1..=3]"` -> ArrayRange("signers", 1, 3, true) (inclusive)
 #[allow(clippy::string_slice, clippy::indexing_slicing)] // Path segment parsing uses character-position-based slicing
-fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
+fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, crate::MockpitError> {
     if let Some(bracket_pos) = segment.find('[') {
         if !segment.ends_with(']') {
-            return Err(anyhow::anyhow!(
+            return Err(crate::mp_err!(
                 "Invalid array notation in path segment: {segment}"
             ));
         }
@@ -326,7 +326,7 @@ fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
                 .map(|s| s.trim().parse::<usize>())
                 .collect();
             let indices = indices.map_err(|_| {
-                anyhow::anyhow!("Invalid multi-index '{index_str}' in path segment: {segment}")
+                crate::mp_err!("Invalid multi-index '{index_str}' in path segment: {segment}")
             })?;
             return Ok(PathSegment::ArrayMultiIndex(field, indices));
         }
@@ -334,10 +334,10 @@ fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
         // Check for inclusive range (..=)
         if let Some(range_pos) = index_str.find("..=") {
             let start: usize = index_str[..range_pos].trim().parse().map_err(|_| {
-                anyhow::anyhow!("Invalid range start in '{index_str}' for segment: {segment}")
+                crate::mp_err!("Invalid range start in '{index_str}' for segment: {segment}")
             })?;
             let end: usize = index_str[range_pos + 3..].trim().parse().map_err(|_| {
-                anyhow::anyhow!("Invalid range end in '{index_str}' for segment: {segment}")
+                crate::mp_err!("Invalid range end in '{index_str}' for segment: {segment}")
             })?;
             return Ok(PathSegment::ArrayRange(field, start, end, true));
         }
@@ -345,17 +345,17 @@ fn parse_path_segment(segment: &str) -> Result<PathSegment<'_>, anyhow::Error> {
         // Check for exclusive range (..)
         if let Some(range_pos) = index_str.find("..") {
             let start: usize = index_str[..range_pos].trim().parse().map_err(|_| {
-                anyhow::anyhow!("Invalid range start in '{index_str}' for segment: {segment}")
+                crate::mp_err!("Invalid range start in '{index_str}' for segment: {segment}")
             })?;
             let end: usize = index_str[range_pos + 2..].trim().parse().map_err(|_| {
-                anyhow::anyhow!("Invalid range end in '{index_str}' for segment: {segment}")
+                crate::mp_err!("Invalid range end in '{index_str}' for segment: {segment}")
             })?;
             return Ok(PathSegment::ArrayRange(field, start, end, false));
         }
 
         // Simple numeric index
         let index: usize = index_str.parse().map_err(|_| {
-            anyhow::anyhow!("Invalid array index '{index_str}' in path segment: {segment}")
+            crate::mp_err!("Invalid array index '{index_str}' in path segment: {segment}")
         })?;
         Ok(PathSegment::ArrayIndex(field, index))
     } else {
@@ -397,7 +397,7 @@ fn navigate_segment<'a>(
     current: &'a mut serde_json::Value,
     segment: &PathSegment<'_>,
     create_missing: bool,
-) -> Result<&'a mut serde_json::Value, anyhow::Error> {
+) -> Result<&'a mut serde_json::Value, crate::MockpitError> {
     match segment {
         PathSegment::Field(field) => {
             // Check type before mutable borrow
@@ -413,12 +413,12 @@ fn navigate_segment<'a>(
                         .expect("key exists after contains_key check"))
                 } else {
                     let available = format_available_keys(obj);
-                    Err(anyhow::anyhow!(
+                    Err(crate::mp_err!(
                         "Field '{field}' not found. Available keys: {available}"
                     ))
                 }
             } else {
-                Err(anyhow::anyhow!(
+                Err(crate::mp_err!(
                     "Cannot navigate to field '{field}': current value is {type_name} (expected object)"
                 ))
             }
@@ -429,7 +429,7 @@ fn navigate_segment<'a>(
             if let Some(obj) = current.as_object_mut() {
                 if !obj.contains_key(*field) {
                     let available = format_available_keys(obj);
-                    return Err(anyhow::anyhow!(
+                    return Err(crate::mp_err!(
                         "Field '{field}' not found. Available keys: {available}"
                     ));
                 }
@@ -441,17 +441,17 @@ fn navigate_segment<'a>(
                 if let Some(arr) = arr_val.as_array_mut() {
                     let len = arr.len();
                     arr.get_mut(*index).ok_or_else(|| {
-                        anyhow::anyhow!(
+                        crate::mp_err!(
                             "Array index {index} out of bounds for '{field}' (length: {len})"
                         )
                     })
                 } else {
-                    Err(anyhow::anyhow!(
+                    Err(crate::mp_err!(
                         "Field '{field}' is {arr_type} (expected array)"
                     ))
                 }
             } else {
-                Err(anyhow::anyhow!(
+                Err(crate::mp_err!(
                     "Cannot access '{field}[{index}]': current value is {type_name} (expected object)"
                 ))
             }
@@ -459,7 +459,7 @@ fn navigate_segment<'a>(
         // Multi-element selectors should never reach here - they're handled separately
         PathSegment::ArrayWildcard(_)
         | PathSegment::ArrayMultiIndex(_, _)
-        | PathSegment::ArrayRange(_, _, _, _) => Err(anyhow::anyhow!(
+        | PathSegment::ArrayRange(_, _, _, _) => Err(crate::mp_err!(
             "Internal error: multi-element selector reached navigate_segment. Path segment: {segment:?}"
         )),
     }
@@ -509,7 +509,7 @@ fn apply_jsonpath_patch(
     json: &mut serde_json::Value,
     path: &str,
     value: serde_json::Value,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), crate::MockpitError> {
     // Remove leading $. if present
     let path = path.strip_prefix("$.").unwrap_or(path);
     let path = path.strip_prefix('$').unwrap_or(path);
@@ -518,7 +518,7 @@ fn apply_jsonpath_patch(
     let parts: Vec<&str> = split_jsonpath(path);
 
     if parts.is_empty() {
-        return Err(anyhow::anyhow!("Empty JSONPath"));
+        return Err(crate::mp_err!("Empty JSONPath"));
     }
 
     // Parse all segments
@@ -570,7 +570,7 @@ fn apply_jsonpath_patch(
         for (seg_idx, seg) in segments.iter().take(i).enumerate() {
             current = navigate_segment(current, seg, true).map_err(|e| {
                 let path_so_far = parts[..=seg_idx].join(".");
-                anyhow::anyhow!("At '{path_so_far}': {e}")
+                crate::mp_err!("At '{path_so_far}': {e}")
             })?;
         }
 
@@ -579,13 +579,13 @@ fn apply_jsonpath_patch(
         let arr = if let Some(obj) = current.as_object_mut() {
             if !obj.contains_key(field) {
                 let available = format_available_keys(obj);
-                return Err(anyhow::anyhow!(
+                return Err(crate::mp_err!(
                     "Field '{field}' not found. Available keys: {available}"
                 ));
             }
             obj.get_mut(field).unwrap()
         } else {
-            return Err(anyhow::anyhow!(
+            return Err(crate::mp_err!(
                 "Cannot access '{field}': current value is {current_type} (expected object)"
             ));
         };
@@ -593,7 +593,7 @@ fn apply_jsonpath_patch(
         let arr_type = json_type_name(arr);
         let arr = arr
             .as_array_mut()
-            .ok_or_else(|| anyhow::anyhow!("Field '{field}' is {arr_type} (expected array)"))?;
+            .ok_or_else(|| crate::mp_err!("Field '{field}' is {arr_type} (expected array)"))?;
 
         // Build remaining path after the selector
         let remaining_parts: Vec<&str> = parts.iter().skip(i + 1).copied().collect();
@@ -622,7 +622,7 @@ fn apply_jsonpath_patch(
     for (i, segment) in segments.iter().enumerate() {
         // Safety check: multi-element selectors should have been handled above
         if is_multi_element_selector(segment) {
-            return Err(anyhow::anyhow!(
+            return Err(crate::mp_err!(
                 "Internal error: multi-element selector was not handled. This is a bug."
             ));
         }
@@ -635,7 +635,7 @@ fn apply_jsonpath_patch(
                         obj.insert(field.to_string(), value);
                         return Ok(());
                     }
-                    return Err(anyhow::anyhow!(
+                    return Err(crate::mp_err!(
                         "Cannot set field '{}': current value is {} (expected object)",
                         field,
                         json_type_name(current)
@@ -645,7 +645,7 @@ fn apply_jsonpath_patch(
                     if let Some(obj) = current.as_object_mut() {
                         let available = format_available_keys(obj);
                         let arr = obj.get_mut(*field).ok_or_else(|| {
-                            anyhow::anyhow!(
+                            crate::mp_err!(
                                 "Field '{field}' not found. Available keys: {available}"
                             )
                         })?;
@@ -654,20 +654,20 @@ fn apply_jsonpath_patch(
                                 arr_mut[*index] = value;
                                 return Ok(());
                             }
-                            return Err(anyhow::anyhow!(
+                            return Err(crate::mp_err!(
                                 "Array index {} out of bounds for '{}' (length: {})",
                                 index,
                                 field,
                                 arr_mut.len()
                             ));
                         }
-                        return Err(anyhow::anyhow!(
+                        return Err(crate::mp_err!(
                             "Field '{}' is {} (expected array)",
                             field,
                             json_type_name(arr)
                         ));
                     }
-                    return Err(anyhow::anyhow!(
+                    return Err(crate::mp_err!(
                         "Cannot access '{}[{}]': current value is {} (expected object)",
                         field,
                         index,
@@ -678,7 +678,7 @@ fn apply_jsonpath_patch(
                 PathSegment::ArrayWildcard(_)
                 | PathSegment::ArrayMultiIndex(_, _)
                 | PathSegment::ArrayRange(_, _, _, _) => {
-                    return Err(anyhow::anyhow!(
+                    return Err(crate::mp_err!(
                         "Internal error: multi-element selector in last segment. This is a bug."
                     ));
                 }
@@ -687,7 +687,7 @@ fn apply_jsonpath_patch(
         // Intermediate segment: navigate deeper
         current = navigate_segment(current, segment, true).map_err(|e| {
             let path_so_far = parts[..=i].join(".");
-            anyhow::anyhow!("At '{path_so_far}': {e}")
+            crate::mp_err!("At '{path_so_far}': {e}")
         })?;
     }
 

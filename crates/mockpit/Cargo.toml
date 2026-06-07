@@ -39,10 +39,10 @@ type-detector = []
 codegen = ["type-detector"]
 
 # GraphQL schema introspection and mock generation
-graphql = ["engine", "dep:graphql-parser", "dep:thiserror"]
+graphql = ["engine", "dep:graphql-parser"]
 
 # HTTP server with hot reload and graceful shutdown
-server = ["engine", "dep:notify"]
+server = ["engine", "dep:axum", "dep:tower-http", "dep:notify"]
 
 # Mock management HTTP API (axum router)
 api = ["server"]
@@ -59,10 +59,6 @@ full = ["engine", "graphql", "server", "api", "schema"]
 tokio = { workspace = true }
 futures = { workspace = true }
 
-# Web framework (used by api feature, but axum types are in engine too)
-axum = { workspace = true }
-tower-http = { workspace = true }
-
 # Serialization
 base64 = { workspace = true }
 serde = { workspace = true }
@@ -70,7 +66,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
 # Error handling and logging
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 
 # Utilities
@@ -113,15 +109,17 @@ lopdf = { workspace = true, optional = true }
 
 # GraphQL (graphql feature)
 graphql-parser = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
 
 # Server (server feature)
+axum = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 
 # Schema (schema feature)
 schemars = { version = "1", optional = true }
 
 [dev-dependencies]
+anyhow = { workspace = true }
 criterion = { workspace = true, features = ["html_reports", "async_tokio"] }
 futures = { workspace = true }
 smallvec = { workspace = true }

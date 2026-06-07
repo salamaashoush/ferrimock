@@ -9,11 +9,10 @@ use super::ui;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::http::{Method, StatusCode, header};
 use axum::response::{Html, Response};
 use axum::routing::{any, get, post};
-use mockpit::engine::{MockMatcher, MockRegistry, RequestContext, ResponseGeneratorExt};
-use rustc_hash::FxHashMap;
+use mockpit::engine::{MockMatcher, MockRegistry, RequestContext};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, info, warn};
@@ -59,8 +58,8 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         open_browser,
     } = config;
 
-    println!("{}", ui::header("Mock Server"));
-    println!();
+    crate::say!("{}", ui::header("Mock Server"));
+    crate::say!();
 
     let registry = Arc::new(MockRegistry::new());
     let mut total_count = 0usize;
@@ -75,7 +74,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
             .context("Failed to load mocks from directory")?;
         spinner.finish_and_clear();
         total_count += count;
-        println!(
+        crate::say!(
             "{}",
             ui::success(&format!(
                 "Loaded {} mock(s) from {}",
@@ -86,7 +85,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
     } else if mock_file.is_none() {
         // Default directory if neither --mocks nor --mock-file given
         let default_dir =
-            std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string());
+            crate::config::mocks_dir();
         let spinner = ui::spinner(&format!("Loading mocks from {}...", ui::path(&default_dir)));
         let count = registry
             .load_from_directory(&default_dir)
@@ -95,7 +94,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
             .context("Failed to load mocks")?;
         spinner.finish_and_clear();
         total_count += count;
-        println!(
+        crate::say!(
             "{}",
             ui::success(&format!(
                 "Loaded {} mock(s) from {}",
@@ -116,7 +115,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
             .context("Failed to load mock file")?;
         spinner.finish_and_clear();
         total_count += count;
-        println!(
+        crate::say!(
             "{}",
             ui::success(&format!(
                 "Loaded {} mock(s) from {}",
@@ -126,7 +125,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         );
     }
 
-    println!(
+    crate::say!(
         "{}",
         ui::success(&format!(
             "Total: {} mock definition(s)",
@@ -135,13 +134,13 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
     );
 
     let collections_dir = mocks_dir.unwrap_or_else(|| {
-        std::env::var("MOCKS_DIR").unwrap_or_else(|_| "mocks/collections".to_string())
+        crate::config::mocks_dir()
     });
 
     // Set up hot reload if enabled
     if watch {
         init_hot_reload(&collections_dir, Arc::clone(&registry))?;
-        println!(
+        crate::say!(
             "{}",
             ui::info(&format!(
                 "Watching {} for changes",
@@ -161,31 +160,31 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         enable_render_endpoint,
     });
 
-    println!();
-    println!("{}", ui::kv("Address", &format!("http://{host}:{port}")));
-    println!("{}", ui::kv("Mocks Directory", &collections_dir));
-    println!();
+    crate::say!();
+    crate::say!("{}", ui::kv("Address", &format!("http://{host}:{port}")));
+    crate::say!("{}", ui::kv("Mocks Directory", &collections_dir));
+    crate::say!();
 
-    println!("{}", ui::emphasis("Endpoints:"));
-    println!(
+    crate::say!("{}", ui::emphasis("Endpoints:"));
+    crate::say!(
         "{}",
         ui::list_item("ANY  /*path                 - Mock matching (all methods/paths)")
     );
-    println!(
+    crate::say!(
         "{}",
         ui::list_item("GET  /__mock/status         - Server status and info")
     );
     if enable_render_endpoint {
-        println!(
+        crate::say!(
             "{}",
             ui::list_item("POST /__mock/render         - Render template with context")
         );
-        println!(
+        crate::say!(
             "{}",
             ui::list_item("GET  /__mock/list           - List all loaded mocks")
         );
     }
-    println!();
+    crate::say!();
 
     // Build router - use /__mock/ prefix for management endpoints to avoid conflicts
     let mut app = Router::new().route("/__mock/status", get(index_handler));
@@ -208,25 +207,25 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
                 .allow_methods(Any)
                 .allow_headers(Any),
         );
-        println!("{}", ui::info("CORS enabled"));
+        crate::say!("{}", ui::info("CORS enabled"));
     }
 
     // Add logging if verbose (before state)
     if verbose {
         app = app.layer(TraceLayer::new_for_http());
-        println!("{}", ui::info("Verbose logging enabled"));
+        crate::say!("{}", ui::info("Verbose logging enabled"));
     }
 
     if log_matches {
-        println!("{}", ui::info("Match logging enabled"));
+        crate::say!("{}", ui::info("Match logging enabled"));
     }
 
     // Add state LAST to convert Router<S> to Router<()>
     let app = app.with_state(state);
 
-    println!();
-    println!("{}", ui::success("Server starting..."));
-    println!("{}", ui::dim("Press Ctrl+C to stop"));
+    crate::say!();
+    crate::say!("{}", ui::success("Server starting..."));
+    crate::say!("{}", ui::dim("Press Ctrl+C to stop"));
 
     // Open browser if requested
     if open_browser {
@@ -250,8 +249,8 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         eprintln!("{}", ui::error(&format!("Server task failed: {e:?}")));
     }
 
-    println!();
-    println!("{}", ui::success("Server stopped"));
+    crate::say!();
+    crate::say!("{}", ui::success("Server stopped"));
 
     Ok(())
 }
@@ -354,171 +353,52 @@ async fn index_handler(State(state): State<Arc<MockServerState>>) -> Html<String
 async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -> Response {
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let path = uri.path();
-    let query = uri.query();
+    let path = uri.path().to_string();
+    let query = uri.query().map(str::to_string);
     let headers = req.headers().clone();
 
     // Read body for non-safe methods
     let body_bytes = if method.is_safe() {
         None
     } else {
-        match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
-            Ok(bytes) => Some(bytes.to_vec()),
-            Err(_) => None,
-        }
+        axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
+            .await
+            .ok()
+            .map(|b| b.to_vec())
     };
 
     let request_start = std::time::Instant::now();
-
-    // Log request if verbose
     if state.verbose {
-        debug!(
-          method = %method,
-          path = %path,
-          query = ?query,
-          "Incoming request"
-        );
+        debug!(method = %method, path = %path, query = ?query, "Incoming request");
     }
 
-    // Find matching mock
-    let mock_match =
-        state
-            .matcher
-            .find_match(&method, path, query, &headers, body_bytes.as_deref());
+    // Build the response via the canonical, single-source handler.
+    let response = mockpit::services::serve::respond(
+        &state.matcher,
+        &method,
+        &path,
+        query.as_deref(),
+        &headers,
+        body_bytes.as_deref(),
+    )
+    .await;
 
-    if let Some(mock_match) = mock_match {
-        let mock_def = &mock_match.mock;
-        let captures = mock_match.captures;
-
-        if state.verbose {
-            debug!(
-              mock_id = %mock_def.id,
-              "Request matched mock"
-            );
-        }
-
-        if state.log_matches {
-            let elapsed = request_start.elapsed();
-            info!(
-              mock_id = %mock_def.id,
-              method = %method,
-              path = %path,
-              status = %mock_def.response.status.as_u16(),
-              captures = ?captures,
-              elapsed_ms = elapsed.as_secs_f64() * 1000.0,
-              "Mock matched"
-            );
-        }
-
-        // Generate response
-        let response_result = generate_mock_response(
-            mock_def,
-            &method,
-            path,
-            query,
-            &headers,
-            body_bytes.as_deref(),
-            captures,
-        )
-        .await;
-
-        match response_result {
-            Ok(response) => response,
-            Err(e) => {
-                let error_body = serde_json::json!({
-                  "error": "Mock Response Generation Failed",
-                  "mock_id": mock_def.id,
-                  "details": format!("{e}")
-                });
-
-                Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header("X-Mock-Id", mock_def.id.as_str())
-                    .header("X-Mock-Error", "true")
-                    .body(Body::from(error_body.to_string()))
-                    .expect("building error response should not fail")
-            }
-        }
-    } else {
-        if state.verbose || state.log_matches {
-            let elapsed = request_start.elapsed();
-            warn!(
-              method = %method,
-              path = %path,
-              query = ?query,
-              elapsed_ms = elapsed.as_secs_f64() * 1000.0,
-              "No matching mock found"
-            );
-        }
-
-        let error_body = serde_json::json!({
-          "error": "No matching mock found",
-          "method": method.as_str(),
-          "path": path,
-          "query": query,
-          "hint": "Use 'mockpit mock test --debug' to see why mocks didn't match"
-        });
-
-        Response::builder()
-            .status(StatusCode::NOT_FOUND)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(error_body.to_string()))
-            .expect("building 404 response should not fail")
-    }
-}
-
-/// Generate a mock response with template rendering
-async fn generate_mock_response(
-    mock_def: &mockpit::engine::MockDefinition,
-    method: &Method,
-    path: &str,
-    query: Option<&str>,
-    headers: &HeaderMap,
-    body: Option<&[u8]>,
-    captures: FxHashMap<String, String>,
-) -> Result<Response, anyhow::Error> {
-    let response_generator = &mock_def.response;
-
-    // Generate the response body
-    let body_bytes = response_generator
-        .generate_dynamic(
-            method.as_str(),
-            path,
-            query,
-            headers,
-            body,
-            captures,
-            mock_def.vars.as_ref(),
-        )
-        .await?;
-
-    // Use dynamic status if provided, otherwise use mock definition's status
-    let final_status = body_bytes.status.unwrap_or(response_generator.status);
-
-    // Build response
-    let mut response = Response::builder().status(final_status);
-
-    // Add mock definition headers
-    for (key, value) in &response_generator.headers {
-        if let Ok(header_value) = HeaderValue::from_str(value) {
-            response = response.header(key.as_str(), header_value);
+    if state.verbose || state.log_matches {
+        let elapsed = request_start.elapsed().as_secs_f64() * 1000.0;
+        match response.headers().get("X-Mock-Id").and_then(|v| v.to_str().ok()) {
+            Some(mock_id) => info!(
+                mock_id = %mock_id, method = %method, path = %path,
+                status = %response.status().as_u16(), elapsed_ms = elapsed,
+                "Mock matched"
+            ),
+            None => warn!(
+                method = %method, path = %path, query = ?query, elapsed_ms = elapsed,
+                "No matching mock found"
+            ),
         }
     }
 
-    // Add dynamic headers if any
-    if let Some(dynamic_headers) = &body_bytes.headers {
-        for (key, value) in dynamic_headers {
-            if let Ok(header_value) = HeaderValue::from_str(value) {
-                response = response.header(key.as_str(), header_value);
-            }
-        }
-    }
-
-    // Add X-Mock-Id header
-    response = response.header("X-Mock-Id", mock_def.id.as_str());
-
-    Ok(response.body(Body::from(body_bytes.body))?)
+    response
 }
 
 /// Template render handler
