@@ -202,7 +202,7 @@ pub async fn upstream_response(
         Some(SseUpstreamEvent::Error(message)) => {
             return (http::StatusCode::BAD_GATEWAY, message).into_response();
         }
-        Some(SseUpstreamEvent::Frame(_) | SseUpstreamEvent::Closed) | None => {
+        Some(SseUpstreamEvent::Frame(_) | SseUpstreamEvent::Reconnecting) | None => {
             return (
                 http::StatusCode::BAD_GATEWAY,
                 "SSE upstream ended before opening",
@@ -224,8 +224,10 @@ pub async fn upstream_response(
                 Some(SseUpstreamEvent::Error(message)) => {
                     return Some((Err(std::io::Error::other(message)), (rx, guard)));
                 }
-                Some(SseUpstreamEvent::Open) => {}
-                Some(SseUpstreamEvent::Closed) | None => return None,
+                // The pump redials on its own; the relay just keeps the
+                // client stream open across reconnects.
+                Some(SseUpstreamEvent::Open | SseUpstreamEvent::Reconnecting) => {}
+                None => return None,
             }
         }
     })

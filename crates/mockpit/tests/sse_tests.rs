@@ -21,6 +21,31 @@ async fn matcher_for(yaml: &str) -> MockMatcher {
     MockMatcher::new(registry)
 }
 
+/// Read a streaming body until `predicate` accepts the accumulated text.
+/// Upstream relays reconnect instead of ending the client stream, so
+/// tests read what they expect and drop the body (closing the pump).
+async fn read_stream_until(
+    response: axum::response::Response,
+    predicate: impl Fn(&str) -> bool,
+) -> String {
+    use futures::StreamExt;
+
+    let mut stream = response.into_body().into_data_stream();
+    let mut text = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !predicate(&text) {
+        let chunk = tokio::time::timeout_at(deadline, stream.next())
+            .await
+            .unwrap_or_else(|_| panic!("stream stalled before the expected frames: {text}"));
+        match chunk {
+            Some(Ok(bytes)) => text.push_str(&String::from_utf8_lossy(&bytes)),
+            Some(Err(e)) => panic!("stream errored: {e}"),
+            None => panic!("stream ended early: {text}"),
+        }
+    }
+    text
+}
+
 async fn get_body(matcher: &MockMatcher, path: &str, query: Option<&str>) -> (u16, String) {
     let response = mockpit::services::serve::respond(
         matcher,
@@ -285,12 +310,109 @@ mocks:
         Some("text/event-stream")
     );
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("drain");
-    let text = String::from_utf8_lossy(&body);
+    let text = read_stream_until(response, |t| {
+        t.contains("id:1\ndata:alpha") && t.contains("event:tick\ndata:{\"n\":2}")
+    })
+    .await;
     assert!(text.contains("id:1\ndata:alpha"), "{text}");
-    assert!(text.contains("event:tick\ndata:{\"n\":2}"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn declarative_upstream_reconnects_with_last_event_id() {
+    // Real upstream: finite playback honoring the announced retry delay;
+    // every pass echoes the Last-Event-ID header the dialer sent.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("upstream.yaml"),
+        r#"
+mocks:
+  - id: real-stream
+    match: { url: "/real" }
+    sse:
+      retry: 50
+      events:
+        - { id: "7", data: alpha }
+        - data_template: 'last={{ headers["last-event-id"] | default(value="none") }}'
+"#,
+    )
+    .expect("write");
+    let upstream = mockpit::services::serve::start(mockpit::services::serve::ServeInput {
+        port: 0,
+        mocks_dir: Some(dir.path().to_string_lossy().into_owned()),
+        ..mockpit::services::serve::ServeInput::default()
+    })
+    .await
+    .expect("upstream start");
+
+    let matcher = matcher_for(&format!(
+        r#"
+mocks:
+  - id: relay
+    match: {{ url: "/relay" }}
+    sse:
+      upstream: {}/real
+"#,
+        upstream.url
+    ))
+    .await;
+
+    let response = mockpit::services::serve::respond(
+        &matcher,
+        &http::Method::GET,
+        "/relay",
+        None,
+        &http::HeaderMap::new(),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), 200);
+
+    // The upstream closes after each playback; the pump must redial
+    // after the announced 50ms retry, sending the last seen id.
+    let text = read_stream_until(response, |t| t.contains("data:last=7")).await;
+    assert!(
+        text.matches("data:alpha").count() >= 2,
+        "expected a second playback after reconnect: {text}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upstream_wrong_content_type_answers_bad_gateway() {
+    // Real upstream: a plain JSON mock — not an SSE stream.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("upstream.yaml"),
+        r#"
+mocks:
+  - id: plain
+    match: { url: "/real" }
+    response: { body: "{}" }
+"#,
+    )
+    .expect("write");
+    let upstream = mockpit::services::serve::start(mockpit::services::serve::ServeInput {
+        port: 0,
+        mocks_dir: Some(dir.path().to_string_lossy().into_owned()),
+        ..mockpit::services::serve::ServeInput::default()
+    })
+    .await
+    .expect("upstream start");
+
+    let matcher = matcher_for(&format!(
+        r#"
+mocks:
+  - id: relay
+    match: {{ url: "/relay" }}
+    sse:
+      upstream: {}/real
+"#,
+        upstream.url
+    ))
+    .await;
+
+    let (status, body) = get_body(&matcher, "/relay", None).await;
+    assert_eq!(status, 502, "{body}");
+    assert!(body.contains("responded"), "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
