@@ -1,6 +1,6 @@
 [package]
 name = "mockpit"
-version = "0.1.5"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,10 @@ description = "A high-performance HTTP mocking engine with templates, recording,
 readme = "../../README.md"
 keywords = ["mock", "http", "testing", "api", "fake-data"]
 categories = ["development-tools", "web-programming"]
+# Integration tests carry large fixtures consumers never need; benches and
+# examples are declared targets (removing them breaks the package verify
+# build) and assets/ must ship (rust-embed folder).
+exclude = ["tests/"]
 
 [features]
 default = ["engine"]

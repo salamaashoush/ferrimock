@@ -146,6 +146,9 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             build: bunx @napi-rs/cli build --platform --release --target x86_64-pc-windows-msvc
+          - host: windows-latest
+            target: aarch64-pc-windows-msvc
+            build: bunx @napi-rs/cli build --platform --release --target aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -237,6 +240,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      # npm publish authenticates through the .npmrc this step writes
+      # (NODE_AUTH_TOKEN alone does nothing without it).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
       - run: bun install
 
       - name: Download all native modules
@@ -245,6 +254,13 @@ jobs:
           path: crates/mockpit-napi/artifacts
           pattern: napi-*
           merge-multiple: false
+
+      # The per-platform package dirs are not committed; create them from
+      # the napi.targets list before moving binaries into them.
+      - name: Create platform package dirs
+        working-directory: crates/mockpit-napi
+        run: bunx @napi-rs/cli create-npm-dirs
+        shell: bash
 
       - name: Move artifacts
         working-directory: crates/mockpit-napi
