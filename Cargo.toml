@@ -180,7 +180,10 @@ ab_glyph = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 imageproc = "0.26.1"
 lopdf = "0.40"
-rust-embed = { version = "8.11", features = ["compression"] }
+# No "compression" feature: it pulls include-flate -> proc-macro-error2,
+# which trips a future-incompat lint (E0365) with no fixed release. The
+# only embedded asset is one font; the size trade is acceptable.
+rust-embed = { version = "8.11" }
 
 # GraphQL
 graphql-parser = "0.4"
