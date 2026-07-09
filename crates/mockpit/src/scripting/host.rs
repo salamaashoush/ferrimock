@@ -53,12 +53,12 @@ impl ScriptHost {
     /// mocks directory (falls back to the file's parent for single-file
     /// loads).
     pub async fn load_file(&self, path: &Path, root: Option<&Path>) -> Result<Vec<MockDefinition>> {
-        let canonical = path
-            .canonicalize()
+        // dunce: Windows canonicalize returns \\?\-verbatim paths, which
+        // rolldown cannot resolve as entry modules.
+        let canonical = dunce::canonicalize(path)
             .map_err(|e| MockpitError::Script(format!("{}: {e}", path.display())))?;
         let root = match root {
-            Some(r) => r
-                .canonicalize()
+            Some(r) => dunce::canonicalize(r)
                 .map_err(|e| MockpitError::Script(format!("{}: {e}", r.display())))?,
             None => canonical
                 .parent()
@@ -98,8 +98,7 @@ impl ScriptHost {
 
     /// Reload a previously loaded file with its recorded sandbox root.
     pub async fn reload_file(&self, path: &Path) -> Result<Vec<MockDefinition>> {
-        let root = path
-            .canonicalize()
+        let root = dunce::canonicalize(path)
             .ok()
             .and_then(|c| self.scripts.get(&c).map(|s| s.root.clone()));
         self.load_file(path, root.as_deref()).await
@@ -107,7 +106,7 @@ impl ScriptHost {
 
     /// Drop the engine for a removed file (frees its handlers).
     pub fn unload_file(&self, path: &Path) {
-        if let Ok(canonical) = path.canonicalize() {
+        if let Ok(canonical) = dunce::canonicalize(path) {
             self.scripts.remove(&canonical);
         } else {
             // Deleted files can no longer canonicalize; match by suffix.

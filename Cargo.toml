@@ -207,6 +207,9 @@ rquickjs-serde = "0.6"
 # Bundler front-end: rolldown bundles + tree-shakes + transpiles TS to one ESM
 # module (resolving node_modules), compiled once to QuickJS bytecode.
 rolldown = "1"
+# canonicalize without Windows \\?\ verbatim prefixes (rolldown cannot
+# resolve them as entry paths)
+dunce = "1"
 rolldown_common = "1"
 rolldown_plugin = "1"
 # Remap QuickJS error line:col (bundled output) back to original .ts/.js.

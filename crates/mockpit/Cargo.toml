@@ -66,6 +66,7 @@ scripting = [
   "dep:rolldown_common",
   "dep:rolldown_plugin",
   "dep:sourcemap",
+  "dep:dunce",
 ]
 
 # Everything
@@ -143,6 +144,7 @@ schemars = { version = "1", optional = true }
 rquickjs = { workspace = true, optional = true }
 rquickjs-serde = { workspace = true, optional = true }
 rolldown = { workspace = true, optional = true }
+dunce = { workspace = true, optional = true }
 rolldown_common = { workspace = true, optional = true }
 rolldown_plugin = { workspace = true, optional = true }
 sourcemap = { workspace = true, optional = true }
