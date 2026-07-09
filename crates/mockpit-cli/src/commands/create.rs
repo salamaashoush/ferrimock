@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use super::ui;
-use mockpit::services::create::{CreateInput, create};
+use mockpit::services::create::{CreateInput, MockKind, create};
 
 /// Create a new mock definition
 #[allow(clippy::too_many_arguments)]
@@ -18,8 +18,10 @@ pub fn create_mock(
     id: Option<String>,
     priority: u32,
     collection: Option<&str>,
+    kind: &str,
     interactive: bool,
 ) -> anyhow::Result<()> {
+    let kind: MockKind = kind.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
     crate::say!("{}", ui::header("Create New Mock"));
     crate::say!();
 
@@ -67,6 +69,7 @@ pub fn create_mock(
         priority,
         collection: collection.map(str::to_string),
         format: format.clone(),
+        kind,
     })?;
 
     // Resolve the output path (default: <mocks-dir>/<mock-id>.<ext>).

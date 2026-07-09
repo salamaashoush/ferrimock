@@ -94,6 +94,10 @@ pub enum MockAction {
         #[arg(short = 'c', long, value_name = "NAME")]
         collection: Option<String>,
 
+        /// Mock kind: http (default), ws (WebSocket), or sse (Server-Sent Events)
+        #[arg(short = 'k', long, value_name = "KIND", default_value = "http")]
+        kind: String,
+
         /// Launch interactive wizard for step-by-step mock creation
         #[arg(short = 'I', long)]
         interactive: bool,
@@ -409,6 +413,10 @@ pub enum MockAction {
     ///   mock serve --mocks ./mocks/ --log-matches
     #[command(visible_alias = "sv")]
     Serve {
+        /// Mock collections directory (same as --mocks)
+        #[arg(value_name = "DIR")]
+        dir: Option<String>,
+
         /// Port to listen on
         #[arg(short = 'p', long, default_value = "3006")]
         port: u16,

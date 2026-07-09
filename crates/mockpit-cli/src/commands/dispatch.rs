@@ -22,12 +22,13 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             id,
             priority,
             collection,
+            kind,
             interactive,
         } => {
             match (interactive, url) {
                 // Launch interactive wizard if --interactive flag is set or no URL provided
                 (true, url) | (false, url @ None) => wizard::run_wizard(
-                    url, output, &method, status, body, template, id, priority, collection,
+                    url, output, &method, status, body, template, id, priority, collection, &kind,
                 ),
                 // Quick mode with flags when URL is provided
                 (false, Some(url)) => create::create_mock(
@@ -40,6 +41,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                     id,
                     priority,
                     collection.as_deref(),
+                    &kind,
                     false,
                 ),
             }
@@ -146,6 +148,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             .await
         }
         MockAction::Serve {
+            dir,
             port,
             host,
             mocks,
@@ -160,7 +163,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             serve::serve_mock_server(serve::MockServerConfig {
                 port,
                 host,
-                mocks_dir: mocks,
+                mocks_dir: dir.or(mocks),
                 mock_file,
                 watch,
                 cors,

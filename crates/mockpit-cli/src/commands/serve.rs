@@ -352,17 +352,6 @@ async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -
     let uri = req.uri().clone();
     let path = uri.path().to_string();
     let query = uri.query().map(str::to_string);
-    let headers = req.headers().clone();
-
-    // Read body for non-safe methods
-    let body_bytes = if method.is_safe() {
-        None
-    } else {
-        axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
-            .await
-            .ok()
-            .map(|b| b.to_vec())
-    };
 
     let request_start = std::time::Instant::now();
     if state.verbose {
@@ -370,15 +359,7 @@ async fn mock_handler(State(state): State<Arc<MockServerState>>, req: Request) -
     }
 
     // Build the response via the canonical, single-source handler.
-    let response = mockpit::services::serve::respond(
-        &state.matcher,
-        &method,
-        &path,
-        query.as_deref(),
-        &headers,
-        body_bytes.as_deref(),
-    )
-    .await;
+    let response = mockpit::services::serve::handle_request(&state.matcher, req).await;
 
     if state.verbose || state.log_matches {
         let elapsed = request_start.elapsed().as_secs_f64() * 1000.0;
