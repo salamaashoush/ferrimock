@@ -1770,3 +1770,130 @@ async fn test_mocks_no_scope_by_default() {
     assert!(mocks[0].scope.is_none());
 }
 
+// ============================================================================
+// Chrome DevTools _webSocketMessages Tests
+// ============================================================================
+
+fn ws_har_fixture(messages: &str) -> String {
+    format!(
+        r#"{{
+  "log": {{
+    "version": "1.2",
+    "creator": {{ "name": "WebInspector", "version": "537.36" }},
+    "entries": [
+      {{
+        "startedDateTime": "2026-07-01T10:00:00.000Z",
+        "time": 1.0,
+        "request": {{
+          "method": "GET",
+          "url": "wss://chat.example.com/socket",
+          "httpVersion": "HTTP/1.1",
+          "cookies": [],
+          "headers": [],
+          "queryString": [],
+          "headersSize": -1,
+          "bodySize": -1
+        }},
+        "response": {{
+          "status": 101,
+          "statusText": "Switching Protocols",
+          "httpVersion": "HTTP/1.1",
+          "cookies": [],
+          "headers": [],
+          "content": {{ "size": 0, "mimeType": "x-unknown" }},
+          "redirectURL": "",
+          "headersSize": -1,
+          "bodySize": -1
+        }},
+        "cache": {{}},
+        "timings": {{ "send": 0, "wait": 0, "receive": 0 }},
+        "_resourceType": "websocket",
+        "_webSocketMessages": [ {messages} ]
+      }}
+    ]
+  }}
+}}"#
+    )
+}
+
+async fn load_har_string(content: &str) -> Vec<mockpit::config::MockConfig> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("capture.har");
+    std::fs::write(&path, content).unwrap();
+    HarLoader::new().load_from_file(&path).await.unwrap()
+}
+
+#[tokio::test]
+async fn test_websocket_messages_become_a_ws_mock() {
+    let mocks = load_har_string(&ws_har_fixture(
+        r#"
+        { "type": "receive", "time": 1751364000.1, "opcode": 1, "data": "welcome" },
+        { "type": "send", "time": 1751364000.5, "opcode": 1, "data": "ping" },
+        { "type": "receive", "time": 1751364000.62, "opcode": 1, "data": "pong" },
+        { "type": "send", "time": 1751364001.0, "opcode": 2, "data": "AAEC" },
+        { "type": "receive", "time": 1751364001.2, "opcode": 2, "data": "//79" }
+"#,
+    ))
+    .await;
+
+    // The 101 entry itself must NOT become an HTTP mock.
+    assert_eq!(mocks.len(), 1, "{mocks:?}");
+    let mock = &mocks[0];
+    assert_eq!(mock.id, "har-ws-1");
+    let ws = mock.ws.as_ref().expect("ws config");
+
+    // Pre-client server frame replays on connect.
+    assert_eq!(ws.on_connect.len(), 1);
+    let yaml = serde_yaml::to_string(&ws.on_connect).unwrap();
+    assert!(yaml.contains("welcome"), "{yaml}");
+
+    // Text pairing: exact ping -> delay + pong.
+    assert_eq!(ws.on_message.len(), 2);
+    let rules = serde_yaml::to_string(&ws.on_message).unwrap();
+    assert!(rules.contains("exact: ping"), "{rules}");
+    assert!(rules.contains("delay: 120ms"), "{rules}");
+    assert!(rules.contains("send: pong"), "{rules}");
+
+    // Binary pairing: binary_base64 match -> send_binary reply.
+    assert!(rules.contains("binary_base64: AAEC"), "{rules}");
+    assert!(rules.contains("send_binary: //79"), "{rules}");
+    assert!(rules.contains("delay: 200ms"), "{rules}");
+
+    // The lowered definition is a real streaming ws mock (GET + upgrade).
+    let def = mock.clone().into_mock_definition().await.unwrap();
+    assert!(
+        def.streaming
+            .as_ref()
+            .is_some_and(mockpit::types::StreamingResponse::is_ws)
+    );
+    assert_eq!(
+        def.request.methods,
+        smallvec::SmallVec::<[http::Method; 2]>::from_elem(http::Method::GET, 1)
+    );
+}
+
+#[tokio::test]
+async fn test_ambiguous_websocket_pairing_folds_into_connect_sequence() {
+    // "ping" recurs with different replies -> exact rules would be wrong.
+    let mocks = load_har_string(&ws_har_fixture(
+        r#"
+        { "type": "send", "time": 1751364000.0, "opcode": 1, "data": "ping" },
+        { "type": "receive", "time": 1751364000.1, "opcode": 1, "data": "pong-1" },
+        { "type": "send", "time": 1751364001.0, "opcode": 1, "data": "ping" },
+        { "type": "receive", "time": 1751364001.1, "opcode": 1, "data": "pong-2" }
+"#,
+    ))
+    .await;
+
+    assert_eq!(mocks.len(), 1);
+    let ws = mocks[0].ws.as_ref().expect("ws config");
+    assert!(
+        ws.on_message.is_empty(),
+        "ambiguous pairing must not build rules"
+    );
+    let yaml = serde_yaml::to_string(&ws.on_connect).unwrap();
+    assert!(yaml.contains("pong-1"), "{yaml}");
+    assert!(yaml.contains("pong-2"), "{yaml}");
+    // Inter-frame delay between the two server frames (1751364001.1 - 1751364000.1).
+    assert!(yaml.contains("1000ms"), "{yaml}");
+}

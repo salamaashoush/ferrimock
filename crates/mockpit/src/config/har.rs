@@ -225,7 +225,11 @@ impl HarLoader {
         let content = tokio::fs::read_to_string(path.as_ref()).await?;
         let har = parse_har(&content)?;
 
-        self.convert_har_to_mocks(har).await
+        let mut mocks = self.convert_har_to_mocks(har).await?;
+        // Chrome's `_webSocketMessages` extension is not in the har
+        // crate's schema — recover it from the raw JSON.
+        mocks.extend(self.convert_websocket_entries(&content)?);
+        Ok(mocks)
     }
 
     /// Convert HAR structure to mock definitions (simple 1:1 conversion)
@@ -369,6 +373,12 @@ impl HarLoader {
     ) -> Result<Option<MockConfig>> {
         let mock_id = format!("har-entry-{}", index + 1);
 
+        // WebSocket entries (ws:// or wss:// URLs, Chrome's recording
+        // scheme) convert through the `_webSocketMessages` pass instead.
+        if entry.request.url.starts_with("ws://") || entry.request.url.starts_with("wss://") {
+            return Ok(None);
+        }
+
         // Normalize the URL (may return None if domain is filtered)
         let Some(normalized_url) = self.normalize_url(&entry.request.url) else {
             return Ok(None);
@@ -450,6 +460,82 @@ impl HarLoader {
         }))
     }
 
+    /// Convert Chrome DevTools `_webSocketMessages` entries into
+    /// declarative `ws` mocks.
+    ///
+    /// Frames the recorded server sent (DevTools direction `receive`)
+    /// become the mock's sends; frames the client sent (`send`) become
+    /// `on_message` exact-match rules replying with the server frames
+    /// that followed them — when that pairing is unambiguous (no client
+    /// payload recurs with a different reply). Ambiguous recordings fold
+    /// every server frame into the `on_connect` sequence with the
+    /// recorded inter-frame delays instead.
+    fn convert_websocket_entries(&self, content: &str) -> Result<Vec<MockConfig>> {
+        let value: serde_json::Value = serde_json::from_str(content)?;
+        let Some(entries) = value
+            .get("log")
+            .and_then(|log| log.get("entries"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut mocks = Vec::new();
+        for entry in entries {
+            let Some(messages) = entry
+                .get("_webSocketMessages")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            let Some(raw_url) = entry
+                .get("request")
+                .and_then(|r| r.get("url"))
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            // normalize_url handles the domain filter and relative-path
+            // conversion; ws schemes parse like http ones.
+            let Some(normalized_url) = self.normalize_url(raw_url) else {
+                continue;
+            };
+
+            let frames = parse_ws_messages(messages);
+            if frames.is_empty() {
+                continue;
+            }
+
+            let ws = build_ws_config(&frames);
+            let index = mocks.len() + 1;
+            mocks.push(MockConfig {
+                id: format!("har-ws-{index}").into(),
+                description: None,
+                priority: 100,
+                enabled: true,
+                scope: None,
+                vars: None,
+                match_config: Some(MatchConfig {
+                    method: None,
+                    methods: vec!["GET".to_string()],
+                    url: None,
+                    urls: vec![format!("exact:{normalized_url}")],
+                    headers: FxHashMap::default(),
+                    query: FxHashMap::default(),
+                    body: FxHashMap::default(),
+                    graphql: None,
+                }),
+                request: None,
+                response_config: None,
+                patch: None,
+                delay: None,
+                sse: None,
+                ws: Some(ws),
+            });
+        }
+        Ok(mocks)
+    }
+
     /// Check if a header should be stripped
     fn should_strip_header(&self, name: &str) -> bool {
         let lower = name.to_lowercase();
@@ -529,6 +615,205 @@ impl HarLoader {
 impl Default for HarLoader {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// One recorded WebSocket frame, mock-perspective: `outbound` frames are
+/// the ones the mock replays (the recorded server sent them).
+struct HarWsFrame {
+    outbound: bool,
+    /// Epoch seconds (Chrome's `_webSocketMessages[].time`).
+    time: f64,
+    payload: HarWsPayload,
+}
+
+#[derive(PartialEq, Eq, Clone)]
+enum HarWsPayload {
+    Text(String),
+    /// Kept base64-encoded, as recorded (opcode 2).
+    Binary(String),
+}
+
+fn parse_ws_messages(messages: &[serde_json::Value]) -> Vec<HarWsFrame> {
+    let mut frames = Vec::new();
+    for message in messages {
+        let Some(direction) = message.get("type").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let outbound = match direction {
+            "receive" => true,
+            "send" => false,
+            _ => continue,
+        };
+        let time = message
+            .get("time")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
+        let data = message
+            .get("data")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let payload = match message.get("opcode").and_then(serde_json::Value::as_i64) {
+            Some(2) => HarWsPayload::Binary(data),
+            _ => HarWsPayload::Text(data),
+        };
+        frames.push(HarWsFrame {
+            outbound,
+            time,
+            payload,
+        });
+    }
+    frames.sort_by(|a, b| a.time.total_cmp(&b.time));
+    frames
+}
+
+fn ws_delay_ms(from: f64, to: f64) -> u64 {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ms = ((to - from) * 1000.0).round().max(0.0) as u64;
+    ms
+}
+
+fn send_action(payload: &HarWsPayload) -> super::streaming::WsActionConfig {
+    match payload {
+        HarWsPayload::Text(text) => super::streaming::WsActionConfig::Send {
+            send: serde_json::Value::String(text.clone()),
+        },
+        HarWsPayload::Binary(encoded) => super::streaming::WsActionConfig::SendBinary {
+            send_binary: encoded.clone(),
+        },
+    }
+}
+
+/// Replay a run of outbound frames as send actions with the recorded
+/// inter-frame delays (the first frame plays immediately).
+fn replay_actions(frames: &[&HarWsFrame]) -> Vec<super::streaming::WsActionConfig> {
+    let mut actions = Vec::new();
+    let mut previous: Option<f64> = None;
+    for frame in frames {
+        if let Some(prev) = previous {
+            let delay = ws_delay_ms(prev, frame.time);
+            if delay > 0 {
+                actions.push(super::streaming::WsActionConfig::Delay {
+                    delay: format!("{delay}ms"),
+                });
+            }
+        }
+        actions.push(send_action(&frame.payload));
+        previous = Some(frame.time);
+    }
+    actions
+}
+
+fn rule_match(payload: &HarWsPayload) -> super::streaming::WsMatchConfig {
+    let (exact, binary) = match payload {
+        HarWsPayload::Text(text) => (Some(text.clone()), None),
+        HarWsPayload::Binary(encoded) => (None, Some(encoded.clone())),
+    };
+    super::streaming::WsMatchConfig {
+        exact,
+        regex: None,
+        json_path: None,
+        equals: None,
+        binary_base64: binary,
+        binary_prefix_base64: None,
+        any: None,
+    }
+}
+
+fn build_ws_config(frames: &[HarWsFrame]) -> super::streaming::WsConfig {
+    use super::streaming::{WsActionConfig, WsConfig, WsRuleConfig};
+
+    let client_indexes: Vec<usize> = frames
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !f.outbound)
+        .map(|(i, _)| i)
+        .collect();
+
+    let fold_everything = |frames: &[HarWsFrame]| -> WsConfig {
+        let outbound: Vec<&HarWsFrame> = frames.iter().filter(|f| f.outbound).collect();
+        WsConfig {
+            subprotocol: None,
+            echo: None,
+            upstream: None,
+            on_connect: replay_actions(&outbound),
+            on_message: Vec::new(),
+        }
+    };
+
+    let Some(&first_client) = client_indexes.first() else {
+        return fold_everything(frames);
+    };
+
+    // Server frames before the first client message replay on connect;
+    // each client message maps to the server frames that followed it.
+    let preamble: Vec<&HarWsFrame> = frames.iter().take(first_client).collect();
+
+    let mut pairs: Vec<(&HarWsFrame, Vec<&HarWsFrame>)> = Vec::new();
+    for (position, &index) in client_indexes.iter().enumerate() {
+        let end = client_indexes
+            .get(position + 1)
+            .copied()
+            .unwrap_or(frames.len());
+        let Some(client) = frames.get(index) else {
+            continue;
+        };
+        let replies: Vec<&HarWsFrame> = frames
+            .iter()
+            .take(end)
+            .skip(index + 1)
+            .filter(|f| f.outbound)
+            .collect();
+        pairs.push((client, replies));
+    }
+
+    // Ambiguity check: the same client payload recurring with a
+    // different reply sequence cannot become an exact-match rule.
+    for (i, (frame_a, replies_a)) in pairs.iter().enumerate() {
+        for (frame_b, replies_b) in pairs.iter().skip(i + 1) {
+            if frame_a.payload == frame_b.payload {
+                let payloads_a: Vec<&HarWsPayload> = replies_a.iter().map(|f| &f.payload).collect();
+                let payloads_b: Vec<&HarWsPayload> = replies_b.iter().map(|f| &f.payload).collect();
+                if payloads_a != payloads_b {
+                    return fold_everything(frames);
+                }
+            }
+        }
+    }
+
+    let mut on_message: Vec<WsRuleConfig> = Vec::new();
+    let mut seen: Vec<&HarWsPayload> = Vec::new();
+    for (client, replies) in &pairs {
+        if replies.is_empty() || seen.contains(&&client.payload) {
+            continue;
+        }
+        seen.push(&client.payload);
+
+        let mut actions: Vec<WsActionConfig> = Vec::new();
+        let mut previous = client.time;
+        for reply in replies {
+            let delay = ws_delay_ms(previous, reply.time);
+            if delay > 0 {
+                actions.push(WsActionConfig::Delay {
+                    delay: format!("{delay}ms"),
+                });
+            }
+            actions.push(send_action(&reply.payload));
+            previous = reply.time;
+        }
+        on_message.push(WsRuleConfig {
+            match_config: rule_match(&client.payload),
+            actions,
+        });
+    }
+
+    WsConfig {
+        subprotocol: None,
+        echo: None,
+        upstream: None,
+        on_connect: replay_actions(&preamble),
+        on_message,
     }
 }
 
