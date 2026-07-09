@@ -3,6 +3,7 @@ name = "mockpit"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"

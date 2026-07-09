@@ -133,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -144,7 +144,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.3.14"
       - run: bun install
       - name: Build NAPI native module
         working-directory: crates/mockpit-napi
@@ -175,8 +175,114 @@ jobs:
         run: cargo hack check -p mockpit --feature-powerset --depth 2 --no-dev-deps
 
   # ---------------------------------------------------------------------------
-  # Semver: catch accidental breaking changes
+  # MSRV: the stable feature set must build on the declared rust-version
+  # (the scripting feature needs nightly regardless - oxc uses if-let guards)
   # ---------------------------------------------------------------------------
+  msrv:
+    name: MSRV 1.91 (stable features)
+    needs: [basics]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check -p mockpit --features engine,server,api,graphql,schema
+      - run: cargo check -p mockpit-napi
+
+  # ---------------------------------------------------------------------------
+  # Packaging: catch publish rot before release day
+  # ---------------------------------------------------------------------------
+  packaging:
+    name: Publish dry-run
+    needs: [basics]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # mockpit-cli cannot dry-run here: its verify build resolves the
+      # mockpit dep from crates.io, which lags the workspace version.
+      - run: cargo publish --dry-run -p mockpit
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install
+      - run: bun run build
+      - name: npm pack dry-run for every published package
+        run: |
+          for pkg in packages/core packages/mockpit packages/playwright crates/mockpit-napi crates/mockpit-cli/npm-shim; do
+            echo "--- $pkg"
+            npm pack --dry-run "./$pkg"
+          done
+
+  # ---------------------------------------------------------------------------
+  # Benchmarks: nightly matcher-path regression watch. Compares against the
+  # previous scheduled run's criterion baseline (restored from cache) and
+  # fails on >15% mean regression - well below the noise floor of a real
+  # regression, well above shared-runner jitter on these benches.
+  # ---------------------------------------------------------------------------
+  bench:
+    name: Matcher benchmarks
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: [basics]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Restore criterion baseline
+        uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: criterion-baseline-${{ github.run_id }}
+          restore-keys: criterion-baseline-
+      - name: Run matcher benches
+        run: |
+          cargo bench --bench mock_performance -p mockpit -- \
+            'simple_exact_match|complex_match|pattern_matching_scale|miss_at_scale' \
+            2>&1 | tee bench.log
+      - name: Fail on regressions
+        run: |
+          python3 - <<'EOF'
+          import re, sys
+
+          name = None
+          worst = []
+          for line in open("bench.log"):
+              stripped = line.strip()
+              bench = re.match(r"^([A-Za-z0-9_/]+/[A-Za-z0-9_/]+)$", stripped)
+              if bench:
+                  name = bench.group(1)
+                  continue
+              change = re.search(r"change:\s*\[[^ ]+ ([+-][0-9.]+)% ", stripped)
+              if change and name:
+                  pct = float(change.group(1))
+                  if pct > 15.0:
+                      worst.append((name, pct))
+
+          if worst:
+              for name, pct in worst:
+                  print(f"REGRESSION {name}: +{pct:.1f}%")
+              sys.exit(1)
+          print("no matcher regressions above 15%")
+          EOF
   semver:
     name: Semver check
     needs: [basics]
@@ -230,6 +336,9 @@ jobs:
       - test-rust
       - test-napi
       - features
+      - msrv
+      - packaging
+      - bench
       - security
       - lockfile
     runs-on: ubuntu-latest
