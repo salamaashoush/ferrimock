@@ -420,7 +420,9 @@ async fn href_regex_respects_a_known_scheme() {
         Err(mockpit::MockpitError::msg("ws stub"))
     });
     mock.request.url_patterns = smallvec::SmallVec::from_elem(
-        UrlPattern::HrefRegex(regex::Regex::new(r"^ws://chat\.example\.com/live").expect("re")),
+        UrlPattern::HrefRegex(
+            regex::Regex::new(r"^ws://chat\.example\.com/live(/.*)?$").expect("re"),
+        ),
         1,
     );
     mock.streaming = Some(StreamingResponse::Ws(std::sync::Arc::new(WsScript {
