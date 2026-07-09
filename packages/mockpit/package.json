@@ -1,6 +1,6 @@
 {
   "name": "mockpit",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "High-performance HTTP mocking engine -- bare-specifier alias of @mockpit/core so mock files can `import { http } from 'mockpit'` in both Node and the embedded QuickJS runtime",
   "type": "module",
   "main": "./dist/index.mjs",
@@ -20,7 +20,10 @@
       "default": "./dist/node.mjs"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsdown"
   },

@@ -1,6 +1,6 @@
 {
   "name": "@mockpit/playwright",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "Playwright adapter for mockpit -- fixtures that wire the mock engine into page.route()",
   "type": "module",
   "main": "./dist/index.mjs",
@@ -14,7 +14,10 @@
       "default": "./dist/index.mjs"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsdown"
   },
