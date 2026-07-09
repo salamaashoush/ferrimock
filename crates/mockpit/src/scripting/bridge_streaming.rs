@@ -254,6 +254,16 @@ pub fn build_sse_handler_fn(
                                 }
                             }
                             Some(SseUpstreamEvent::Frame(frame)) => {
+                                // Bare retry frames only adjust the pump's
+                                // reconnect delay; EventSource dispatches
+                                // and forwards nothing for them.
+                                if frame.retry.is_some()
+                                    && frame.data.is_empty()
+                                    && frame.id.is_none()
+                                    && frame.event.is_none()
+                                {
+                                    continue;
+                                }
                                 let event_name = frame
                                     .event
                                     .clone()
@@ -283,10 +293,10 @@ pub fn build_sse_handler_fn(
                                     break Err(e);
                                 }
                             }
-                            Some(SseUpstreamEvent::Closed) => {
-                                pump = None;
+                            Some(SseUpstreamEvent::Reconnecting) => {
                                 // EventSource surfaces a lost connection as
-                                // an error event.
+                                // an error event; the pump redials on its
+                                // own with Last-Event-ID.
                                 if let Err(e) =
                                     dispatch_sse_event(&vm, conn_id, "error".to_string(), None).await
                                 {

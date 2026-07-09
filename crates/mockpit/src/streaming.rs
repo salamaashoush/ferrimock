@@ -349,8 +349,12 @@ pub enum SseUpstreamCmd {
 pub enum SseUpstreamEvent {
     Open,
     Frame(SseMessage),
+    /// The stream dropped after opening; the pump redials after the
+    /// current retry delay (EventSource semantics). Lanes surface it as
+    /// an `error` event; another [`Open`](Self::Open) follows when the
+    /// redial succeeds.
+    Reconnecting,
     Error(String),
-    Closed,
 }
 
 /// Incremental SSE frame parser (handles `\n`, `\r\n`, and `\r` line
@@ -432,68 +436,120 @@ fn sse_client() -> &'static reqwest::Client {
     CLIENT.get_or_init(reqwest::Client::new)
 }
 
-/// Dial an upstream SSE endpoint and pump parsed frames into `evt_tx`
-/// until the stream ends or `evt_tx`'s receiver is dropped. One
-/// connection per call — reconnection policy belongs to the caller.
+/// EventSource default reconnection delay, overridden by `retry:` frames.
+#[cfg(feature = "server")]
+const SSE_DEFAULT_RETRY_MS: u64 = 3000;
+
+/// Wait out the reconnection delay. Returns false when the client sink
+/// closed — the pump must stop instead of redialing.
+#[cfg(feature = "server")]
+async fn sse_reconnect_delay(
+    evt_tx: &mpsc::UnboundedSender<SseUpstreamEvent>,
+    retry_ms: u64,
+) -> bool {
+    if evt_tx.send(SseUpstreamEvent::Reconnecting).is_err() {
+        return false;
+    }
+    tokio::select! {
+        () = tokio::time::sleep(std::time::Duration::from_millis(retry_ms)) => true,
+        () = evt_tx.closed() => false,
+    }
+}
+
+/// Dial an upstream SSE endpoint and pump parsed frames into `evt_tx`.
+///
+/// Mirrors EventSource reconnect semantics (the Node lane's
+/// `MockpitEventSource`): once a connection has opened, a dropped or
+/// ended stream redials after the current `retry:` delay (default 3s)
+/// with the last seen `id:` sent as `Last-Event-ID`. Terminal
+/// conditions: an HTTP error status or a non-`text/event-stream`
+/// content type on any attempt, or a dial failure before the first open
+/// (so callers can answer 502). Stops as soon as `evt_tx`'s receiver
+/// drops, including mid-wait.
 #[cfg(feature = "server")]
 pub async fn run_sse_upstream(
     url: String,
     last_event_id: Option<String>,
     evt_tx: mpsc::UnboundedSender<SseUpstreamEvent>,
 ) {
-    let mut request = sse_client()
-        .get(&url)
-        .header(http::header::ACCEPT, "text/event-stream");
-    if let Some(id) = last_event_id {
-        request = request.header("last-event-id", id);
-    }
+    let mut last_id = last_event_id;
+    let mut retry_ms = SSE_DEFAULT_RETRY_MS;
+    let mut opened = false;
 
-    let mut response = match request.send().await {
-        Ok(response) => response,
-        Err(e) => {
-            let _ = evt_tx.send(SseUpstreamEvent::Error(format!(
-                "sse upstream connect to {url} failed: {e}"
-            )));
-            return;
-        }
-    };
-
-    let content_type = response
-        .headers()
-        .get(http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if !response.status().is_success() || !content_type.contains("text/event-stream") {
-        let _ = evt_tx.send(SseUpstreamEvent::Error(format!(
-            "sse upstream {url} responded {} ({content_type})",
-            response.status()
-        )));
-        return;
-    }
-
-    let _ = evt_tx.send(SseUpstreamEvent::Open);
-
-    let mut parser = SseFrameParser::default();
     loop {
-        match response.chunk().await {
-            Ok(Some(bytes)) => {
-                let chunk = String::from_utf8_lossy(&bytes);
-                for frame in parser.push(&chunk) {
-                    if evt_tx.send(SseUpstreamEvent::Frame(frame)).is_err() {
-                        return;
-                    }
-                }
-            }
-            Ok(None) => {
-                let _ = evt_tx.send(SseUpstreamEvent::Closed);
-                return;
-            }
-            Err(e) => {
+        let mut request = sse_client()
+            .get(&url)
+            .header(http::header::ACCEPT, "text/event-stream");
+        if let Some(id) = &last_id {
+            request = request.header("last-event-id", id.clone());
+        }
+
+        let mut response = match request.send().await {
+            Ok(response) => response,
+            Err(e) if !opened => {
                 let _ = evt_tx.send(SseUpstreamEvent::Error(format!(
-                    "sse upstream {url} read failed: {e}"
+                    "sse upstream connect to {url} failed: {e}"
                 )));
                 return;
             }
+            Err(e) => {
+                tracing::debug!("sse upstream {url} redial failed: {e}");
+                if !sse_reconnect_delay(&evt_tx, retry_ms).await {
+                    return;
+                }
+                continue;
+            }
+        };
+
+        let content_type = response
+            .headers()
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if !response.status().is_success() || !content_type.contains("text/event-stream") {
+            let _ = evt_tx.send(SseUpstreamEvent::Error(format!(
+                "sse upstream {url} responded {} ({content_type})",
+                response.status()
+            )));
+            return;
+        }
+
+        if evt_tx.send(SseUpstreamEvent::Open).is_err() {
+            return;
+        }
+        opened = true;
+
+        let mut parser = SseFrameParser::default();
+        loop {
+            let chunk = tokio::select! {
+                chunk = response.chunk() => chunk,
+                () = evt_tx.closed() => return,
+            };
+            match chunk {
+                Ok(Some(bytes)) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    for frame in parser.push(&text) {
+                        if let Some(id) = &frame.id {
+                            last_id = Some(id.clone());
+                        }
+                        if let Some(retry) = frame.retry {
+                            retry_ms = u64::from(retry);
+                        }
+                        if evt_tx.send(SseUpstreamEvent::Frame(frame)).is_err() {
+                            return;
+                        }
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::debug!("sse upstream {url} read failed: {e}");
+                    break;
+                }
+            }
+        }
+
+        if !sse_reconnect_delay(&evt_tx, retry_ms).await {
+            return;
         }
     }
 }
