@@ -1,8 +1,7 @@
 import { defineConfig } from "tsdown";
 
-// @mockpit/core, @mockpit/node, clap-ts are deps — auto-externalized.
 export default defineConfig({
-  entry: ["src/cli.ts"],
+  entry: ["src/index.ts", "src/node.ts"],
   format: ["esm"],
   dts: true,
   clean: true,
