@@ -123,7 +123,7 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 pub fn entry_key(entry_path: &Path) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     abi_tag().hash(&mut h);
-    std::fs::canonicalize(entry_path)
+    dunce::canonicalize(entry_path)
         .unwrap_or_else(|_| entry_path.to_path_buf())
         .to_string_lossy()
         .hash(&mut h);
@@ -150,7 +150,7 @@ pub fn collect_inputs(
 ) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let mut push = |p: PathBuf| {
-        let c = std::fs::canonicalize(&p).unwrap_or(p);
+        let c = dunce::canonicalize(&p).unwrap_or(p);
         if !out.contains(&c) {
             out.push(c);
         }
