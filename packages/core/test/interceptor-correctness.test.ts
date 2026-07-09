@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { MockpitInterceptor } from "../src/interceptor.js";
-import { http, MockResponse } from "@mockpit/node";
+import { http, HttpResponse } from "@mockpit/node";
 
 describe("interceptor correctness: abort, redirects, XHR", () => {
   let interceptor: MockpitInterceptor | null = null;
@@ -13,7 +13,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
   it("rejects with AbortError when the signal is already aborted", async () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
-      http.get("/x", async () => MockResponse.json({ ok: true })),
+      http.get("/x", async () => HttpResponse.json({ ok: true })),
     ]);
     interceptor.apply();
 
@@ -55,9 +55,9 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
       http.get("/old", async () =>
-        MockResponse.text("", { status: 302, headers: { location: "/new" } })
+        HttpResponse.text("", { status: 302, headers: { location: "/new" } })
       ),
-      http.get("/new", async () => MockResponse.json({ at: "new" })),
+      http.get("/new", async () => HttpResponse.json({ at: "new" })),
     ]);
     interceptor.apply();
 
@@ -70,7 +70,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
       http.get("/old", async () =>
-        MockResponse.text("", { status: 302, headers: { location: "/new" } })
+        HttpResponse.text("", { status: 302, headers: { location: "/new" } })
       ),
     ]);
     interceptor.apply();
@@ -85,7 +85,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
   it.skipIf(!hasXHR)("XHR: fires load once, sets status/statusText/responseText", async () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
-      http.get("/xhr", async () => MockResponse.text("hello", { status: 201 })),
+      http.get("/xhr", async () => HttpResponse.text("hello", { status: 201 })),
     ]);
     interceptor.apply();
 
@@ -117,7 +117,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
   it.skipIf(!hasXHR)("XHR: responseType 'json' yields a parsed object", async () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
-      http.get("/xhr-json", async () => MockResponse.json({ a: 1, b: "two" })),
+      http.get("/xhr-json", async () => HttpResponse.json({ a: 1, b: "two" })),
     ]);
     interceptor.apply();
 

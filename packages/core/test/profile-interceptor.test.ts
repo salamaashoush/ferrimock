@@ -1,8 +1,8 @@
 import { describe, it } from "bun:test";
 import { MockpitInterceptor } from "../src/interceptor.js";
-import { http, MockResponse, fake } from "@mockpit/node";
+import { http, HttpResponse, fake } from "@mockpit/node";
 import { setupServer } from "msw/node";
-import { http as mswHttp, HttpResponse } from "msw";
+import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
 
 const N = 3000;
@@ -63,7 +63,7 @@ describe("profile: where is the JS handler overhead", () => {
   it("matchRequest() NAPI call (JS handler)", async () => {
     const interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
-      http.get("/api/bench", async () => MockResponse.json({ ok: true })),
+      http.get("/api/bench", async () => HttpResponse.json({ ok: true })),
     ]);
 
     const start = performance.now();
@@ -95,7 +95,7 @@ describe("profile: where is the JS handler overhead", () => {
   it("full interceptor: JS handler", async () => {
     const interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
-      http.get("/api/bench", async () => MockResponse.json({ ok: true })),
+      http.get("/api/bench", async () => HttpResponse.json({ ok: true })),
     ]);
     interceptor.apply();
 
@@ -111,7 +111,7 @@ describe("profile: where is the JS handler overhead", () => {
   it("MSW: full flow", async () => {
     const server = setupServer(
       mswHttp.get("http://localhost:9999/api/bench", () =>
-        HttpResponse.json({ ok: true })
+        mswHttpResponse.json({ ok: true })
       )
     );
     server.listen({ onUnhandledRequest: "bypass" });

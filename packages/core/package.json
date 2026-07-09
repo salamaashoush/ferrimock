@@ -12,6 +12,12 @@
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs",
       "default": "./dist/index.mjs"
+    },
+    "./node": {
+      "development": "./src/node.ts",
+      "types": "./dist/node.d.mts",
+      "import": "./dist/node.mjs",
+      "default": "./dist/node.mjs"
     }
   },
   "files": ["dist", "src"],
@@ -30,6 +36,7 @@
     "node": ">= 20.0.0"
   },
   "devDependencies": {
+    "mockpit": "workspace:*",
     "@faker-js/faker": "^10.4.0",
     "msw": "^2.13.2"
   }

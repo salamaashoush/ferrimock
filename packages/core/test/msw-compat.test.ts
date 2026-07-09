@@ -13,9 +13,9 @@ import {
   passthrough,
   bypass,
 } from "../src/index.js";
-import { http, graphql, MockResponse, fake } from "@mockpit/node";
+import { http, graphql, HttpResponse, fake } from "@mockpit/node";
 import { setupServer } from "msw/node";
-import { http as mswHttp, HttpResponse, delay as mswDelay, passthrough as mswPassthrough } from "msw";
+import { http as mswHttp, HttpResponse as mswHttpResponse, delay as mswDelay, passthrough as mswPassthrough } from "msw";
 
 // ===== Setup =====
 
@@ -34,7 +34,7 @@ afterEach(() => {
 describe("HTTP methods", () => {
   it("http.get", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.json({ method: "GET" })),
+      http.get("/api/test", async () => HttpResponse.json({ method: "GET" })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test");
@@ -43,7 +43,7 @@ describe("HTTP methods", () => {
 
   it("http.post", async () => {
     interceptor.useHandlers([
-      http.post("/api/test", async () => MockResponse.json({ method: "POST" })),
+      http.post("/api/test", async () => HttpResponse.json({ method: "POST" })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test", { method: "POST" });
@@ -52,7 +52,7 @@ describe("HTTP methods", () => {
 
   it("http.put", async () => {
     interceptor.useHandlers([
-      http.put("/api/test", async () => MockResponse.json({ method: "PUT" })),
+      http.put("/api/test", async () => HttpResponse.json({ method: "PUT" })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test", { method: "PUT" });
@@ -61,7 +61,7 @@ describe("HTTP methods", () => {
 
   it("http.delete", async () => {
     interceptor.useHandlers([
-      http.delete("/api/test", async () => MockResponse.json({ method: "DELETE" })),
+      http.delete("/api/test", async () => HttpResponse.json({ method: "DELETE" })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test", { method: "DELETE" });
@@ -70,7 +70,7 @@ describe("HTTP methods", () => {
 
   it("http.patch", async () => {
     interceptor.useHandlers([
-      http.patch("/api/test", async () => MockResponse.json({ method: "PATCH" })),
+      http.patch("/api/test", async () => HttpResponse.json({ method: "PATCH" })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test", { method: "PATCH" });
@@ -79,7 +79,7 @@ describe("HTTP methods", () => {
 
   it("http.head", async () => {
     interceptor.useHandlers([
-      http.head("/api/test", async () => MockResponse.empty(204)),
+      http.head("/api/test", async () => ({ status: 204 })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test", { method: "HEAD" });
@@ -88,7 +88,7 @@ describe("HTTP methods", () => {
 
   it("http.options", async () => {
     interceptor.useHandlers([
-      http.options("/api/test", async () => MockResponse.empty(204)),
+      http.options("/api/test", async () => ({ status: 204 })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test", { method: "OPTIONS" });
@@ -97,7 +97,7 @@ describe("HTTP methods", () => {
 
   it("http.all matches any method", async () => {
     interceptor.useHandlers([
-      http.all("/api/test", async () => MockResponse.json({ any: true })),
+      http.all("/api/test", async () => HttpResponse.json({ any: true })),
     ]);
     interceptor.apply();
     const get = await (await fetch("http://localhost/api/test")).json();
@@ -113,7 +113,7 @@ describe("path parameters", () => {
   it("captures :param from path", async () => {
     interceptor.useHandlers([
       http.get("/api/users/:id", async (req) =>
-        MockResponse.json({ id: req.params.id })
+        HttpResponse.json({ id: req.params.id })
       ),
     ]);
     interceptor.apply();
@@ -124,7 +124,7 @@ describe("path parameters", () => {
   it("captures multiple params", async () => {
     interceptor.useHandlers([
       http.get("/api/users/:userId/posts/:postId", async (req) =>
-        MockResponse.json({ user: req.params.userId, post: req.params.postId })
+        HttpResponse.json({ user: req.params.userId, post: req.params.postId })
       ),
     ]);
     interceptor.apply();
@@ -139,7 +139,7 @@ describe("RegExp path matching", () => {
   it("matches using RegExp", async () => {
     interceptor.useHandlers([
       http.get(/^\/api\/users\/\d+$/, async () =>
-        MockResponse.json({ matched: true })
+        HttpResponse.json({ matched: true })
       ),
     ]);
     interceptor.apply();
@@ -150,10 +150,10 @@ describe("RegExp path matching", () => {
 
 // ===== 4. Response types =====
 
-describe("MockResponse types", () => {
-  it("MockResponse.json", async () => {
+describe("HttpResponse types", () => {
+  it("HttpResponse.json", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.json({ ok: true })),
+      http.get("/api/test", async () => HttpResponse.json({ ok: true })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test");
@@ -161,9 +161,9 @@ describe("MockResponse types", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
-  it("MockResponse.text", async () => {
+  it("HttpResponse.text", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.text("hello")),
+      http.get("/api/test", async () => HttpResponse.text("hello")),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test");
@@ -171,9 +171,9 @@ describe("MockResponse types", () => {
     expect(await res.text()).toBe("hello");
   });
 
-  it("MockResponse.html", async () => {
+  it("HttpResponse.html", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.html("<h1>hi</h1>")),
+      http.get("/api/test", async () => HttpResponse.html("<h1>hi</h1>")),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test");
@@ -181,28 +181,28 @@ describe("MockResponse types", () => {
     expect(await res.text()).toBe("<h1>hi</h1>");
   });
 
-  it("MockResponse.xml", async () => {
+  it("HttpResponse.xml", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.xml("<root/>")),
+      http.get("/api/test", async () => HttpResponse.xml("<root/>")),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test");
-    expect(res.headers.get("content-type")).toBe("application/xml");
+    expect(res.headers.get("content-type")).toBe("text/xml");
     expect(await res.text()).toBe("<root/>");
   });
 
-  it("MockResponse.empty", async () => {
+  it("bare status object returns an empty response", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.empty(204)),
+      http.get("/api/test", async () => ({ status: 204 })),
     ]);
     interceptor.apply();
     const res = await fetch("http://localhost/api/test");
     expect(res.status).toBe(204);
   });
 
-  it("MockResponse.error simulates network failure", async () => {
+  it("HttpResponse.error simulates network failure", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.error()),
+      http.get("/api/test", async () => HttpResponse.error()),
     ]);
     interceptor.apply();
     try {
@@ -216,7 +216,7 @@ describe("MockResponse types", () => {
   it("custom status and headers", async () => {
     interceptor.useHandlers([
       http.get("/api/test", async () =>
-        MockResponse.json({ ok: true }, { status: 201, headers: { "x-custom": "val" } })
+        HttpResponse.json({ ok: true }, { status: 201, headers: { "x-custom": "val" } })
       ),
     ]);
     interceptor.apply();
@@ -234,7 +234,7 @@ describe("request context", () => {
     interceptor.useHandlers([
       http.get("/api/test", async (req) => {
         capturedId = req.requestId;
-        return MockResponse.json({ ok: true });
+        return HttpResponse.json({ ok: true });
       }),
     ]);
     interceptor.apply();
@@ -247,7 +247,7 @@ describe("request context", () => {
     interceptor.useHandlers([
       http.get("/api/test", async (req) => {
         capturedCookies = req.cookies;
-        return MockResponse.json({ ok: true });
+        return HttpResponse.json({ ok: true });
       }),
     ]);
     interceptor.apply();
@@ -262,8 +262,8 @@ describe("request context", () => {
     let capturedAuth = "";
     interceptor.useHandlers([
       http.get("/api/test", async (req) => {
-        capturedAuth = req.header("authorization") ?? "";
-        return MockResponse.json({ ok: true });
+        capturedAuth = req.request.headers.get("authorization") ?? "";
+        return HttpResponse.json({ ok: true });
       }),
     ]);
     interceptor.apply();
@@ -273,12 +273,12 @@ describe("request context", () => {
     expect(capturedAuth).toBe("Bearer token123");
   });
 
-  it("provides body and bodyJson", async () => {
+  it("provides the request body via request.json()", async () => {
     let capturedBody: any = null;
     interceptor.useHandlers([
       http.post("/api/test", async (req) => {
-        capturedBody = req.bodyJson;
-        return MockResponse.json({ ok: true });
+        capturedBody = await req.request.json();
+        return HttpResponse.json({ ok: true });
       }),
     ]);
     interceptor.apply();
@@ -298,7 +298,7 @@ describe("delay()", () => {
     interceptor.useHandlers([
       http.get("/api/test", async () => {
         await delay(50);
-        return MockResponse.json({ ok: true });
+        return HttpResponse.json({ ok: true });
       }),
     ]);
     interceptor.apply();
@@ -312,18 +312,36 @@ describe("delay()", () => {
 // ===== 7. once handlers =====
 
 describe("once handlers", () => {
-  it("handler with once: true responds only once", async () => {
-    // Once handlers need to be set via addMock with a special config
-    // or through the handler options. For now test via addMock.
-    await interceptor.addMock({
-      id: "once-test",
-      match: { method: "GET", url: "/api/once" },
-      response: { status: 200, body: '{"count":1}' },
-    });
+  it("handler with { once: true } responds once, then falls through", async () => {
+    interceptor.useHandlers([
+      http.get("/api/once", async () => HttpResponse.json({ hit: "once" }), {
+        once: true,
+      }),
+      http.get("/api/once", async () => HttpResponse.json({ hit: "fallback" })),
+    ]);
     interceptor.apply();
 
     const res1 = await fetch("http://localhost/api/once");
-    expect(res1.status).toBe(200);
+    expect(await res1.json()).toEqual({ hit: "once" });
+
+    const res2 = await fetch("http://localhost/api/once");
+    expect(await res2.json()).toEqual({ hit: "fallback" });
+  });
+
+  it("restoreHandlers() re-enables consumed once handlers", async () => {
+    interceptor.useHandlers([
+      http.get("/api/once", async () => HttpResponse.json({ hit: "once" }), {
+        once: true,
+      }),
+      http.get("/api/once", async () => HttpResponse.json({ hit: "fallback" })),
+    ]);
+    interceptor.apply();
+
+    await fetch("http://localhost/api/once");
+    interceptor.restoreHandlers();
+
+    const res = await fetch("http://localhost/api/once");
+    expect(await res.json()).toEqual({ hit: "once" });
   });
 });
 
@@ -332,7 +350,7 @@ describe("once handlers", () => {
 describe("server.use / resetHandlers / restoreHandlers", () => {
   it("use() adds runtime handlers with higher priority", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.json({ from: "initial" })),
+      http.get("/api/test", async () => HttpResponse.json({ from: "initial" })),
     ]);
     interceptor.apply();
 
@@ -342,32 +360,49 @@ describe("server.use / resetHandlers / restoreHandlers", () => {
 
     // Runtime override via use()
     interceptor.use(
-      http.get("/api/test", async () => MockResponse.json({ from: "runtime" }))
+      http.get("/api/test", async () => HttpResponse.json({ from: "runtime" }))
     );
     res = await fetch("http://localhost/api/test");
     expect(await res.json()).toEqual({ from: "runtime" });
   });
 
-  it("resetHandlers() removes all handlers", async () => {
+  it("resetHandlers() removes runtime handlers and keeps initial ones", async () => {
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.json({ ok: true })),
+      http.get("/api/test", async () => HttpResponse.json({ from: "initial" })),
     ]);
     interceptor.apply();
 
-    const res1 = await fetch("http://localhost/api/test");
-    expect(res1.status).toBe(200);
+    interceptor.use(
+      http.get("/api/test", async () => HttpResponse.json({ from: "runtime" }))
+    );
+    let res = await fetch("http://localhost/api/test");
+    expect(await res.json()).toEqual({ from: "runtime" });
 
+    // MSW semantics: reset drops use() handlers, initial handlers stay
     interceptor.resetHandlers();
-    // After reset, request should pass through (no match)
-    // We can't easily test passthrough without a real server,
-    // so just verify mockCount dropped
-    expect(interceptor.mockCount).toBe(0);
+    expect(interceptor.mockCount).toBe(1);
+    res = await fetch("http://localhost/api/test");
+    expect(await res.json()).toEqual({ from: "initial" });
+  });
+
+  it("resetHandlers(...next) replaces the entire handler set", async () => {
+    interceptor.useHandlers([
+      http.get("/api/old", async () => HttpResponse.json({ old: true })),
+    ]);
+    interceptor.apply();
+
+    interceptor.resetHandlers(
+      http.get("/api/new", async () => HttpResponse.json({ new: true }))
+    );
+    expect(interceptor.mockCount).toBe(1);
+    const res = await fetch("http://localhost/api/new");
+    expect(await res.json()).toEqual({ new: true });
   });
 
   it("listHandlers() returns registered handlers", async () => {
     interceptor.useHandlers([
-      http.get("/api/a", async () => MockResponse.json({})),
-      http.post("/api/b", async () => MockResponse.json({})),
+      http.get("/api/a", async () => HttpResponse.json({})),
+      http.post("/api/b", async () => HttpResponse.json({})),
     ]);
     const handlers = interceptor.listHandlers();
     expect(handlers.length).toBe(2);
@@ -387,7 +422,7 @@ describe("lifecycle events", () => {
     interceptor.events.on("request:end", () => events.push("end"));
 
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.json({ ok: true })),
+      http.get("/api/test", async () => HttpResponse.json({ ok: true })),
     ]);
     interceptor.apply();
     await fetch("http://localhost/api/test");
@@ -402,7 +437,7 @@ describe("lifecycle events", () => {
     });
 
     interceptor.useHandlers([
-      http.get("/api/test", async () => MockResponse.json({ ok: true }, { status: 201 })),
+      http.get("/api/test", async () => HttpResponse.json({ ok: true }, { status: 201 })),
     ]);
     interceptor.apply();
     await fetch("http://localhost/api/test");
@@ -430,7 +465,7 @@ describe("fake data in handlers", () => {
   it("uses fake.* inside handlers", async () => {
     interceptor.useHandlers([
       http.get("/api/user", async () =>
-        MockResponse.json({
+        HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),
@@ -492,7 +527,7 @@ describe("performance: Mockpit vs MSW", () => {
   it("MSW: static JSON", async () => {
     const server = setupServer(
       mswHttp.get("http://127.0.0.1:9999/api/bench", () =>
-        HttpResponse.json({ id: "123", name: "John" })
+        mswHttpResponse.json({ id: "123", name: "John" })
       )
     );
     server.listen({ onUnhandledRequest: "bypass" });
@@ -506,7 +541,7 @@ describe("performance: Mockpit vs MSW", () => {
     const { faker } = await import("@faker-js/faker");
     const server = setupServer(
       mswHttp.get("http://127.0.0.1:9999/api/bench", () =>
-        HttpResponse.json({
+        mswHttpResponse.json({
           id: faker.string.uuid(),
           name: faker.person.fullName(),
           email: faker.internet.email(),
@@ -556,7 +591,7 @@ describe("performance: Mockpit vs MSW", () => {
     const m = new MockpitInterceptor();
     m.useHandlers([
       http.get("/api/bench", async () =>
-        MockResponse.json({ id: "123", name: "John" })
+        HttpResponse.json({ id: "123", name: "John" })
       ),
     ]);
     m.apply();
@@ -570,7 +605,7 @@ describe("performance: Mockpit vs MSW", () => {
     const m = new MockpitInterceptor();
     m.useHandlers([
       http.get("/api/bench", async () =>
-        MockResponse.json({
+        HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),

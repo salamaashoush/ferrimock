@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { MockpitInterceptor } from "@mockpit/core";
-import { http, MockResponse, fake } from "@mockpit/node";
+import { MockpitInterceptor } from "../src/index.js";
+import { http, HttpResponse, fake } from "@mockpit/node";
 import { setupServer } from "msw/node";
-import { http as mswHttp, HttpResponse } from "msw";
+import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
 import { resolve } from "node:path";
 
@@ -52,7 +52,7 @@ describe("MockpitInterceptor", () => {
   it("intercepts fetch with JS handler", async () => {
     interceptor.useHandlers([
       http.get("/api/users/:id", async (req) =>
-        MockResponse.json({ id: req.params.id, name: "John" })
+        HttpResponse.json({ id: req.params.id, name: "John" })
       ),
     ]);
 
@@ -68,7 +68,7 @@ describe("MockpitInterceptor", () => {
   it("intercepts fetch with fake data", async () => {
     interceptor.useHandlers([
       http.get("/api/user", async () =>
-        MockResponse.json({
+        HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),
@@ -114,7 +114,7 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
   it("MSW: static JSON (fetch intercept)", async () => {
     const server = setupServer(
       mswHttp.get("http://127.0.0.1:9999/api/bench", () =>
-        HttpResponse.json({ id: "123", name: "John", source: "msw" })
+        mswHttpResponse.json({ id: "123", name: "John", source: "msw" })
       )
     );
     server.listen({ onUnhandledRequest: "bypass" });
@@ -130,7 +130,7 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
   it("MSW: handler + faker.js", async () => {
     const server = setupServer(
       mswHttp.get("http://127.0.0.1:9999/api/bench", () =>
-        HttpResponse.json({
+        mswHttpResponse.json({
           id: faker.string.uuid(),
           name: faker.person.fullName(),
           email: faker.internet.email(),
@@ -203,7 +203,7 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
     const interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
       http.get("/api/bench", async () =>
-        MockResponse.json({ id: "123", name: "John", source: "handler" })
+        HttpResponse.json({ id: "123", name: "John", source: "handler" })
       ),
     ]);
     interceptor.apply();
@@ -224,7 +224,7 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
     const interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
       http.get("/api/bench", async () =>
-        MockResponse.json({
+        HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),

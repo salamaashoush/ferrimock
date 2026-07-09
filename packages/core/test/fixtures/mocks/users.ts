@@ -1,13 +1,14 @@
-import { http, MockResponse } from "@mockpit/node";
+import { http, HttpResponse } from "@mockpit/node";
 
 export default [
   http.get("/api/users/:id", async ({ params }) => {
-    return MockResponse.json({ id: params.id, name: "John", source: "ts-handler" });
+    return HttpResponse.json({ id: params.id, name: "John", source: "ts-handler" });
   }),
 
-  http.post("/api/users", async ({ bodyJson }) => {
-    return MockResponse.json(
-      { id: "new-1", ...bodyJson, source: "ts-handler" },
+  http.post("/api/users", async ({ request }) => {
+    const body = await request.json();
+    return HttpResponse.json(
+      { id: "new-1", ...body, source: "ts-handler" },
       { status: 201 }
     );
   }),

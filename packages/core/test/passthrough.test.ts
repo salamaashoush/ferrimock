@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { MockpitInterceptor } from "../src/interceptor.js";
-import { http, MockResponse } from "@mockpit/node";
+import { http, HttpResponse } from "@mockpit/node";
 
 describe("passthrough", () => {
   let interceptor: MockpitInterceptor | null = null;
@@ -26,7 +26,7 @@ describe("passthrough", () => {
     interceptor = new MockpitInterceptor();
     // A mock for a DIFFERENT path, so /echo passes through.
     interceptor.useHandlers([
-      http.get("/mocked", async () => MockResponse.json({ ok: true })),
+      http.get("/mocked", async () => HttpResponse.json({ ok: true })),
     ]);
     interceptor.apply();
 
