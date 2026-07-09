@@ -5,11 +5,14 @@ use std::collections::HashMap;
 
 /// Response returned from JS handler functions.
 ///
-/// Return `null`/`undefined` from a handler to signal passthrough.
+/// Return `null`/`undefined` from a handler to fall through to the next
+/// matching mock (MSW semantics).
 #[napi(object)]
-pub struct JsHandlerResponse {
+pub struct HandlerResponse {
     /// HTTP status code (default: 200)
     pub status: Option<u32>,
+    /// Custom status text (Node interceptor only; HTTP/2 has no reason phrases)
+    pub status_text: Option<String>,
     /// Response headers
     pub headers: Option<HashMap<String, String>>,
     /// Response body as string
@@ -17,22 +20,24 @@ pub struct JsHandlerResponse {
     /// Response body as JSON (takes precedence over `body` if both set)
     pub body_json: Option<serde_json::Value>,
     /// Raw binary response body (takes precedence over `body`/`body_json`).
-    /// Set by `MockResponse.arrayBuffer()` for binary-safe responses.
+    /// Set by `HttpResponse.arrayBuffer()` for binary-safe responses.
     pub body_bytes: Option<napi::bindgen_prelude::Uint8Array>,
 }
 
 /// Options for response construction.
 #[napi(object)]
 #[derive(Clone)]
-pub struct JsResponseInit {
+pub struct HandlerResponseInit {
     /// HTTP status code
     pub status: Option<u32>,
+    /// Custom status text
+    pub status_text: Option<String>,
     /// Response headers
     pub headers: Option<HashMap<String, String>>,
 }
 
-impl From<JsHandlerResponse> for mockpit::types::DynamicResponse {
-    fn from(resp: JsHandlerResponse) -> Self {
+impl From<HandlerResponse> for mockpit::types::DynamicResponse {
+    fn from(resp: HandlerResponse) -> Self {
         let status = resp
             .status
             .and_then(|s| u16::try_from(s).ok())
@@ -53,6 +58,7 @@ impl From<JsHandlerResponse> for mockpit::types::DynamicResponse {
 
         mockpit::types::DynamicResponse {
             status,
+            status_text: resp.status_text,
             headers,
             body,
         }

@@ -1,58 +1,144 @@
 //! GraphQL namespace bindings: `graphql.query()`, `graphql.mutation()`, etc.
+//!
+//! Handlers receive `GraphQLRequestInfo` (MSW's `{ query, variables,
+//! operationName, cookies, request, requestId }`). Operation names accept
+//! a string or a RegExp. `graphql.link(url)` is composed in @mockpit/core
+//! (it returns a scoped namespace object); the endpoint scoping itself is
+//! expressed through these factories via the `endpoint` parameter.
 
 use crate::handler_bridge::js_to_handler_bridge;
-use crate::http_ns::JsHandler;
-use crate::request_context::MockpitRequest;
-use crate::types::JsHandlerResponse;
+use crate::http_ns::{
+    RequestHandler, RequestHandlerOptions, as_regexp, compile_js_regex, finish_handler,
+};
+use crate::request_context::{GraphQLRequestInfo, HandlerKind};
+use crate::types::HandlerResponse;
 use mockpit::handler;
+use mockpit::types::{GraphQLOperationType, MockDefinition};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
+fn build_graphql(
+    env: &Env,
+    op_type: Option<GraphQLOperationType>,
+    operation_name: Option<Unknown>,
+    endpoint: Option<String>,
+    handler_fn: Function<'_, GraphQLRequestInfo, Promise<Option<HandlerResponse>>>,
+    options: Option<RequestHandlerOptions>,
+) -> Result<RequestHandler> {
+    let bridge = js_to_handler_bridge(handler_fn, HandlerKind::GraphQL)?;
+
+    let mut mock_def: MockDefinition = match (op_type, operation_name) {
+        (Some(op_type), Some(name)) => match as_regexp(env, &name)? {
+            Some((source, flags)) => {
+                let regex = compile_js_regex(&source, &flags)?;
+                match op_type {
+                    GraphQLOperationType::Mutation => {
+                        handler::graphql::mutation_regex(regex, bridge.handler_fn.clone())
+                    }
+                    _ => handler::graphql::query_regex(regex, bridge.handler_fn.clone()),
+                }
+            }
+            None => {
+                #[allow(unsafe_code)]
+                let name_str: String =
+                    unsafe { FromNapiValue::from_napi_value(env.raw(), name.raw())? };
+                match op_type {
+                    GraphQLOperationType::Mutation => {
+                        handler::graphql::mutation(&name_str, bridge.handler_fn.clone())
+                    }
+                    _ => handler::graphql::query(&name_str, bridge.handler_fn.clone()),
+                }
+            }
+        },
+        _ => handler::graphql::operation(bridge.handler_fn.clone()),
+    };
+
+    if let Some(endpoint) = endpoint {
+        apply_endpoint(&mut mock_def, &endpoint);
+    }
+
+    Ok(finish_handler(bridge, mock_def, options))
+}
+
+/// Scope a `graphql.link` mock to its endpoint: exact path pattern plus a
+/// Host-header matcher for absolute URLs.
+fn apply_endpoint(mock: &mut MockDefinition, endpoint: &str) {
+    use mockpit::types::{HeaderMatcher, UrlPattern};
+    use smallvec::SmallVec;
+
+    let (host, path) = match UrlPattern::split_absolute_url(endpoint) {
+        Some((host, path)) => (Some(host), path),
+        None => (None, endpoint),
+    };
+    mock.request.url_patterns = SmallVec::from_elem(UrlPattern::exact(path), 1);
+    if let Some(host) = host {
+        mock.request.header_matchers =
+            SmallVec::from_elem(HeaderMatcher::exact(http::header::HOST, host), 1);
+    }
+}
+
 /// Create a handler mock for a GraphQL query operation.
 ///
-/// @param operationName - The GraphQL operation name to match (e.g., `"GetUser"`).
-/// @param handler - Async function receiving request context, returning response or null.
+/// @param operationName - Operation name to match: string or RegExp.
+/// @param handler - Function receiving GraphQL resolver info, returning a response,
+///   or null/undefined to fall through.
+/// @param options - Optional `{ once: true }`.
+/// @param endpoint - Optional endpoint URL scope (used by `graphql.link`).
 #[napi(namespace = "graphql")]
 pub fn query(
-    operation_name: String,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    let bridge = js_to_handler_bridge(handler_fn)?;
-    Ok(JsHandler {
-        inner: Some(handler::graphql::query(&operation_name, bridge.handler_fn)),
-        fn_ref: Some(bridge.fn_ref),
-    })
+    env: &Env,
+    operation_name: Unknown,
+    handler_fn: Function<'_, GraphQLRequestInfo, Promise<Option<HandlerResponse>>>,
+    options: Option<RequestHandlerOptions>,
+    endpoint: Option<String>,
+) -> Result<RequestHandler> {
+    build_graphql(
+        env,
+        Some(GraphQLOperationType::Query),
+        Some(operation_name),
+        endpoint,
+        handler_fn,
+        options,
+    )
 }
 
 /// Create a handler mock for a GraphQL mutation operation.
 ///
-/// @param operationName - The GraphQL operation name to match.
-/// @param handler - Async function receiving request context, returning response or null.
+/// @param operationName - Operation name to match: string or RegExp.
+/// @param handler - Function receiving GraphQL resolver info, returning a response,
+///   or null/undefined to fall through.
+/// @param options - Optional `{ once: true }`.
+/// @param endpoint - Optional endpoint URL scope (used by `graphql.link`).
 #[napi(namespace = "graphql")]
 pub fn mutation(
-    operation_name: String,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    let bridge = js_to_handler_bridge(handler_fn)?;
-    Ok(JsHandler {
-        inner: Some(handler::graphql::mutation(
-            &operation_name,
-            bridge.handler_fn,
-        )),
-        fn_ref: Some(bridge.fn_ref),
-    })
+    env: &Env,
+    operation_name: Unknown,
+    handler_fn: Function<'_, GraphQLRequestInfo, Promise<Option<HandlerResponse>>>,
+    options: Option<RequestHandlerOptions>,
+    endpoint: Option<String>,
+) -> Result<RequestHandler> {
+    build_graphql(
+        env,
+        Some(GraphQLOperationType::Mutation),
+        Some(operation_name),
+        endpoint,
+        handler_fn,
+        options,
+    )
 }
 
 /// Create a handler mock matching any GraphQL operation.
 ///
-/// @param handler - Async function receiving request context, returning response or null.
+/// @param handler - Function receiving GraphQL resolver info, returning a response,
+///   or null/undefined to fall through.
+/// @param options - Optional `{ once: true }`.
+/// @param endpoint - Optional endpoint URL scope (used by `graphql.link`).
 #[napi(namespace = "graphql")]
 pub fn operation(
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    let bridge = js_to_handler_bridge(handler_fn)?;
-    Ok(JsHandler {
-        inner: Some(handler::graphql::operation(bridge.handler_fn)),
-        fn_ref: Some(bridge.fn_ref),
-    })
+    env: &Env,
+    handler_fn: Function<'_, GraphQLRequestInfo, Promise<Option<HandlerResponse>>>,
+    options: Option<RequestHandlerOptions>,
+    endpoint: Option<String>,
+) -> Result<RequestHandler> {
+    build_graphql(env, None, None, endpoint, handler_fn, options)
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { MockpitServer, http, MockResponse, fake } from "../index.js";
+import { MockpitServer, http, HttpResponse, fake } from "../index.js";
 
 // ===== fake namespace test =====
 
@@ -28,7 +28,7 @@ describe("fake namespace", () => {
     const server = new MockpitServer();
     server.useHandlers([
       http.get("/api/user", async () => {
-        return MockResponse.json({
+        return HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),
@@ -93,7 +93,7 @@ describe("benchmark: handler vs declarative mocks", () => {
 
     server.useHandlers([
       http.get("/api/bench", async () => {
-        return MockResponse.json({
+        return HttpResponse.json({
           id: "123",
           name: "John",
           source: "handler",
@@ -125,7 +125,7 @@ describe("benchmark: handler vs declarative mocks", () => {
 
     server.useHandlers([
       http.get("/api/bench", async () => {
-        return MockResponse.json({
+        return HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),

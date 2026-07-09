@@ -14,8 +14,10 @@ crate-type = ["cdylib"]
 napi = { version = "3", default-features = false, features = ["napi9", "tokio_rt", "async", "serde-json"] }
 napi-derive = { version = "3", default-features = false, features = ["type-def"] }
 
-# Core mockpit library
-mockpit = { path = "../mockpit", features = ["full"] }
+# Core mockpit library. Everything except `scripting`: under Node the JS
+# mock files run on V8 via @mockpit/core's loader — embedding QuickJS in
+# the addon would double-load them on a slower engine.
+mockpit = { path = "../mockpit", features = ["engine", "graphql", "server", "api", "schema"] }
 
 # Async runtime
 tokio = { workspace = true }
@@ -31,6 +33,7 @@ axum = { workspace = true }
 
 # Utilities
 bytes = { workspace = true }
+urlencoding = { workspace = true }
 anyhow = { workspace = true }
 rustc-hash = { workspace = true }
 regex = { workspace = true }

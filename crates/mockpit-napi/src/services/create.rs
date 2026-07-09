@@ -12,6 +12,8 @@ pub struct JsCreateInput {
     pub priority: Option<u32>,
     pub collection: Option<String>,
     pub format: Option<String>,
+    /// Mock kind: "http" (default), "ws", or "sse"
+    pub kind: Option<String>,
 }
 
 #[napi(object, namespace = "services")]
@@ -32,6 +34,12 @@ pub fn create(input: JsCreateInput) -> Result<JsCreateResult> {
         priority: input.priority.unwrap_or(100),
         collection: input.collection,
         format: input.format.unwrap_or_else(|| "yaml".into()),
+        kind: match input.kind.as_deref() {
+            Some(kind) => kind
+                .parse()
+                .map_err(|e| Error::from_reason(format!("{e}")))?,
+            None => mockpit::services::create::MockKind::Http,
+        },
     })
     .map_err(|e| Error::from_reason(e.to_string()))?;
 

@@ -576,14 +576,21 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
-module.exports.MockResponse = nativeBinding.MockResponse
-module.exports.JsHandler = nativeBinding.JsHandler
-module.exports.MockpitRequest = nativeBinding.MockpitRequest
+module.exports.HttpResponse = nativeBinding.HttpResponse
+module.exports.GraphQlRequestInfo = nativeBinding.GraphQlRequestInfo
+module.exports.GraphQLRequestInfo = nativeBinding.GraphQLRequestInfo
 module.exports.MockpitServer = nativeBinding.MockpitServer
+module.exports.RequestHandler = nativeBinding.RequestHandler
+module.exports.RequestInfo = nativeBinding.RequestInfo
+module.exports.SseClientHandle = nativeBinding.SseClientHandle
+module.exports.WebSocketClientHandle = nativeBinding.WebSocketClientHandle
+module.exports.WebSocketServerHandle = nativeBinding.WebSocketServerHandle
 module.exports.discoverConfigFile = nativeBinding.discoverConfigFile
 module.exports.parseConfigFile = nativeBinding.parseConfigFile
 module.exports.parseConfigString = nativeBinding.parseConfigString
+module.exports.sse = nativeBinding.sse
 module.exports.fake = nativeBinding.fake
 module.exports.graphql = nativeBinding.graphql
 module.exports.http = nativeBinding.http
 module.exports.services = nativeBinding.services
+module.exports.ws = nativeBinding.ws

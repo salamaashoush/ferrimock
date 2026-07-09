@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { MockpitServer, http, MockResponse, fake } from "../index.js";
+import { MockpitServer, http, HttpResponse, fake } from "../index.js";
 
 const N = 2000;
 
@@ -51,7 +51,7 @@ describe("overhead profiling", () => {
   it("JS handler - minimal", async () => {
     const server = new MockpitServer();
     server.useHandlers([
-      http.get("/bench", async () => MockResponse.json({ ok: true })),
+      http.get("/bench", async () => HttpResponse.json({ ok: true })),
     ]);
     const url = await server.listen();
     for (let i = 0; i < 100; i++) await fetch(`${url}/bench`);
@@ -70,7 +70,7 @@ describe("overhead profiling", () => {
     const server = new MockpitServer();
     server.useHandlers([
       http.get("/bench/:id", async ({ params }) =>
-        MockResponse.json({ id: params.id })
+        HttpResponse.json({ id: params.id })
       ),
     ]);
     const url = await server.listen();
@@ -90,7 +90,7 @@ describe("overhead profiling", () => {
     const server = new MockpitServer();
     server.useHandlers([
       http.get("/bench", async () =>
-        MockResponse.json({ id: fake.uuid(), name: fake.name(), email: fake.email() })
+        HttpResponse.json({ id: fake.uuid(), name: fake.name(), email: fake.email() })
       ),
     ]);
     const url = await server.listen();

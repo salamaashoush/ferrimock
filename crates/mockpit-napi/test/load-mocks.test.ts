@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { MockpitServer, http, MockResponse } from "../index.js";
+import { MockpitServer, http, HttpResponse } from "../index.js";
 import { resolve } from "node:path";
 
 const FIXTURES = resolve(import.meta.dir, "fixtures");
@@ -142,7 +142,7 @@ describe("Mixed: file mocks + handler mocks coexist", () => {
     // Add handler-based mocks
     server.useHandlers([
       http.get("/api/handler/data", async () => {
-        return MockResponse.json({ source: "handler" });
+        return HttpResponse.json({ source: "handler" });
       }),
     ]);
 
