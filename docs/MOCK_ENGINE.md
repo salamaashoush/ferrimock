@@ -66,7 +66,12 @@ Auto-detected by pattern:
 | Regex   | `^/api/v\\d+/users$` | Contains `^`, `$`, `\d`, etc.   |
 | Exact   | `/api/users`         | Default (simple paths)          |
 
-Express-style is cleanest and auto-generates named captures.
+Express-style is cleanest and auto-generates named captures. Repeatable
+params follow path-to-regexp modifiers: `/files/:path+` matches one or
+more segments and `/files/:path*` zero or more (the zero-segment case
+omits the param). Templates see the joined value (`{{ captures.path }}`
+= `a/b/c`); MSW-style handlers receive repeatable params as `string[]`
+(the matched segments, percent-decoded), matching MSW's `params` shape.
 
 ## Request Matching
 
@@ -578,6 +583,18 @@ mocks:
   listener calls `event.preventDefault()`. Client `close` events carry `{ code, reason }`. `ws.link` also
   accepts a RegExp, tested against the bare path and against `ws(s)://host/path` reconstructions of the
   handshake (MSW's full-href idiom).
+- **Scheme matching for RegExp links**: the Node interceptor lane sees the connection's real URL, so a RegExp
+  pinning `ws://` never matches a `wss://` connection there (and vice versa). The TCP server lane cannot know
+  whether TLS terminated in front of it, so it tests both `ws://` and `wss://` reconstructions — a
+  scheme-pinned RegExp may false-positive on that lane. TCP-lane handlers also see the client URL
+  reconstructed as `ws://host/path` regardless of the original scheme.
+- **Lane dispatch difference**: the Node interceptor lane runs ALL `ws` handlers matching a connection (MSW
+  semantics — every matching `ws.link` gets its listeners invoked). The TCP server lane serves a connection
+  with the FIRST matching ws mock only (highest priority wins, like HTTP mocks); fanning one socket out to
+  multiple handler mocks is not supported there.
+- **TCP-lane client objects have no `.socket`**: MSW's `client.socket` exposes the intercepted browser/Node
+  `WebSocket` instance. On the TCP server lane no such object exists (the peer is a real network socket), so
+  the client handle offers `send`/`close`/`id`/`url` only.
 - **Teardown**: removing or hot-reloading a mock closes its live connections with `1001 Going Away` instead of
   letting them keep running on the stale definition.
 - **HAR import**: Chrome DevTools captures with `_webSocketMessages` convert into declarative `ws` mocks —
@@ -609,8 +626,13 @@ mocks:
 - `delay` on an event sleeps before emitting it; `data_template` renders per emission with the request context
   (captures, query, headers, vars, fake functions).
 - **Upstream passthrough**: `sse: { upstream: https://real.example.com/stream }` relays the real endpoint's
-  frames to the client verbatim (exclusive with every playback field). The upstream connection is dialed once
-  per client; a failed dial answers `502 Bad Gateway`.
+  frames to the client verbatim (exclusive with every playback field). A failed first dial answers
+  `502 Bad Gateway`. Once the stream has opened, the relay follows EventSource reconnect semantics: a dropped
+  or ended upstream stream is redialed after the current `retry:` delay (default 3s, updated by `retry:`
+  frames) with the last seen `id:` sent as `Last-Event-ID`. An HTTP error status or a non-`text/event-stream`
+  content type is terminal (no reconnect), and the pump stops as soon as the client disconnects. The same
+  policy backs `server.connect()` in QuickJS script mocks (each drop surfaces as an `error` event before the
+  redial); the Node lane's `server.connect()` uses `MockpitEventSource` with identical behavior.
 - Script mocks get the MSW-compatible `sse(path, resolver)` API: the resolver receives
   `{ request, params, cookies, client, server }`; `client.send({ id?, event?, data?, retry? })` emits frames,
   `client.close()` ends the stream, `client.error()` aborts the connection mid-stream. When the handler path
