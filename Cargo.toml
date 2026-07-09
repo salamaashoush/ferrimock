@@ -181,8 +181,13 @@ rand = "0.10"
 # Image/PDF generation
 ab_glyph = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-imageproc = "0.26.1"
-lopdf = "0.40"
+# Without default features: `image/default` drags the AVIF encoder in
+# (rav1e -> core2, unmaintained/yanked); drawing text needs only `text`.
+imageproc = { version = "0.26.1", default-features = false, features = ["rayon", "text"] }
+# default-features pull lopdf's datetime integrations (time/jiff/chrono
+# interop, currently broken against newer `time`); fake_pdf only writes
+# documents and needs none of them.
+lopdf = { version = "0.43", default-features = false }
 # No "compression" feature: it pulls include-flate -> proc-macro-error2,
 # which trips a future-incompat lint (E0365) with no fixed release. The
 # only embedded asset is one font; the size trade is acceptable.
