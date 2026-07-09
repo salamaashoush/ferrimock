@@ -395,7 +395,7 @@ async fn href_regex_matches_reconstructed_ws_urls() {
     headers.insert("upgrade", http::HeaderValue::from_static("websocket"));
     headers.insert("connection", http::HeaderValue::from_static("Upgrade"));
 
-    let matches = matcher.find_ws_matches("/live/feed", None, &headers);
+    let matches = matcher.find_ws_matches("/live/feed", None, &headers, None);
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].mock.id.as_str(), mock_id);
 
@@ -406,8 +406,58 @@ async fn href_regex_matches_reconstructed_ws_urls() {
     other.insert("connection", http::HeaderValue::from_static("Upgrade"));
     assert!(
         matcher
-            .find_ws_matches("/live/feed", None, &other)
+            .find_ws_matches("/live/feed", None, &other, None)
             .is_empty()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn href_regex_respects_a_known_scheme() {
+    use mockpit::engine::{MockMatcher, MockRegistry};
+    use mockpit::types::{StreamingResponse, UrlPattern, WsScript};
+
+    let mut mock = mockpit::handler::http::get("*", |_ctx| async {
+        Err(mockpit::MockpitError::msg("ws stub"))
+    });
+    mock.request.url_patterns = smallvec::SmallVec::from_elem(
+        UrlPattern::HrefRegex(regex::Regex::new(r"^ws://chat\.example\.com/live").expect("re")),
+        1,
+    );
+    mock.streaming = Some(StreamingResponse::Ws(std::sync::Arc::new(WsScript {
+        subprotocol: None,
+        echo: true,
+        upstream: None,
+        on_connect: vec![],
+        on_message: vec![],
+    })));
+
+    let registry = MockRegistry::new();
+    registry.add_mock(mock);
+    let matcher = MockMatcher::new(registry);
+
+    let mut headers = http::HeaderMap::new();
+    headers.insert("host", "chat.example.com".parse().expect("host"));
+
+    // Unknown scheme (TCP lane): both reconstructions are tried, the
+    // ws:// one matches.
+    assert_eq!(
+        matcher
+            .find_ws_matches("/live/feed", None, &headers, None)
+            .len(),
+        1
+    );
+    // Real scheme known (interceptor lane): a regex pinning ws:// must
+    // not match a wss:// connection.
+    assert!(
+        matcher
+            .find_ws_matches("/live/feed", None, &headers, Some("wss"))
+            .is_empty()
+    );
+    assert_eq!(
+        matcher
+            .find_ws_matches("/live/feed", None, &headers, Some("ws"))
+            .len(),
+        1
     );
 }
 

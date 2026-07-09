@@ -328,6 +328,10 @@ impl MockpitServer {
             .unwrap_or_default();
         let path = uri.path().to_string();
         let query = uri.query().map(str::to_string);
+        // The intercepted connection URL carries the real scheme, so
+        // HrefRegex patterns only test that reconstruction (a regex
+        // pinning `ws://` must not match a `wss://` connection here).
+        let scheme = uri.scheme_str().filter(|s| *s == "ws" || *s == "wss");
 
         let mut headers = http::HeaderMap::new();
         if let Ok(value) = http::HeaderValue::from_str(&host) {
@@ -344,7 +348,7 @@ impl MockpitServer {
 
         Ok(self
             .matcher
-            .find_ws_matches(&path, query.as_deref(), &headers)
+            .find_ws_matches(&path, query.as_deref(), &headers, scheme)
             .into_iter()
             .map(|m| WsConnectionMatch {
                 mock_id: m.mock.id.to_string(),

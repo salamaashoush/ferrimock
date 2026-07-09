@@ -366,10 +366,18 @@ impl UrlPattern {
     }
 
     /// Test an [`UrlPattern::HrefRegex`] against reconstructed hrefs.
-    /// The scheme is unknowable server-side (plain-HTTP servers can sit
-    /// behind TLS termination), so both `ws://` and `wss://` variants
-    /// are tried.
-    pub fn matches_href(&self, host: &str, path: &str, query: Option<&str>) -> bool {
+    /// When the caller knows the connection's real scheme (the Node
+    /// interceptor lane sees the full `ws://`/`wss://` URL) it passes it
+    /// and only that variant is tested. On the TCP lane the scheme is
+    /// unknowable server-side (plain-HTTP servers can sit behind TLS
+    /// termination), so both `ws://` and `wss://` variants are tried.
+    pub fn matches_href(
+        &self,
+        scheme: Option<&str>,
+        host: &str,
+        path: &str,
+        query: Option<&str>,
+    ) -> bool {
         let UrlPattern::HrefRegex(re) = self else {
             return false;
         };
@@ -377,8 +385,13 @@ impl UrlPattern {
             Some(q) => format!("{path}?{q}"),
             None => path.to_string(),
         };
-        re.is_match(&format!("ws://{host}{suffix}"))
-            || re.is_match(&format!("wss://{host}{suffix}"))
+        match scheme {
+            Some(scheme) => re.is_match(&format!("{scheme}://{host}{suffix}")),
+            None => {
+                re.is_match(&format!("ws://{host}{suffix}"))
+                    || re.is_match(&format!("wss://{host}{suffix}"))
+            }
+        }
     }
 
     /// Extract named captures from a regex pattern match

@@ -200,6 +200,10 @@ pub struct MockRegistry {
     /// mocks, or header-referencing templates). Lets the interceptor skip
     /// marshalling headers when no mock could ever use them.
     has_header_dependent_mocks: Arc<AtomicBool>,
+    /// Whether any enabled mock carries an `UrlPattern::HrefRegex`
+    /// (`ws.link(RegExp)`). When false, the matcher skips the per-candidate
+    /// Host-header href reconstruction fallback entirely.
+    has_href_regex_mocks: Arc<AtomicBool>,
     /// Global variables from MockConfig.vars, cascaded into all loaded collections
     global_vars: Arc<RwLock<Option<serde_json::Map<String, serde_json::Value>>>>,
     /// Live WS/SSE connections per mock id; removal paths close them so
@@ -237,6 +241,7 @@ impl MockRegistry {
             has_conditional_mocks: Arc::new(AtomicBool::new(false)),
             has_body_dependent_mocks: Arc::new(AtomicBool::new(false)),
             has_header_dependent_mocks: Arc::new(AtomicBool::new(false)),
+            has_href_regex_mocks: Arc::new(AtomicBool::new(false)),
             global_vars: Arc::new(RwLock::new(None)),
             streaming_conns: Arc::new(crate::streaming::StreamingConnections::default()),
             #[cfg(feature = "scripting")]
@@ -650,6 +655,7 @@ impl MockRegistry {
         let mut has_conditional = false;
         let mut has_body_dependent = false;
         let mut has_header_dependent = false;
+        let mut has_href_regex = false;
 
         for mock in enabled.iter() {
             // Body/graphql matchers need the body; handler mocks may read it
@@ -679,6 +685,15 @@ impl MockRegistry {
                 has_conditional = true;
             }
 
+            if mock
+                .request
+                .url_patterns
+                .iter()
+                .any(|p| matches!(p, crate::types::UrlPattern::HrefRegex(_)))
+            {
+                has_href_regex = true;
+            }
+
             // Only index mocks with exactly one Exact URL pattern and no conditionals
             if !is_conditional
                 && mock.request.url_patterns.len() == 1
@@ -706,6 +721,8 @@ impl MockRegistry {
             .store(has_body_dependent, Ordering::Release);
         self.has_header_dependent_mocks
             .store(has_header_dependent, Ordering::Release);
+        self.has_href_regex_mocks
+            .store(has_href_regex, Ordering::Release);
         *self.exact_match_index.write() = index;
         // Record that our index is now built at the current sorted version
         let current_sorted = self.sorted_mocks_cache.version.load(Ordering::Acquire);
@@ -764,6 +781,14 @@ impl MockRegistry {
     pub fn needs_request_headers(&self) -> bool {
         self.ensure_exact_index();
         self.has_header_dependent_mocks.load(Ordering::Acquire)
+    }
+
+    /// Whether any enabled mock has an `UrlPattern::HrefRegex` pattern.
+    /// When false, URL matching never attempts the Host-header href
+    /// reconstruction fallback.
+    pub fn has_href_regex_mocks(&self) -> bool {
+        self.ensure_exact_index();
+        self.has_href_regex_mocks.load(Ordering::Acquire)
     }
 
     /// Clear all mocks from the registry (closing live WS/SSE connections)

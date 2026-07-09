@@ -197,6 +197,10 @@ impl MockMatcher {
         // Arc clone (refcount only) — no per-request Vec clone.
         let all_mocks = self.registry.get_enabled_mocks_arc();
 
+        // The href reconstruction fallback in matches_url costs a Host
+        // lookup per candidate; skip it when no HrefRegex mock exists.
+        let try_href = self.registry.has_href_regex_mocks();
+
         // Pre-parse query params once for all matchers (optimization)
         let parsed_query = if query.is_some()
             && all_mocks
@@ -238,7 +242,7 @@ impl MockMatcher {
                 let candidate = (exclude.is_empty()
                     || !exclude.iter().any(|id| id == mock.id.as_str()))
                     && self.matches_method(mock, method)
-                    && self.matches_url(mock, path, query, headers);
+                    && self.matches_url(mock, path, query, try_href.then_some(headers), None);
                 if !candidate {
                     return false;
                 }
@@ -354,14 +358,22 @@ impl MockMatcher {
         mock.request.methods.contains(method)
     }
 
-    /// Check if the mock's URL patterns match the request path
+    /// Check if the mock's URL patterns match the request path.
+    ///
+    /// `href_headers` enables the `HrefRegex` reconstruction fallback and
+    /// is only passed when the registry holds at least one HrefRegex mock
+    /// (skipping the per-candidate Host lookup otherwise). `scheme` is the
+    /// connection's real scheme when the caller knows it (interceptor
+    /// lane); `None` tests both `ws://` and `wss://`.
     #[allow(clippy::unused_self)]
+    #[inline]
     fn matches_url(
         &self,
         mock: &MockDefinition,
         path: &str,
         query: Option<&str>,
-        headers: &HeaderMap,
+        href_headers: Option<&HeaderMap>,
+        scheme: Option<&str>,
     ) -> bool {
         // Empty URL patterns means match all URLs
         if mock.request.url_patterns.is_empty() {
@@ -379,9 +391,24 @@ impl MockMatcher {
             return true;
         }
 
-        // Slow path: if there's a query string, try matching full URL (path?query)
-        // This is needed for exact-match patterns from recordings that include query params.
-        // Only allocate the format string if the fast path didn't match.
+        if query.is_none() && href_headers.is_none() {
+            return false;
+        }
+        Self::matches_url_fallbacks(mock, path, query, href_headers, scheme)
+    }
+
+    /// The rare continuations of [`Self::matches_url`], kept out of the
+    /// per-candidate hot loop: full `path?query` matching (exact patterns
+    /// recorded with query strings) and `HrefRegex` reconstructions built
+    /// from the handshake's Host header.
+    #[cold]
+    fn matches_url_fallbacks(
+        mock: &MockDefinition,
+        path: &str,
+        query: Option<&str>,
+        href_headers: Option<&HeaderMap>,
+        scheme: Option<&str>,
+    ) -> bool {
         if let Some(q) = query
             && mock
                 .request
@@ -392,17 +419,15 @@ impl MockMatcher {
             return true;
         }
 
-        // Href regexes (`ws.link(RegExp)`) additionally test scheme-ful
-        // reconstructions built from the handshake's Host header.
-        if let Some(host) = headers
-            .get(http::header::HOST)
+        if let Some(host) = href_headers
+            .and_then(|headers| headers.get(http::header::HOST))
             .and_then(|value| value.to_str().ok())
         {
             return mock
                 .request
                 .url_patterns
                 .iter()
-                .any(|pattern| pattern.matches_href(host, path, query));
+                .any(|pattern| pattern.matches_href(scheme, host, path, query));
         }
 
         false
@@ -413,15 +438,20 @@ impl MockMatcher {
     /// effects (no `once` consumption, no call tracking, no caching):
     /// the Node interceptor lane dispatches a connection to ALL matching
     /// `ws` handlers (MSW semantics), not just the best one.
+    ///
+    /// `scheme` is the connection's real scheme (`ws`/`wss`) when the
+    /// caller knows it; `None` makes HrefRegex patterns test both.
     pub fn find_ws_matches(
         &self,
         path: &str,
         query: Option<&str>,
         headers: &HeaderMap,
+        scheme: Option<&str>,
     ) -> Vec<MockMatch> {
         if !self.registry.is_enabled() {
             return Vec::new();
         }
+        let try_href = self.registry.has_href_regex_mocks();
         self.registry
             .get_enabled_mocks_arc()
             .iter()
@@ -430,7 +460,7 @@ impl MockMatcher {
                     .as_ref()
                     .is_some_and(crate::types::StreamingResponse::is_ws)
                     && self.matches_method(mock, &Method::GET)
-                    && self.matches_url(mock, path, query, headers)
+                    && self.matches_url(mock, path, query, try_href.then_some(headers), scheme)
                     && self.matches_headers(mock, headers)
             })
             .map(|mock| MockMatch {
