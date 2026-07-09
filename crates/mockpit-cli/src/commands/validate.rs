@@ -23,6 +23,9 @@ struct JsonFileResult {
     file_path: Option<String>,
     errors: Vec<JsonDiagnostic>,
     warnings: Vec<JsonDiagnostic>,
+    /// Handlers registered by a script mock file (validated by evaluation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    handler_count: Option<usize>,
 }
 
 #[derive(serde::Serialize)]
@@ -72,6 +75,7 @@ fn result_to_json(result: &ValidationResult) -> JsonFileResult {
         file_path: result.file_path.as_ref().map(|p| p.display().to_string()),
         errors: result.errors.iter().map(error_to_diagnostic).collect(),
         warnings: result.warnings.iter().map(warning_to_diagnostic).collect(),
+        handler_count: result.handler_count,
     }
 }
 
@@ -179,7 +183,16 @@ fn output_text(results: &[ValidationResult], input_path: &str) -> anyhow::Result
         std::io::stdout().flush()?;
 
         if !result.has_errors() && !result.has_warnings() {
-            crate::say!("{}", ui::success("OK"));
+            match result.handler_count {
+                Some(count) => crate::say!(
+                    "{}",
+                    ui::success(&format!(
+                        "OK ({count} handler{})",
+                        if count == 1 { "" } else { "s" }
+                    ))
+                ),
+                None => crate::say!("{}", ui::success("OK")),
+            }
         } else if result.has_errors() {
             crate::say!("{}", ui::error("FAILED"));
             crate::say!();
