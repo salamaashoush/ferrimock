@@ -583,8 +583,7 @@ impl MockRegistry {
                 let seq = self
                     .insertion_seq
                     .get(r.key())
-                    .map(|s| *s.value())
-                    .unwrap_or(u64::MAX);
+                    .map_or(u64::MAX, |s| *s.value());
                 (seq, Arc::clone(r.value()))
             })
             .collect();

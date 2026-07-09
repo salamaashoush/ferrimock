@@ -382,12 +382,13 @@ pub enum MswParamValue {
 }
 
 fn decode_param(value: &str) -> String {
-    urlencoding::decode(value).map_or_else(|_| value.to_string(), |c| c.into_owned())
+    urlencoding::decode(value).map_or_else(|_| value.to_string(), std::borrow::Cow::into_owned)
 }
 
 /// Convert raw URL captures to MSW-shaped params for the JS lanes:
 /// `__rp` marker keys become `name -> [segments]`, other keys stay
 /// single-valued; all values percent-decoded.
+#[allow(clippy::implicit_hasher)]
 pub fn msw_params(captures: &FxHashMap<String, String>) -> Vec<(String, MswParamValue)> {
     captures
         .iter()
@@ -537,27 +538,27 @@ impl UrlPattern {
     /// assert!(optional.matches("/files"));
     /// ```
     pub fn path_pattern(pattern: &str) -> Result<Self, regex::Error> {
+        use std::fmt::Write;
+
         let mut wildcard_index = 0usize;
         let mut regex_str = String::from("^");
         for (index, segment) in pattern.split('/').enumerate() {
             let sep = if index == 0 { "" } else { "/" };
             if let Some(param) = segment.strip_prefix(':') {
                 if let Some(name) = param.strip_suffix('+') {
-                    regex_str.push_str(sep);
-                    regex_str.push_str(&format!("(?P<{REPEAT_CAPTURE_PREFIX}{name}>.+)"));
+                    let _ = write!(regex_str, "{sep}(?P<{REPEAT_CAPTURE_PREFIX}{name}>.+)");
                 } else if let Some(name) = param.strip_suffix('*') {
                     // Zero segments must also match the path without the
                     // separator, so the group swallows its own slash.
-                    regex_str.push_str(&format!("(?:{sep}(?P<{REPEAT_CAPTURE_PREFIX}{name}>.*))?"));
+                    let _ = write!(regex_str, "(?:{sep}(?P<{REPEAT_CAPTURE_PREFIX}{name}>.*))?");
                 } else {
-                    regex_str.push_str(sep);
-                    regex_str.push_str(&format!("(?P<{param}>[^/]+)"));
+                    let _ = write!(regex_str, "{sep}(?P<{param}>[^/]+)");
                 }
             } else if segment == "*" {
-                regex_str.push_str(sep);
-                regex_str.push_str(&format!(
-                    "(?P<{WILDCARD_CAPTURE_PREFIX}{wildcard_index}>.*)"
-                ));
+                let _ = write!(
+                    regex_str,
+                    "{sep}(?P<{WILDCARD_CAPTURE_PREFIX}{wildcard_index}>.*)"
+                );
                 wildcard_index += 1;
             } else {
                 regex_str.push_str(sep);
