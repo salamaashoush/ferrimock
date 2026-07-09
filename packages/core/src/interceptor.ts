@@ -34,6 +34,25 @@ interface MatchedResult {
   mockId: string;
 }
 
+/** One entry of `listHandlers()`: mockpit's registry fields plus MSW's
+ * `RequestHandler` surface (`info.header`, `isUsed`). */
+export interface ListedHandler {
+  id: string;
+  methods: string[];
+  enabled: boolean;
+  kind?: "websocket";
+  /** Whether this handler has served a request (MSW's `isUsed`). */
+  isUsed: boolean;
+  /** MSW's `handler.info` display fields. */
+  info: {
+    header?: string;
+    path?: string;
+    method?: string;
+    operationType?: string;
+    operationName?: string;
+  };
+}
+
 type MatchOutcome =
   | { kind: "match"; response: MatchedResult }
   | { kind: "passthrough" }
@@ -42,8 +61,9 @@ type MatchOutcome =
 /**
  * Build a Response from an engine match: applies statusText and splits
  * newline-joined Set-Cookie values back into separate headers.
+ * @internal
  */
-function toResponse(match: MatchedResult): Response {
+export function toResponse(match: MatchedResult): Response {
   // Interceptor lane: the handler's original Response was stashed whole
   // (live streams included) — deliver it instead of a byte-copy rebuild.
   const stashed = takeResponse(match.headers[STREAM_ID_HEADER]);
@@ -111,8 +131,9 @@ function abortRejection(signal: AbortSignal): Promise<never> {
 export type AnyHandler = RequestHandler | WebSocketHandler;
 
 /** Unwrap ws handlers to their engine mocks; everything registers
- * through the engine's scopes identically. */
-function toEngineHandlers(handlers: AnyHandler[]): RequestHandler[] {
+ * through the engine's scopes identically.
+ * @internal */
+export function toEngineHandlers(handlers: AnyHandler[]): RequestHandler[] {
   return handlers.map((handler) =>
     isWsHandler(handler) ? handler.native : (handler as RequestHandler)
   );
@@ -148,6 +169,9 @@ export class MockpitInterceptor {
 
   /** MSW-compatible lifecycle events. */
   readonly events = new LifecycleEvents();
+
+  /** Mock ids that have served a request (listHandlers' `isUsed`). */
+  private usedMockIds = new Set<string>();
 
   constructor() {
     this.server = new MockpitServer();
@@ -193,6 +217,8 @@ export class MockpitInterceptor {
     } else {
       this.server.resetRuntimeHandlers();
     }
+    // MSW re-instantiates handlers on reset, clearing their isUsed flag.
+    this.usedMockIds.clear();
     this.pruneWsDispatch();
     this.syncState();
   }
@@ -307,6 +333,7 @@ export class MockpitInterceptor {
         (excludeIds ??= []).push(match.mockId);
         continue;
       }
+      this.usedMockIds.add(match.mockId);
       if (match.headers[PASSTHROUGH_HEADER] === "1") {
         return { kind: "passthrough" };
       }
@@ -715,19 +742,37 @@ export class MockpitInterceptor {
 
   /**
    * List all registered handlers (MSW's `server.listHandlers()`).
+   * Entries carry MSW's handler surface: `info.header` ("GET /users/:id",
+   * "query GetUser (origin: *)") and `isUsed`.
    */
-  listHandlers(): Array<{
-    id: string;
-    methods: string[];
-    enabled: boolean;
-    kind?: "websocket";
-  }> {
-    return this.server.listHandlers() as Array<{
-      id: string;
-      methods: string[];
-      enabled: boolean;
-      kind?: "websocket";
-    }>;
+  listHandlers(): ListedHandler[] {
+    return this.server.listHandlers().map((h) => {
+      const info: ListedHandler["info"] = {};
+      if (h.header !== undefined) {
+        info.header = h.header;
+        if (h.header === h.pattern) {
+          // GraphQL patterns arrive as MSW's full header display.
+          const parsed = /^(query|mutation|all)(?: (.+?))? \(origin: .+\)$/.exec(
+            h.header
+          );
+          if (parsed) {
+            info.operationType = parsed[1];
+            if (parsed[2]) info.operationName = parsed[2];
+          }
+        } else if (h.pattern !== undefined) {
+          info.path = h.pattern;
+          info.method = h.methods[0] ?? "/.+/";
+        }
+      }
+      return {
+        id: h.id,
+        methods: h.methods,
+        enabled: h.enabled,
+        kind: h.kind as "websocket" | undefined,
+        isUsed: this.usedMockIds.has(h.id),
+        info,
+      };
+    });
   }
 
   /**

@@ -243,6 +243,42 @@ const scenarios: Scenario[] = [
       ];
     },
   },
+  {
+    name: "repeatable :path+ params come back as string[]",
+    handlers: ({ http, HttpResponse }) => [
+      http.get("http://mocked.test/files/:path+", ({ params }) =>
+        HttpResponse.json({ params })
+      ),
+    ],
+    exec: async () => [
+      await normalized(await fetch("http://mocked.test/files/a/b/c")),
+      await normalized(await fetch("http://mocked.test/files/only")),
+    ],
+  },
+  {
+    name: "repeatable :path* matches zero segments and decodes values",
+    handlers: ({ http, HttpResponse }) => [
+      http.get("http://mocked.test/tree/:path*", ({ params }) =>
+        HttpResponse.json({ params })
+      ),
+    ],
+    exec: async () => [
+      await normalized(await fetch("http://mocked.test/tree")),
+      await normalized(await fetch("http://mocked.test/tree/a%20b/c")),
+    ],
+  },
+  {
+    name: "single path params are percent-decoded",
+    handlers: ({ http, HttpResponse }) => [
+      http.get("http://mocked.test/users/:name", ({ params }) =>
+        HttpResponse.json({ params })
+      ),
+    ],
+    exec: async () => {
+      const res = await fetch("http://mocked.test/users/jo%C3%A3o%20silva");
+      return normalized(res);
+    },
+  },
 ];
 
 async function run(
@@ -279,4 +315,82 @@ describe("differential: mockpit output equals msw output", () => {
       expect(pitResult).toEqual(mswResult as any);
     });
   }
+});
+
+import {
+  getResponse as pitGetResponse,
+  HttpMethods as PitHttpMethods,
+} from "../src/index.js";
+import { getResponse as mswGetResponse, HttpMethods as MswHttpMethods } from "msw";
+
+describe("differential: standalone surfaces", () => {
+  it("HttpMethods matches msw's enum values", () => {
+    expect({ ...PitHttpMethods }).toEqual({ ...(MswHttpMethods as object) });
+  });
+
+  it("getResponse resolves a request against ad-hoc handlers", async () => {
+    const request = () => new Request("http://mocked.test/users/9");
+    const mswRes = await mswGetResponse(
+      [mswHttp.get("http://mocked.test/users/:id", ({ params }) => MswHttpResponse.json({ params }))],
+      request()
+    );
+    const pitRes = await pitGetResponse(
+      [pitHttp.get("http://mocked.test/users/:id", ({ params }) => PitHttpResponse.json({ params })) as any],
+      request()
+    );
+    expect(pitRes?.status).toBe(mswRes?.status ?? -1);
+    expect(await pitRes?.json()).toEqual(await mswRes?.json());
+
+    const mswMiss = await mswGetResponse(
+      [mswHttp.get("http://mocked.test/other", () => MswHttpResponse.json({}))],
+      request()
+    );
+    const pitMiss = await pitGetResponse(
+      [pitHttp.get("http://mocked.test/other", () => PitHttpResponse.json({})) as any],
+      request()
+    );
+    expect(pitMiss).toBe(undefined as any);
+    expect(mswMiss).toBe(undefined as any);
+  });
+
+  it("listHandlers exposes msw's info.header and isUsed", async () => {
+    const collect = (server: { listHandlers(): any[] }) =>
+      server.listHandlers().map((h) => ({
+        header: h.info?.header,
+        isUsed: h.isUsed,
+      }));
+
+    const mswServer = mswSetupServer(
+      mswHttp.get("http://mocked.test/api/users/:id", () => MswHttpResponse.json({})),
+      mswHttp.post("http://mocked.test/api/users", () => MswHttpResponse.json({})),
+      mswGraphql.query("GetUser", () => MswHttpResponse.json({ data: {} }))
+    );
+    mswServer.listen({ onUnhandledRequest: "error" });
+    let mswBefore: unknown, mswAfter: unknown;
+    try {
+      mswBefore = collect(mswServer);
+      await fetch("http://mocked.test/api/users/1");
+      mswAfter = collect(mswServer);
+    } finally {
+      mswServer.close();
+    }
+
+    const pitServer = pitSetupServer(
+      pitHttp.get("http://mocked.test/api/users/:id", () => PitHttpResponse.json({})),
+      pitHttp.post("http://mocked.test/api/users", () => PitHttpResponse.json({})),
+      pitGraphql.query("GetUser", () => PitHttpResponse.json({ data: {} }))
+    );
+    pitServer.listen({ onUnhandledRequest: "error" });
+    let pitBefore: unknown, pitAfter: unknown;
+    try {
+      pitBefore = collect(pitServer);
+      await fetch("http://mocked.test/api/users/1");
+      pitAfter = collect(pitServer);
+    } finally {
+      pitServer.close();
+    }
+
+    expect(pitBefore).toEqual(mswBefore as any);
+    expect(pitAfter).toEqual(mswAfter as any);
+  });
 });

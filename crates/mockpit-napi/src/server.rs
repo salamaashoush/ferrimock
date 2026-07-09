@@ -49,6 +49,10 @@ pub struct MockpitServer {
     /// FunctionRef map for interceptor fast path: mock_id -> handler FunctionRef.
     /// Used by match_request to call JS handlers directly without TSFN overhead.
     handler_refs: Arc<std::sync::RwLock<HashMap<String, Arc<HandlerFnRef>>>>,
+    /// The predicate as the user wrote it, per mock id — the engine only
+    /// keeps compiled patterns, but `listHandlers()` surfaces MSW's
+    /// display form ("GET /users/:id", "query GetUser (origin: *)").
+    handler_patterns: Arc<std::sync::RwLock<HashMap<String, String>>>,
     shutdown_tx: Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     port: Arc<std::sync::atomic::AtomicU16>,
 }
@@ -64,6 +68,7 @@ impl MockpitServer {
             registry,
             matcher,
             handler_refs: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            handler_patterns: Arc::new(std::sync::RwLock::new(HashMap::new())),
             shutdown_tx: Arc::new(std::sync::Mutex::new(None)),
             port: Arc::new(std::sync::atomic::AtomicU16::new(0)),
         }
@@ -79,10 +84,17 @@ impl MockpitServer {
     pub fn use_handlers(&mut self, handlers: Vec<&mut RequestHandler>) -> Result<()> {
         for handler in handlers {
             let fn_ref = handler.take_fn_ref();
+            let pattern = handler.pattern.clone();
             let mock_def = handler.take()?;
             let mock_id = mock_def.id.to_string();
             self.registry.add_mock(mock_def);
 
+            if let Some(pattern) = pattern {
+                self.handler_patterns
+                    .write()
+                    .unwrap()
+                    .insert(mock_id.clone(), pattern);
+            }
             if let Some(fn_ref) = fn_ref {
                 self.handler_refs.write().unwrap().insert(mock_id, fn_ref);
             }
@@ -101,6 +113,7 @@ impl MockpitServer {
     pub fn use_runtime(&mut self, handlers: Vec<&mut RequestHandler>) -> Result<()> {
         for handler in handlers {
             let fn_ref = handler.take_fn_ref();
+            let pattern = handler.pattern.clone();
             let mut mock_def = handler.take()?;
             // Runtime handlers get higher priority than initial handlers
             mock_def.priority = 200;
@@ -108,6 +121,12 @@ impl MockpitServer {
             let mock_id = mock_def.id.to_string();
             self.registry.add_mock(mock_def);
 
+            if let Some(pattern) = pattern {
+                self.handler_patterns
+                    .write()
+                    .unwrap()
+                    .insert(mock_id.clone(), pattern);
+            }
             if let Some(fn_ref) = fn_ref {
                 self.handler_refs.write().unwrap().insert(mock_id, fn_ref);
             }
@@ -290,23 +309,51 @@ impl MockpitServer {
 
     /// List all registered handlers.
     ///
-    /// Returns an array of handler info objects with id and method/path info.
-    /// Equivalent to MSW's `server.listHandlers()`. WebSocket mocks carry
-    /// `kind: "websocket"` (MSW's WebSocketHandler tag).
+    /// Returns an array of handler info objects with id, method/path info,
+    /// and MSW's display strings: `pattern` is the predicate as the user
+    /// wrote it and `header` is MSW's `info.header` ("GET /users/:id",
+    /// "query GetUser (origin: *)"). Equivalent to MSW's
+    /// `server.listHandlers()`. WebSocket mocks carry `kind: "websocket"`
+    /// (MSW's WebSocketHandler tag).
     #[napi]
     pub fn list_handlers(&self) -> Vec<HandlerInfo> {
+        let patterns = self.handler_patterns.read().unwrap();
         self.registry
-            .get_all_mocks()
+            .get_all_mocks_in_registration_order()
             .iter()
-            .map(|m| HandlerInfo {
-                id: m.id.to_string(),
-                methods: m.request.methods.iter().map(|m| m.to_string()).collect(),
-                enabled: m.enabled,
-                kind: m
-                    .streaming
-                    .as_ref()
-                    .filter(|s| s.is_ws())
-                    .map(|_| "websocket".to_string()),
+            .map(|m| {
+                // Declarative mocks never register a display pattern; a
+                // single exact URL is still a faithful display form.
+                let pattern = patterns.get(m.id.as_str()).cloned().or_else(|| {
+                    match m.request.url_patterns.as_slice() {
+                        [mockpit::types::UrlPattern::Exact(path)] => Some(path.clone()),
+                        _ => None,
+                    }
+                });
+                let methods: Vec<String> =
+                    m.request.methods.iter().map(|m| m.to_string()).collect();
+                let header = pattern.as_ref().map(|pattern| {
+                    if m.request.graphql_matcher.is_some() {
+                        // GraphQL patterns already carry MSW's full header.
+                        pattern.clone()
+                    } else {
+                        // MSW displays method-agnostic handlers as /.+/.
+                        let method = methods.first().map_or("/.+/", String::as_str);
+                        format!("{method} {pattern}")
+                    }
+                });
+                HandlerInfo {
+                    id: m.id.to_string(),
+                    methods,
+                    enabled: m.enabled,
+                    kind: m
+                        .streaming
+                        .as_ref()
+                        .filter(|s| s.is_ws())
+                        .map(|_| "websocket".to_string()),
+                    pattern,
+                    header,
+                }
             })
             .collect()
     }
@@ -352,7 +399,7 @@ impl MockpitServer {
             .into_iter()
             .map(|m| WsConnectionMatch {
                 mock_id: m.mock.id.to_string(),
-                params: m.captures.into_iter().collect(),
+                params: crate::request_context::msw_params_map(&m.captures),
             })
             .collect())
     }
@@ -698,13 +745,19 @@ pub struct HandlerInfo {
     pub enabled: bool,
     /// `"websocket"` for WebSocket mocks (MSW's handler tag), absent otherwise.
     pub kind: Option<String>,
+    /// The predicate as the user wrote it (`/users/:id`, a full URL, a
+    /// RegExp display form, or a single exact URL for declarative mocks).
+    pub pattern: Option<String>,
+    /// MSW's `info.header` display ("GET /users/:id",
+    /// "query GetUser (origin: *)").
+    pub header: Option<String>,
 }
 
 /// One WebSocket mock matched by `matchWsConnections`.
 #[napi(object)]
 pub struct WsConnectionMatch {
     pub mock_id: String,
-    pub params: HashMap<String, String>,
+    pub params: HashMap<String, Either<String, Vec<String>>>,
 }
 
 /// Result of matching a request against the mock registry.

@@ -1466,3 +1466,73 @@ fn test_registry_accessor() {
         "Registry should be enabled after enable call"
     );
 }
+
+#[test]
+fn repeatable_path_params_capture_segments_and_convert_to_msw_arrays() {
+    use mockpit::types::{MswParamValue, msw_params};
+
+    let registry = MockRegistry::new();
+    registry.add_mock(create_test_mock(
+        "repeat-plus",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::path_pattern("/files/:path+").unwrap()],
+        smallvec![],
+        smallvec![],
+        None,
+    ));
+    registry.add_mock(create_test_mock(
+        "repeat-star",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::path_pattern("/tree/:path*").unwrap()],
+        smallvec![],
+        smallvec![],
+        None,
+    ));
+    let matcher = MockMatcher::new(registry);
+
+    // :path+ requires at least one segment; captures join on '/'.
+    let m = matcher
+        .find_match(
+            &Method::GET,
+            "/files/a%20b/c",
+            None,
+            &HeaderMap::new(),
+            None,
+        )
+        .expect("plus match");
+    assert_eq!(
+        m.captures.get("__rppath").map(String::as_str),
+        Some("a%20b/c")
+    );
+    let params = msw_params(&m.captures);
+    assert_eq!(
+        params,
+        vec![(
+            "path".to_string(),
+            MswParamValue::List(vec!["a b".to_string(), "c".to_string()])
+        )]
+    );
+    assert!(
+        matcher
+            .find_match(&Method::GET, "/files", None, &HeaderMap::new(), None)
+            .is_none()
+    );
+
+    // :path* also matches zero segments — the param is omitted entirely.
+    let zero = matcher
+        .find_match(&Method::GET, "/tree", None, &HeaderMap::new(), None)
+        .expect("star zero-segment match");
+    assert!(zero.captures.is_empty());
+    let one = matcher
+        .find_match(&Method::GET, "/tree/x", None, &HeaderMap::new(), None)
+        .expect("star match");
+    assert_eq!(
+        msw_params(&one.captures),
+        vec![(
+            "path".to_string(),
+            MswParamValue::List(vec!["x".to_string()])
+        )]
+    );
+}

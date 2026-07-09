@@ -221,6 +221,11 @@ impl RequestContext {
             // Get named captures
             for name in pattern.capture_names().flatten() {
                 if let Some(value) = caps.name(name) {
+                    // A zero-segment `:name*` participates with an empty
+                    // match — MSW omits the param entirely.
+                    if value.as_str().is_empty() && repeat_capture_name(name).is_some() {
+                        continue;
+                    }
                     captures.insert(
                         capture_param_key(name).to_string(),
                         value.as_str().to_string(),
@@ -347,10 +352,53 @@ pub enum UrlPattern {
 /// (`"0"`, `"1"`, …) at extraction time.
 pub(crate) const WILDCARD_CAPTURE_PREFIX: &str = "__wc";
 
+/// Repeatable params (`:name+` / `:name*`) are compiled as `__rp{name}`.
+/// The marker survives into the captures map so the JS-facing lanes can
+/// return them as arrays (MSW splits the matched segments on `/`), while
+/// the template context sees the plain name with the joined value.
+pub(crate) const REPEAT_CAPTURE_PREFIX: &str = "__rp";
+
 pub(crate) fn capture_param_key(name: &str) -> &str {
     name.strip_prefix(WILDCARD_CAPTURE_PREFIX)
         .filter(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
         .unwrap_or(name)
+}
+
+/// The param name behind a repeatable-capture key (`__rp{name}`), or
+/// `None` for ordinary captures. MSW returns repeatable params as
+/// `string[]` — consumers split the value on `/`.
+pub fn repeat_capture_name(name: &str) -> Option<&str> {
+    name.strip_prefix(REPEAT_CAPTURE_PREFIX)
+        .filter(|rest| !rest.is_empty())
+}
+
+/// An MSW-shaped path param value: repeatable captures surface as the
+/// matched segments (`string[]`), everything percent-decoded (MSW runs
+/// `decodeURIComponent` on every captured value).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MswParamValue {
+    Single(String),
+    List(Vec<String>),
+}
+
+fn decode_param(value: &str) -> String {
+    urlencoding::decode(value).map_or_else(|_| value.to_string(), |c| c.into_owned())
+}
+
+/// Convert raw URL captures to MSW-shaped params for the JS lanes:
+/// `__rp` marker keys become `name -> [segments]`, other keys stay
+/// single-valued; all values percent-decoded.
+pub fn msw_params(captures: &FxHashMap<String, String>) -> Vec<(String, MswParamValue)> {
+    captures
+        .iter()
+        .map(|(key, value)| match repeat_capture_name(key) {
+            Some(name) => (
+                name.to_string(),
+                MswParamValue::List(value.split('/').map(decode_param).collect()),
+            ),
+            None => (key.clone(), MswParamValue::Single(decode_param(value))),
+        })
+        .collect()
 }
 
 impl UrlPattern {
@@ -405,6 +453,11 @@ impl UrlPattern {
                     // Get named captures
                     for name in re.capture_names().flatten() {
                         if let Some(value) = caps.name(name) {
+                            // A zero-segment `:name*` participates with an
+                            // empty match — MSW omits the param entirely.
+                            if value.as_str().is_empty() && repeat_capture_name(name).is_some() {
+                                continue;
+                            }
                             captures.insert(
                                 capture_param_key(name).to_string(),
                                 value.as_str().to_string(),
@@ -461,6 +514,9 @@ impl UrlPattern {
     ///
     /// Supports:
     /// - `:param` — named path parameter (matches one segment)
+    /// - `:param+` / `:param*` — repeatable parameter (one-or-more /
+    ///   zero-or-more segments, path-to-regexp modifiers); captured as
+    ///   `__rp{param}` so the JS lanes return the segments as `string[]`
     /// - `*` as a full segment — greedy wildcard (crosses `/`, like
     ///   path-to-regexp); captured positionally as params `"0"`, `"1"`, …
     /// - Literal segments — escaped for regex safety
@@ -471,26 +527,46 @@ impl UrlPattern {
     /// let pattern = UrlPattern::path_pattern("/users/:id").unwrap();
     /// assert!(pattern.matches("/users/123"));
     /// assert!(!pattern.matches("/users/123/extra"));
+    ///
+    /// let repeat = UrlPattern::path_pattern("/files/:path+").unwrap();
+    /// assert!(repeat.matches("/files/a/b/c"));
+    /// assert!(!repeat.matches("/files"));
+    ///
+    /// let optional = UrlPattern::path_pattern("/files/:path*").unwrap();
+    /// assert!(optional.matches("/files/a/b"));
+    /// assert!(optional.matches("/files"));
     /// ```
     pub fn path_pattern(pattern: &str) -> Result<Self, regex::Error> {
         let mut wildcard_index = 0usize;
-        let regex_str = pattern
-            .split('/')
-            .map(|segment| {
-                if let Some(param) = segment.strip_prefix(':') {
-                    format!("(?P<{param}>[^/]+)")
-                } else if segment == "*" {
-                    let group = format!("(?P<{WILDCARD_CAPTURE_PREFIX}{wildcard_index}>.*)");
-                    wildcard_index += 1;
-                    group
+        let mut regex_str = String::from("^");
+        for (index, segment) in pattern.split('/').enumerate() {
+            let sep = if index == 0 { "" } else { "/" };
+            if let Some(param) = segment.strip_prefix(':') {
+                if let Some(name) = param.strip_suffix('+') {
+                    regex_str.push_str(sep);
+                    regex_str.push_str(&format!("(?P<{REPEAT_CAPTURE_PREFIX}{name}>.+)"));
+                } else if let Some(name) = param.strip_suffix('*') {
+                    // Zero segments must also match the path without the
+                    // separator, so the group swallows its own slash.
+                    regex_str.push_str(&format!("(?:{sep}(?P<{REPEAT_CAPTURE_PREFIX}{name}>.*))?"));
                 } else {
-                    regex::escape(segment)
+                    regex_str.push_str(sep);
+                    regex_str.push_str(&format!("(?P<{param}>[^/]+)"));
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("/");
+            } else if segment == "*" {
+                regex_str.push_str(sep);
+                regex_str.push_str(&format!(
+                    "(?P<{WILDCARD_CAPTURE_PREFIX}{wildcard_index}>.*)"
+                ));
+                wildcard_index += 1;
+            } else {
+                regex_str.push_str(sep);
+                regex_str.push_str(&regex::escape(segment));
+            }
+        }
+        regex_str.push('$');
 
-        UrlPattern::regex(&format!("^{regex_str}$"))
+        UrlPattern::regex(&regex_str)
     }
 
     /// Split an absolute-URL predicate (`https://api.example.com/users/:id`)

@@ -21,6 +21,25 @@ use std::sync::{Arc, OnceLock};
 /// Global request counter for generating unique request IDs.
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// URL captures as an MSW params object: repeatable params (`:name+` /
+/// `:name*`) become `string[]`, all values percent-decoded.
+pub(crate) fn msw_params_map(
+    captures: &rustc_hash::FxHashMap<String, String>,
+) -> HashMap<String, Either<String, Vec<String>>> {
+    mockpit::types::msw_params(captures)
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                match v {
+                    mockpit::types::MswParamValue::Single(s) => Either::A(s),
+                    mockpit::types::MswParamValue::List(l) => Either::B(l),
+                },
+            )
+        })
+        .collect()
+}
+
 /// Shared per-request data: the context plus a body-JSON parse cache so
 /// `bodyJson` parses at most once regardless of how many views read it.
 pub(crate) struct RequestData {
@@ -189,15 +208,11 @@ impl RequestInfo {
         build_fetch_request(env, &self.inner)
     }
 
-    /// Path parameters captured from the URL pattern.
+    /// Path parameters captured from the URL pattern. Repeatable params
+    /// (`:name+` / `:name*`) surface as arrays (MSW semantics).
     #[napi(getter)]
-    pub fn params(&self) -> HashMap<String, String> {
-        self.inner
-            .ctx
-            .captures
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
+    pub fn params(&self) -> HashMap<String, Either<String, Vec<String>>> {
+        msw_params_map(&self.inner.ctx.captures)
     }
 
     /// Parsed cookies from the Cookie request header.

@@ -20,7 +20,22 @@ fn build_tera_context(context: &RequestContext) -> Context {
         tera_context.insert("path", &context.path);
     }
     if !context.captures.is_empty() {
-        tera_context.insert("captures", &context.captures);
+        // Repeatable-param captures carry a `__rp` key marker for the JS
+        // lanes; templates see the plain name with the joined segments.
+        if context
+            .captures
+            .keys()
+            .any(|k| crate::types::repeat_capture_name(k).is_some())
+        {
+            let normalized: FxHashMap<&str, &String> = context
+                .captures
+                .iter()
+                .map(|(k, v)| (crate::types::repeat_capture_name(k).unwrap_or(k), v))
+                .collect();
+            tera_context.insert("captures", &normalized);
+        } else {
+            tera_context.insert("captures", &context.captures);
+        }
     }
     if !context.query.is_empty() {
         tera_context.insert("query", &context.query);

@@ -345,8 +345,11 @@ fn build_connection_arg<'js>(
     let client = Class::instance(ctx.clone(), WsClient::new(conn_id, outbound, client_url))?;
     let server = Class::instance(ctx.clone(), WsServer::new(conn_id, cmd, link_url))?;
     let params = Object::new(ctx.clone())?;
-    for (k, v) in captures {
-        params.set(k.as_str(), v.as_str())?;
+    for (k, v) in crate::types::msw_params(captures) {
+        match v {
+            crate::types::MswParamValue::Single(s) => params.set(k, s)?,
+            crate::types::MswParamValue::List(l) => params.set(k, l)?,
+        }
     }
     let info = Object::new(ctx.clone())?;
     let protocol_list = rquickjs::Array::new(ctx.clone())?;

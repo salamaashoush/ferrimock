@@ -27,37 +27,54 @@ fn build_graphql(
 ) -> Result<RequestHandler> {
     let bridge = js_to_handler_bridge(handler_fn, HandlerKind::GraphQL)?;
 
-    let mut mock_def: MockDefinition = match (op_type, operation_name) {
-        (Some(op_type), Some(name)) => match as_regexp(env, &name)? {
-            Some((source, flags)) => {
-                let regex = compile_js_regex(&source, &flags)?;
-                match op_type {
-                    GraphQLOperationType::Mutation => {
-                        handler::graphql::mutation_regex(regex, bridge.handler_fn.clone())
-                    }
-                    _ => handler::graphql::query_regex(regex, bridge.handler_fn.clone()),
+    let (mut mock_def, display): (MockDefinition, String) = match (op_type, operation_name) {
+        (Some(op_type), Some(name)) => {
+            let label = match op_type {
+                GraphQLOperationType::Mutation => "mutation",
+                _ => "query",
+            };
+            match as_regexp(env, &name)? {
+                Some((source, flags)) => {
+                    let regex = compile_js_regex(&source, &flags)?;
+                    let display = format!("{label} /{source}/{flags}");
+                    let mock = match op_type {
+                        GraphQLOperationType::Mutation => {
+                            handler::graphql::mutation_regex(regex, bridge.handler_fn.clone())
+                        }
+                        _ => handler::graphql::query_regex(regex, bridge.handler_fn.clone()),
+                    };
+                    (mock, display)
+                }
+                None => {
+                    #[allow(unsafe_code)]
+                    let name_str: String =
+                        unsafe { FromNapiValue::from_napi_value(env.raw(), name.raw())? };
+                    let display = format!("{label} {name_str}");
+                    let mock = match op_type {
+                        GraphQLOperationType::Mutation => {
+                            handler::graphql::mutation(&name_str, bridge.handler_fn.clone())
+                        }
+                        _ => handler::graphql::query(&name_str, bridge.handler_fn.clone()),
+                    };
+                    (mock, display)
                 }
             }
-            None => {
-                #[allow(unsafe_code)]
-                let name_str: String =
-                    unsafe { FromNapiValue::from_napi_value(env.raw(), name.raw())? };
-                match op_type {
-                    GraphQLOperationType::Mutation => {
-                        handler::graphql::mutation(&name_str, bridge.handler_fn.clone())
-                    }
-                    _ => handler::graphql::query(&name_str, bridge.handler_fn.clone()),
-                }
-            }
-        },
-        _ => handler::graphql::operation(bridge.handler_fn.clone()),
+        }
+        _ => (
+            handler::graphql::operation(bridge.handler_fn.clone()),
+            "all".to_string(),
+        ),
     };
+
+    // MSW's GraphQLHandler header shape: "query GetUser (origin: *)".
+    let origin = endpoint.as_deref().unwrap_or("*");
+    let pattern = format!("{display} (origin: {origin})");
 
     if let Some(endpoint) = endpoint {
         apply_endpoint(&mut mock_def, &endpoint);
     }
 
-    Ok(finish_handler(bridge, mock_def, options))
+    Ok(finish_handler(bridge, mock_def, options, Some(pattern)))
 }
 
 /// Scope a `graphql.link` mock to its endpoint: exact path pattern plus a
