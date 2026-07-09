@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter '@mockpit/core' build && bun run --filter '@mockpit/playwright' build && bun run --filter '@mockpit/cli' build"
+    "build": "bun run --filter '@mockpit/core' build && bun run --filter 'mockpit' build && bun run --filter '@mockpit/playwright' build"
   },
   "devDependencies": {
     "tsdown": "^0.22.2",

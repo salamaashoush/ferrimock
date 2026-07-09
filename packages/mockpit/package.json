@@ -1,0 +1,34 @@
+{
+  "name": "mockpit",
+  "version": "0.1.0",
+  "description": "High-performance HTTP mocking engine -- bare-specifier alias of @mockpit/core so mock files can `import { http } from 'mockpit'` in both Node and the embedded QuickJS runtime",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    },
+    "./node": {
+      "development": "./src/node.ts",
+      "types": "./dist/node.d.mts",
+      "import": "./dist/node.mjs",
+      "default": "./dist/node.mjs"
+    }
+  },
+  "files": ["dist", "src"],
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@mockpit/core": "workspace:*"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">= 20.0.0"
+  }
+}

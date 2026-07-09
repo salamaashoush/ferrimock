@@ -264,8 +264,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish @mockpit/cli
-        working-directory: packages/cli
+      - name: Publish mockpit (bare-specifier alias)
+        working-directory: packages/mockpit
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

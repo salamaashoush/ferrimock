@@ -23,18 +23,6 @@
         "@mockpit/node-win32-x64-msvc": "0.1.0",
       },
     },
-    "packages/cli": {
-      "name": "@mockpit/cli",
-      "version": "0.1.0",
-      "bin": {
-        "mockpit": "./bin/mockpit.mjs",
-      },
-      "dependencies": {
-        "@mockpit/core": "workspace:*",
-        "@mockpit/node": "workspace:*",
-        "clap-ts": "^0.2.1",
-      },
-    },
     "packages/core": {
       "name": "@mockpit/core",
       "version": "0.1.0",
@@ -45,7 +33,15 @@
       },
       "devDependencies": {
         "@faker-js/faker": "^10.4.0",
+        "mockpit": "workspace:*",
         "msw": "^2.13.2",
+      },
+    },
+    "packages/mockpit": {
+      "name": "mockpit",
+      "version": "0.1.0",
+      "dependencies": {
+        "@mockpit/core": "workspace:*",
       },
     },
     "packages/playwright": {
@@ -115,8 +111,6 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
-
-    "@mockpit/cli": ["@mockpit/cli@workspace:packages/cli"],
 
     "@mockpit/core": ["@mockpit/core@workspace:packages/core"],
 
@@ -324,8 +318,6 @@
 
     "chardet": ["chardet@2.1.1", "", {}, "sha512-PsezH1rqdV9VvyNhxxOW32/d75r01NY7TQCmOqomRo15ZSOKbpTFVsfjghxo6JloQUCGnH4k1LGu0R4yCLlWQQ=="],
 
-    "clap-ts": ["clap-ts@0.2.1", "", {}, "sha512-AhWkNUyCLQP36DAxsh+RBENyEsQ14K6a20ttmKuLTl9DSQFHeZowEL7KFZDmS+fBi4QQODVcIj11FxgCAqLv2g=="],
-
     "cli-width": ["cli-width@4.1.0", "", {}, "sha512-ouuZd4/dm2Sw5Gmqy6bGyNNNe1qt9RpmxveLSO7KcgsTnU7RXfsw+/bukWGo1abgBiMAic068rclZsO4IWmmxQ=="],
 
     "clipanion": ["clipanion@4.0.0-rc.4", "", { "dependencies": { "typanion": "^3.8.0" } }, "sha512-CXkMQxU6s9GklO/1f714dkKBMu1lopS1WFF0B8o4AxPykR1hpozxSiUZ5ZUeBjfPgCWqbcNOtZVFhB8Lkfp1+Q=="],
@@ -395,6 +387,8 @@
     "jsesc": ["jsesc@3.1.0", "", { "bin": { "jsesc": "bin/jsesc" } }, "sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA=="],
 
     "json-with-bigint": ["json-with-bigint@3.5.8", "", {}, "sha512-eq/4KP6K34kwa7TcFdtvnftvHCD9KvHOGGICWwMFc4dOOKF5t4iYqnfLK8otCRCRv06FXOzGGyqE8h8ElMvvdw=="],
+
+    "mockpit": ["mockpit@workspace:packages/mockpit"],
 
     "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
 
