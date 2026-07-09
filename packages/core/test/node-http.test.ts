@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import http from "node:http";
 import { MockpitInterceptor } from "../src/interceptor.js";
-import { http as mock, MockResponse } from "@mockpit/node";
+import { http as mock, HttpResponse } from "@mockpit/node";
 
 function nodeRequest(
   url: string,
@@ -35,7 +35,7 @@ describe.skipIf(isBun)("node http interception", () => {
   it("intercepts a GET via node:http and returns the mocked body", async () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
-      mock.get("/api/http", async () => MockResponse.json({ ok: true, via: "node-http" })),
+      mock.get("/api/http", async () => HttpResponse.json({ ok: true, via: "node-http" })),
     ]);
     interceptor.apply();
 
@@ -47,9 +47,9 @@ describe.skipIf(isBun)("node http interception", () => {
   it("forwards the request body to body-matching mocks over node:http", async () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
-      mock.post("/echo", async (req) => {
-        const data = req.bodyJson as any;
-        return MockResponse.json({ received: data?.name ?? null });
+      mock.post("/echo", async ({ request }) => {
+        const data = (await request.json()) as any;
+        return HttpResponse.json({ received: data?.name ?? null });
       }),
     ]);
     interceptor.apply();

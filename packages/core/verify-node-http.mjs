@@ -2,7 +2,7 @@
 // Run: node packages/core/verify-node-http.mjs
 import http from "node:http";
 import { MockpitInterceptor } from "@mockpit/core";
-import { http as mock, MockResponse } from "@mockpit/node";
+import { http as mock, HttpResponse } from "@mockpit/node";
 
 function nodeRequest(url, options = {}, body) {
   return new Promise((resolve, reject) => {
@@ -20,8 +20,8 @@ function nodeRequest(url, options = {}, body) {
 
 const interceptor = new MockpitInterceptor();
 interceptor.useHandlers([
-  mock.get("/api/http", async () => MockResponse.json({ ok: true, via: "node-http" })),
-  mock.post("/echo", async (req) => MockResponse.json({ received: req.bodyJson?.name ?? null })),
+  mock.get("/api/http", async () => HttpResponse.json({ ok: true, via: "node-http" })),
+  mock.post("/echo", async ({ request }) => HttpResponse.json({ received: (await request.json()).name ?? null })),
 ]);
 interceptor.apply();
 

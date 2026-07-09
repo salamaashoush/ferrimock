@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { MockpitInterceptor } from "../src/interceptor.js";
-import { http, MockResponse } from "@mockpit/node";
+import { http, HttpResponse } from "@mockpit/node";
 
 // Non-UTF8 bytes: 0xFF/0xFE/0x80 are invalid UTF-8 start/continuation bytes.
 // The old String-based transport corrupted these (from_utf8_lossy / unwrap_or_default).
@@ -17,7 +17,7 @@ describe("binary body transport", () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
       http.get("/img.png", async () =>
-        MockResponse.arrayBuffer(BINARY, {
+        HttpResponse.arrayBuffer(BINARY, {
           headers: { "content-type": "image/png" },
         })
       ),
@@ -34,7 +34,7 @@ describe("binary body transport", () => {
     interceptor = new MockpitInterceptor();
     interceptor.useHandlers([
       http.get("/api/user", async () =>
-        MockResponse.json({ name: "Jürgen", emoji: "🚀", n: 42 })
+        HttpResponse.json({ name: "Jürgen", emoji: "🚀", n: 42 })
       ),
     ]);
     interceptor.apply();

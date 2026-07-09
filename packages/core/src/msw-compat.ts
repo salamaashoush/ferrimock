@@ -19,7 +19,7 @@
  * ```ts
  * http.get('/api/data', async () => {
  *   await delay(200)
- *   return MockResponse.json({ ok: true })
+ *   return HttpResponse.json({ ok: true })
  * })
  * ```
  */
@@ -31,7 +31,7 @@ export function delay(durationOrMode?: number | "real" | "infinite"): Promise<vo
   const ms =
     typeof durationOrMode === "number"
       ? durationOrMode
-      : Math.floor(Math.random() * 300) + 100; // 'real': 100-400ms
+      : Math.floor(Math.random() * 301) + 100; // 'real': 100-400ms
 
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -51,7 +51,7 @@ const PASSTHROUGH_SYMBOL = Symbol.for("mockpit.passthrough");
  *   if (request.headers.get('x-real') === '1') {
  *     return passthrough()
  *   }
- *   return MockResponse.json({ mocked: true })
+ *   return HttpResponse.json({ mocked: true })
  * })
  * ```
  */
@@ -83,7 +83,7 @@ export function isPassthrough(value: unknown): boolean {
  * http.get('/api/proxy', async ({ request }) => {
  *   const realResponse = await fetch(bypass(request))
  *   const data = await realResponse.json()
- *   return MockResponse.json({ ...data, proxied: true })
+ *   return HttpResponse.json({ ...data, proxied: true })
  * })
  * ```
  */
@@ -96,8 +96,114 @@ export function bypass(
   return request;
 }
 
+/** Path parameters extracted by `matchRequestUrl`. */
+export type PathParams = Record<string, string | string[]>;
+
+/** Strip the query string and hash from a path (MSW's `cleanUrl`). */
+export function cleanUrl(path: string): string {
+  return path.replace(/[?#].*$/, "");
+}
+
+/**
+ * Compile an MSW-style path (`:param` segments, full-segment `*`
+ * wildcards) to a RegExp — same semantics as the native engine's
+ * path patterns. Wildcards capture into numeric params keys.
+ */
+function pathToRegex(path: string): RegExp {
+  let wildcardIndex = 0;
+  const pattern = path
+    .split("/")
+    .map((segment) => {
+      if (segment.startsWith(":") && segment.length > 1) {
+        return `(?<${segment.slice(1)}>[^/]+)`;
+      }
+      if (segment === "*") {
+        return `(?<__wc${wildcardIndex++}>.*)`;
+      }
+      return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("/");
+  return new RegExp(`^${pattern}$`);
+}
+
+function groupsToParams(
+  groups: Record<string, string | undefined> | undefined
+): PathParams {
+  const params: PathParams = {};
+  for (const [name, value] of Object.entries(groups ?? {})) {
+    if (value === undefined) continue;
+    const key = /^__wc\d+$/.test(name) ? name.slice(4) : name;
+    try {
+      params[key] = decodeURIComponent(value);
+    } catch {
+      params[key] = value;
+    }
+  }
+  return params;
+}
+
+/**
+ * Match a URL against an MSW-style path predicate (MSW's
+ * `matchRequestUrl`). Returns whether it matched and any extracted
+ * path parameters.
+ *
+ * @param url - The request URL.
+ * @param path - String path (`/users/:id`, absolute URL, `*` wildcards)
+ *   or RegExp (tested against the pathname).
+ * @param baseUrl - Base for resolving a relative string path's host
+ *   (defaults to matching any host).
+ */
+export function matchRequestUrl(
+  url: URL,
+  path: string | RegExp,
+  baseUrl?: string
+): { matches: boolean; params: PathParams } {
+  if (path instanceof RegExp) {
+    const match = path.exec(url.pathname);
+    return {
+      matches: match !== null,
+      params: groupsToParams(match?.groups),
+    };
+  }
+
+  let pathname = path;
+  let expectedHost: string | undefined;
+  const absolute = /^(?:https?|wss?):\/\//.exec(path);
+  if (absolute) {
+    const rest = path.slice(absolute[0].length);
+    const slash = rest.indexOf("/");
+    expectedHost = slash === -1 ? rest : rest.slice(0, slash);
+    pathname = slash === -1 ? "/" : rest.slice(slash);
+  } else if (baseUrl) {
+    expectedHost = new URL(baseUrl).host;
+  }
+
+  if (expectedHost && expectedHost !== "*" && url.host !== expectedHost) {
+    return { matches: false, params: {} };
+  }
+
+  if (pathname === "*") {
+    return { matches: true, params: { "0": url.pathname } };
+  }
+
+  const match = pathToRegex(cleanUrl(pathname)).exec(url.pathname);
+  return {
+    matches: match !== null,
+    params: groupsToParams(match?.groups),
+  };
+}
+
 /** Header name used to mark bypassed requests. */
 export const BYPASS_HEADER = "x-mockpit-bypass";
 
 /** Header name used to signal network errors. */
 export const NETWORK_ERROR_HEADER = "x-mockpit-network-error";
+
+/** Marker header: handler called passthrough() — perform the real request. */
+export const PASSTHROUGH_HEADER = "x-mockpit-passthrough";
+
+/** Marker header: handler returned undefined — retry matching without this mock. */
+export const FALLTHROUGH_HEADER = "x-mockpit-fallthrough";
+
+/** Marker header: the original Response is stashed under this token. */
+export const STREAM_ID_HEADER = "x-mockpit-stream-id";

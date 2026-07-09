@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { MockpitServer, http, MockResponse, fake } from "@mockpit/node";
+import { MockpitServer, http, HttpResponse, fake } from "@mockpit/node";
 import { setupServer } from "msw/node";
-import { http as mswHttp, HttpResponse } from "msw";
+import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
 
 const N = 2000;
@@ -18,7 +18,7 @@ describe("MSW vs Mockpit comparison", () => {
   it("MSW - static JSON handler", async () => {
     const server = setupServer(
       mswHttp.get("http://127.0.0.1:9999/api/bench", () => {
-        return HttpResponse.json({ id: "123", name: "John", source: "msw" });
+        return mswHttpResponse.json({ id: "123", name: "John", source: "msw" });
       })
     );
     server.listen({ onUnhandledRequest: "bypass" });
@@ -43,7 +43,7 @@ describe("MSW vs Mockpit comparison", () => {
   it("MSW - handler with faker.js", async () => {
     const server = setupServer(
       mswHttp.get("http://127.0.0.1:9999/api/bench", () => {
-        return HttpResponse.json({
+        return mswHttpResponse.json({
           id: faker.string.uuid(),
           name: faker.person.fullName(),
           email: faker.internet.email(),
@@ -69,7 +69,7 @@ describe("MSW vs Mockpit comparison", () => {
   it("MSW - handler with path params", async () => {
     const server = setupServer(
       mswHttp.get("http://127.0.0.1:9999/api/users/:id", ({ params }) => {
-        return HttpResponse.json({ id: params.id, name: "John" });
+        return mswHttpResponse.json({ id: params.id, name: "John" });
       })
     );
     server.listen({ onUnhandledRequest: "bypass" });
@@ -142,7 +142,7 @@ describe("MSW vs Mockpit comparison", () => {
     const server = new MockpitServer();
     server.useHandlers([
       http.get("/api/bench", async () =>
-        MockResponse.json({ id: "123", name: "John", source: "mockpit-handler" })
+        HttpResponse.json({ id: "123", name: "John", source: "mockpit-handler" })
       ),
     ]);
     const url = await server.listen();
@@ -163,7 +163,7 @@ describe("MSW vs Mockpit comparison", () => {
     const server = new MockpitServer();
     server.useHandlers([
       http.get("/api/bench", async () =>
-        MockResponse.json({
+        HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),
@@ -189,7 +189,7 @@ describe("MSW vs Mockpit comparison", () => {
     const server = new MockpitServer();
     server.useHandlers([
       http.get("/api/bench", async () =>
-        MockResponse.json({
+        HttpResponse.json({
           id: faker.string.uuid(),
           name: faker.person.fullName(),
           email: faker.internet.email(),
@@ -215,7 +215,7 @@ describe("MSW vs Mockpit comparison", () => {
     const server = new MockpitServer();
     server.useHandlers([
       http.get("/api/users/:id", async (req) =>
-        MockResponse.json({ id: req.params.id, name: "John" })
+        HttpResponse.json({ id: req.params.id, name: "John" })
       ),
     ]);
     const url = await server.listen();

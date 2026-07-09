@@ -21,6 +21,8 @@
 
 import { MockpitInterceptor } from "@mockpit/core";
 
+let playwrightWsCounter = 0;
+
 // ===== Route helpers =====
 
 /**
@@ -67,6 +69,145 @@ export async function routeContext(
   });
 }
 
+/**
+ * Wire mockpit's `ws.link` handlers into Playwright via
+ * page.routeWebSocket(). Matched connections get MSW-shaped
+ * `{ client, server, params }` objects built over Playwright's
+ * WebSocketRoute; unmatched connections pass through to the real
+ * server.
+ *
+ * Forwarding mirrors the Node lane: after `server.connect()`, client
+ * frames flow to the real server and server frames to the page unless a
+ * `message` listener calls `event.preventDefault()`.
+ */
+export async function routeWebSocketPage(
+  page: any,
+  interceptor: MockpitInterceptor
+): Promise<void> {
+  await page.routeWebSocket("**/*", (wsRoute: any) => {
+    const url = new URL(wsRoute.url());
+    const handlers = interceptor.wsRegistry
+      .all()
+      .filter((handler) => handler.parse(url).matches);
+
+    if (handlers.length === 0) {
+      wsRoute.connectToServer();
+      return;
+    }
+
+    type Listener = (event: any) => void;
+    const clientListeners = new Map<string, Listener[]>();
+    const serverListeners = new Map<string, Listener[]>();
+    let serverRoute: any = null;
+
+    const makeEvent = (type: string, data?: unknown) => {
+      const event: any = {
+        type,
+        data,
+        defaultPrevented: false,
+        preventDefault() {
+          event.defaultPrevented = true;
+        },
+        stopPropagation() {},
+        stopImmediatePropagation() {},
+      };
+      return event;
+    };
+
+    const dispatch = (
+      listeners: Map<string, Listener[]>,
+      type: string,
+      data?: unknown
+    ) => {
+      const event = makeEvent(type, data);
+      for (const listener of listeners.get(type) ?? []) {
+        listener(event);
+      }
+      return event.defaultPrevented;
+    };
+
+    wsRoute.onMessage((message: unknown) => {
+      const prevented = dispatch(clientListeners, "message", message);
+      if (!prevented && serverRoute) {
+        serverRoute.send(message);
+      }
+    });
+    wsRoute.onClose((code?: number, reason?: string) => {
+      const event = makeEvent("close");
+      event.code = code;
+      event.reason = reason;
+      for (const listener of clientListeners.get("close") ?? []) {
+        listener(event);
+      }
+    });
+
+    const client = {
+      id: `pw-ws:${(playwrightWsCounter++).toString(16)}`,
+      url,
+      send(data: unknown) {
+        wsRoute.send(data);
+      },
+      close(code?: number, reason?: string) {
+        wsRoute.close({ code, reason });
+      },
+      addEventListener(type: string, listener: Listener) {
+        const list = clientListeners.get(type) ?? [];
+        list.push(listener);
+        clientListeners.set(type, list);
+      },
+      removeEventListener(type: string, listener: Listener) {
+        const list = clientListeners.get(type) ?? [];
+        clientListeners.set(
+          type,
+          list.filter((entry) => entry !== listener)
+        );
+      },
+    };
+
+    const server = {
+      connect() {
+        if (serverRoute) return;
+        serverRoute = wsRoute.connectToServer();
+        serverRoute.onMessage((message: unknown) => {
+          const prevented = dispatch(serverListeners, "message", message);
+          if (!prevented) {
+            wsRoute.send(message);
+          }
+        });
+        serverRoute.onClose((code?: number, reason?: string) => {
+          const prevented = dispatch(serverListeners, "close");
+          if (!prevented) {
+            wsRoute.close({ code, reason });
+          }
+        });
+        dispatch(serverListeners, "open");
+      },
+      send(data: unknown) {
+        serverRoute?.send(data);
+      },
+      close() {
+        serverRoute?.close();
+      },
+      addEventListener(type: string, listener: Listener) {
+        const list = serverListeners.get(type) ?? [];
+        list.push(listener);
+        serverListeners.set(type, list);
+      },
+      removeEventListener(type: string, listener: Listener) {
+        const list = serverListeners.get(type) ?? [];
+        serverListeners.set(
+          type,
+          list.filter((entry) => entry !== listener)
+        );
+      },
+    };
+
+    for (const handler of handlers) {
+      handler.run({ client, server, info: { protocols: undefined } } as any);
+    }
+  });
+}
+
 async function matchPlaywrightRoute(route: any, interceptor: MockpitInterceptor) {
   const request = route.request();
   const url = new URL(request.url());
@@ -80,9 +221,9 @@ async function matchPlaywrightRoute(route: any, interceptor: MockpitInterceptor)
     headers[k] = String(v);
   }
 
-  let body: string | undefined;
+  let body: Uint8Array | undefined;
   try {
-    body = request.postData() ?? undefined;
+    body = request.postDataBuffer() ?? undefined;
   } catch {}
 
   return interceptor.matchRequest(method, path, query, headers, body);
@@ -141,6 +282,7 @@ export function mockpitFixtures(options: MockpitFixtureOptions = {}) {
       ) => {
         if (scope === "page") {
           await routePage(page, mocks);
+          await routeWebSocketPage(page, mocks);
         }
         await use(page);
       },

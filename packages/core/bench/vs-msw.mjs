@@ -13,7 +13,7 @@
 // Run:  node packages/core/bench/vs-msw.mjs   (from repo root)
 
 import { MockpitInterceptor } from "@mockpit/core";
-import { http as mock, MockResponse } from "@mockpit/node";
+import { http as mock, HttpResponse as mockHttpResponse } from "@mockpit/node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
@@ -55,13 +55,13 @@ const scenarios = {
     check: (j) => j.ok === true,
   },
   "GET handler + path param (JS handler both)": {
-    mockpit: (ic) => ic.useHandlers([mock.get("/users/:id", async (req) => MockResponse.json({ id: req.param("id") }))]),
+    mockpit: (ic) => ic.useHandlers([mock.get("/users/:id", async ({ params }) => mockHttpResponse.json({ id: params.id }))]),
     msw: () => mswHttp.get(`${BASE}/users/:id`, ({ params }) => HttpResponse.json({ id: params.id })),
     call: () => fetch(`${BASE}/users/42`),
     check: (j) => j.id === "42",
   },
   "POST + JSON body echo (JS handler both)": {
-    mockpit: (ic) => ic.useHandlers([mock.post("/echo", async (req) => MockResponse.json({ got: req.bodyJson?.name }))]),
+    mockpit: (ic) => ic.useHandlers([mock.post("/echo", async ({ request }) => mockHttpResponse.json({ got: (await request.json()).name }))]),
     msw: () => mswHttp.post(`${BASE}/echo`, async ({ request }) => HttpResponse.json({ got: (await request.json()).name })),
     call: () => fetch(`${BASE}/echo`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"name":"ada"}' }),
     check: (j) => j.got === "ada",

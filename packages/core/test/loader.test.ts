@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { MockpitServer } from "@mockpit/node";
-import { loadMocksDir } from "@mockpit/core";
+import { loadMocksDir } from "../src/index.js";
 import { resolve } from "node:path";
 
 const MOCKS_DIR = resolve(import.meta.dir, "fixtures/mocks");
