@@ -700,6 +700,7 @@ async fn test_validation_result_formatting() {
             snippet: None,
             suggestion: None,
         }],
+        handler_count: None,
     };
 
     let formatted_errors = result.format_errors();

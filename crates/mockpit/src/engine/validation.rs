@@ -62,6 +62,7 @@ impl MockValidator {
                         line_number: None,
                     }],
                     warnings: vec![],
+                    handler_count: None,
                 };
             }
         };
@@ -73,6 +74,9 @@ impl MockValidator {
                 .map_err(|e| crate::mp_err!("JSON parse error: {e}")),
             Some("yaml" | "yml") => serde_yaml::from_str::<MockCollectionConfig>(&content)
                 .map_err(|e| crate::mp_err!("YAML parse error: {e}")),
+            Some("js" | "mjs" | "ts" | "mts") => {
+                return self.validate_script_file(path).await;
+            }
             _ => {
                 return ValidationResult {
                     file_path,
@@ -81,10 +85,13 @@ impl MockValidator {
                         error_type: ErrorType::UnsupportedFormat,
                         message: format!("Unsupported file format: {extension:?}"),
                         snippet: None,
-                        suggestion: Some("Use .json, .yaml, or .yml extension".to_string()),
+                        suggestion: Some(
+                            "Use .json, .yaml, .yml, .js, .mjs, .ts, or .mts extension".to_string(),
+                        ),
                         line_number: None,
                     }],
                     warnings: vec![],
+                    handler_count: None,
                 };
             }
         };
@@ -111,8 +118,75 @@ impl MockValidator {
                         line_number,
                     }],
                     warnings: vec![],
+                    handler_count: None,
                 }
             }
+        }
+    }
+
+    /// Validate a script mock file (`.js`/`.mjs`/`.ts`/`.mts`) by
+    /// bundling and evaluating it on the QuickJS engine — the same path
+    /// `mock serve` uses to load it. Errors carry source locations
+    /// remapped through the bundle's sourcemap.
+    #[cfg(feature = "scripting")]
+    async fn validate_script_file(&self, path: &Path) -> ValidationResult {
+        let host = crate::scripting::ScriptHost::new();
+        match host.load_file(path, None).await {
+            Ok(defs) => {
+                let warnings = if defs.is_empty() {
+                    vec![ValidationWarning {
+                        mock_id: None,
+                        message: "Script evaluated but registered no handlers".to_string(),
+                        warning_type: WarningType::EmptyScript,
+                        line_number: None,
+                        snippet: None,
+                        suggestion: Some(
+                            "Register handlers with http.*/graphql.*/ws.*/sse calls".to_string(),
+                        ),
+                    }]
+                } else {
+                    vec![]
+                };
+                ValidationResult {
+                    file_path: Some(path.to_path_buf()),
+                    errors: vec![],
+                    warnings,
+                    handler_count: Some(defs.len()),
+                }
+            }
+            Err(e) => ValidationResult {
+                file_path: Some(path.to_path_buf()),
+                errors: vec![ValidationError {
+                    mock_id: None,
+                    error_type: ErrorType::ScriptError,
+                    message: e.to_string(),
+                    snippet: None,
+                    suggestion: None,
+                    line_number: None,
+                }],
+                warnings: vec![],
+                handler_count: None,
+            },
+        }
+    }
+
+    #[cfg(not(feature = "scripting"))]
+    async fn validate_script_file(&self, path: &Path) -> ValidationResult {
+        ValidationResult {
+            file_path: Some(path.to_path_buf()),
+            errors: vec![ValidationError {
+                mock_id: None,
+                error_type: ErrorType::ScriptError,
+                message: "Script mock validation requires the `scripting` feature".to_string(),
+                snippet: None,
+                suggestion: Some(
+                    "Build mockpit with the `scripting` feature to validate script mocks"
+                        .to_string(),
+                ),
+                line_number: None,
+            }],
+            warnings: vec![],
+            handler_count: None,
         }
     }
 
@@ -147,6 +221,7 @@ impl MockValidator {
                         line_number: None,
                     }],
                     warnings: vec![],
+                    handler_count: None,
                 };
             }
         };
@@ -170,6 +245,7 @@ impl MockValidator {
                         line_number,
                     }],
                     warnings: vec![],
+                    handler_count: None,
                 }
             }
         }
@@ -194,6 +270,7 @@ impl MockValidator {
                         line_number: None,
                     }],
                     warnings: vec![],
+                    handler_count: None,
                 });
                 return results;
             }
@@ -208,7 +285,10 @@ impl MockValidator {
             }
 
             let extension = path.extension().and_then(|e| e.to_str());
-            if matches!(extension, Some("json" | "yaml" | "yml")) {
+            if matches!(
+                extension,
+                Some("json" | "yaml" | "yml" | "js" | "mjs" | "ts" | "mts")
+            ) {
                 results.push(self.validate_file(&path).await);
             }
         }
@@ -863,6 +943,7 @@ impl MockValidator {
             file_path,
             errors,
             warnings,
+            handler_count: None,
         }
     }
 
@@ -1287,6 +1368,9 @@ pub struct ValidationResult {
     pub errors: Vec<ValidationError>,
     /// List of warnings found
     pub warnings: Vec<ValidationWarning>,
+    /// Handlers registered by a script mock file (`.js`/`.ts`), which is
+    /// validated by evaluating it; declarative files report None.
+    pub handler_count: Option<usize>,
 }
 
 impl ValidationResult {
@@ -1543,6 +1627,8 @@ pub enum ErrorType {
     InvalidPatchHeaderName,
     /// Invalid ws/sse streaming configuration
     InvalidStreamingConfig,
+    /// Script mock file failed to bundle or evaluate
+    ScriptError,
 }
 
 impl ErrorType {
@@ -1570,6 +1656,7 @@ impl ErrorType {
             ErrorType::InvalidPatchRegex => "E019".to_string(),
             ErrorType::InvalidPatchHeaderName => "E020".to_string(),
             ErrorType::InvalidStreamingConfig => "E021".to_string(),
+            ErrorType::ScriptError => "E022".to_string(),
         }
     }
 }
@@ -1585,6 +1672,8 @@ pub enum WarningType {
     OverlappingPatterns,
     /// Empty request transform section
     EmptyRequestTransform,
+    /// Script file registered no handlers
+    EmptyScript,
 }
 
 impl WarningType {
@@ -1595,6 +1684,7 @@ impl WarningType {
             WarningType::DisabledMock => "W002".to_string(),
             WarningType::OverlappingPatterns => "W003".to_string(),
             WarningType::EmptyRequestTransform => "W004".to_string(),
+            WarningType::EmptyScript => "W005".to_string(),
         }
     }
 }
@@ -1681,6 +1771,7 @@ mod tests {
                 snippet: None,
                 suggestion: None,
             }],
+            handler_count: None,
         };
 
         assert!(result.has_errors());
