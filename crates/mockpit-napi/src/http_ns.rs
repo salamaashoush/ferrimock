@@ -1,20 +1,28 @@
 //! HTTP namespace bindings: `http.get()`, `http.post()`, etc.
 
 pub(crate) use crate::handler_bridge::HandlerFnRef;
-use crate::handler_bridge::js_to_handler_bridge;
-use crate::request_context::MockpitRequest;
-use crate::types::JsHandlerResponse;
+use crate::handler_bridge::{HandlerBridge, js_to_handler_bridge};
+use crate::request_context::{HandlerKind, RequestInfo};
+use crate::types::HandlerResponse;
 use mockpit::handler;
 use mockpit::types::MockDefinition;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::sync::Arc;
 
+/// Handler registration options (MSW's third argument).
+#[napi(object)]
+#[derive(Default)]
+pub struct RequestHandlerOptions {
+    /// Deactivate the handler after its first successful response.
+    pub once: Option<bool>,
+}
+
 /// Internal holder for a handler-based MockDefinition.
 ///
 /// Created by `http.get()`, `http.post()`, etc. and consumed by `MockpitServer.useHandlers()`.
 #[napi]
-pub struct JsHandler {
+pub struct RequestHandler {
     pub(crate) inner: Option<MockDefinition>,
     /// FunctionRef for direct same-thread handler calls (interceptor fast path).
     /// Stored separately from the MockDefinition because FunctionRef is napi-specific.
@@ -22,7 +30,7 @@ pub struct JsHandler {
 }
 
 #[napi]
-impl JsHandler {
+impl RequestHandler {
     /// Get the mock ID for this handler.
     #[napi(getter)]
     pub fn id(&self) -> Option<String> {
@@ -30,7 +38,7 @@ impl JsHandler {
     }
 }
 
-impl JsHandler {
+impl RequestHandler {
     /// Take the inner MockDefinition, leaving None.
     pub(crate) fn take(&mut self) -> Result<MockDefinition> {
         self.inner
@@ -44,135 +52,124 @@ impl JsHandler {
     }
 }
 
-fn build_handler(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-    builder: fn(&str, mockpit::types::HandlerFn) -> MockDefinition,
-) -> Result<JsHandler> {
-    use mockpit::types::UrlPattern;
-    use smallvec::SmallVec;
+pub(crate) fn finish_handler(
+    bridge: HandlerBridge,
+    mut mock_def: MockDefinition,
+    options: Option<RequestHandlerOptions>,
+) -> RequestHandler {
+    mock_def.once = options.and_then(|o| o.once).unwrap_or(false);
+    RequestHandler {
+        inner: Some(mock_def),
+        fn_ref: Some(bridge.fn_ref),
+    }
+}
 
-    let bridge = js_to_handler_bridge(handler_fn)?;
+/// JS RegExp flags filtered to the set the regex crate honors inline
+/// (`i`, `m`, `s`); `g`/`y` don't affect matching and `u`/`v` are the
+/// regex crate's default Unicode semantics.
+pub(crate) fn compile_js_regex(source: &str, flags: &str) -> Result<regex::Regex> {
+    let inline: String = flags.chars().filter(|c| "ims".contains(*c)).collect();
+    let pattern = if inline.is_empty() {
+        source.to_string()
+    } else {
+        format!("(?{inline}){source}")
+    };
+    regex::Regex::new(&pattern).map_err(|e| Error::from_reason(format!("Invalid RegExp: {e}")))
+}
 
-    // Check if path is a string or RegExp
+/// Extract `(source, flags)` when the value is a JS RegExp.
+pub(crate) fn as_regexp(env: &Env, value: &Unknown) -> Result<Option<(String, String)>> {
     let mut value_type = napi::sys::ValueType::napi_undefined;
     #[allow(unsafe_code)]
     unsafe {
-        napi::sys::napi_typeof(env.raw(), path.raw(), &mut value_type);
+        napi::sys::napi_typeof(env.raw(), value.raw(), &mut value_type);
     }
+    if value_type != napi::sys::ValueType::napi_object {
+        return Ok(None);
+    }
+    #[allow(unsafe_code)]
+    let obj: Object = unsafe { FromNapiValue::from_napi_value(env.raw(), value.raw())? };
+    let Some(source) = obj.get::<String>("source")? else {
+        return Ok(None);
+    };
+    let flags: String = obj.get("flags")?.unwrap_or_default();
+    Ok(Some((source, flags)))
+}
 
-    let mock_def = if value_type == napi::sys::ValueType::napi_string {
-        #[allow(unsafe_code)]
-        let path_str: String = unsafe { FromNapiValue::from_napi_value(env.raw(), path.raw())? };
-        builder(&path_str, bridge.handler_fn)
-    } else {
-        // Assume RegExp — extract source and flags properties
-        #[allow(unsafe_code)]
-        let obj: Object = unsafe { FromNapiValue::from_napi_value(env.raw(), path.raw())? };
-        let source: String = obj
-            .get("source")?
-            .ok_or_else(|| Error::from_reason("Not a RegExp: missing 'source'"))?;
-        let flags: String = obj.get("flags")?.unwrap_or_default();
+fn build_handler(
+    env: &Env,
+    path: Unknown,
+    handler_fn: Function<'_, RequestInfo, Promise<Option<HandlerResponse>>>,
+    options: Option<RequestHandlerOptions>,
+    builder: fn(&str, mockpit::types::HandlerFn) -> MockDefinition,
+) -> Result<RequestHandler> {
+    use mockpit::types::UrlPattern;
+    use smallvec::SmallVec;
 
-        let pattern = if flags.contains('i') {
-            format!("(?i){source}")
-        } else {
-            source
-        };
-        let regex = regex::Regex::new(&pattern)
-            .map_err(|e| Error::from_reason(format!("Invalid RegExp: {e}")))?;
+    let bridge = js_to_handler_bridge(handler_fn, HandlerKind::Http)?;
 
-        let mut mock = builder("*", bridge.handler_fn);
+    let mock_def = if let Some((source, flags)) = as_regexp(env, &path)? {
+        let regex = compile_js_regex(&source, &flags)?;
+        let mut mock = builder("*", bridge.handler_fn.clone());
         mock.request.url_patterns = SmallVec::from_elem(UrlPattern::Regex(regex), 1);
         mock
+    } else {
+        #[allow(unsafe_code)]
+        let path_str: String = unsafe { FromNapiValue::from_napi_value(env.raw(), path.raw())? };
+        builder(&path_str, bridge.handler_fn.clone())
     };
 
-    Ok(JsHandler {
-        inner: Some(mock_def),
-        fn_ref: Some(bridge.fn_ref),
-    })
+    Ok(finish_handler(bridge, mock_def, options))
 }
 
-/// Create a GET handler mock.
-///
-/// @param path - URL pattern string (e.g., `/users/:id`) or RegExp.
-/// @param handler - Async function receiving request context, returning response or null.
-#[napi(namespace = "http")]
-pub fn get(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::get)
+macro_rules! http_method {
+    ($name:ident, $builder:path, $doc:literal) => {
+        #[doc = $doc]
+        ///
+        /// @param path - URL pattern string (`/users/:id`, full URL) or RegExp.
+        /// @param handler - Function receiving the resolver info, returning a response,
+        ///   or null/undefined to fall through to the next matching mock.
+        /// @param options - Optional `{ once: true }` for one-time handlers.
+        #[napi(namespace = "http")]
+        pub fn $name(
+            env: &Env,
+            path: Unknown,
+            handler_fn: Function<'_, RequestInfo, Promise<Option<HandlerResponse>>>,
+            options: Option<RequestHandlerOptions>,
+        ) -> Result<RequestHandler> {
+            build_handler(env, path, handler_fn, options, $builder)
+        }
+    };
 }
 
-/// Create a POST handler mock.
-#[napi(namespace = "http")]
-pub fn post(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::post)
-}
-
-/// Create a PUT handler mock.
-#[napi(namespace = "http")]
-pub fn put(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::put)
-}
+http_method!(get, handler::http::get, "Create a GET handler mock.");
+http_method!(post, handler::http::post, "Create a POST handler mock.");
+http_method!(put, handler::http::put, "Create a PUT handler mock.");
+http_method!(patch, handler::http::patch, "Create a PATCH handler mock.");
+http_method!(head, handler::http::head, "Create a HEAD handler mock.");
+http_method!(
+    options,
+    handler::http::options,
+    "Create an OPTIONS handler mock."
+);
+http_method!(
+    all,
+    handler::http::all,
+    "Create a handler mock matching any HTTP method."
+);
 
 /// Create a DELETE handler mock.
+///
+/// @param path - URL pattern string (`/users/:id`, full URL) or RegExp.
+/// @param handler - Function receiving the resolver info, returning a response,
+///   or null/undefined to fall through to the next matching mock.
+/// @param options - Optional `{ once: true }` for one-time handlers.
 #[napi(namespace = "http", js_name = "delete")]
 pub fn delete_handler(
     env: &Env,
     path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::delete)
-}
-
-/// Create a PATCH handler mock.
-#[napi(namespace = "http")]
-pub fn patch(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::patch)
-}
-
-/// Create a HEAD handler mock.
-#[napi(namespace = "http")]
-pub fn head(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::head)
-}
-
-/// Create an OPTIONS handler mock.
-#[napi(namespace = "http")]
-pub fn options(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::options)
-}
-
-/// Create a handler mock matching any HTTP method.
-#[napi(namespace = "http")]
-pub fn all(
-    env: &Env,
-    path: Unknown,
-    handler_fn: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<JsHandler> {
-    build_handler(env, path, handler_fn, handler::http::all)
+    handler_fn: Function<'_, RequestInfo, Promise<Option<HandlerResponse>>>,
+    options: Option<RequestHandlerOptions>,
+) -> Result<RequestHandler> {
+    build_handler(env, path, handler_fn, options, handler::http::delete)
 }

@@ -1,9 +1,9 @@
 //! MockpitServer class — the main entry point for Node.js users.
 
 use crate::handler_bridge::HandlerFnRef;
-use crate::http_ns::JsHandler;
-use crate::request_context::MockpitRequest;
-use crate::types::JsHandlerResponse;
+use crate::http_ns::RequestHandler;
+use crate::request_context::{HandlerKind, ResolverArg};
+use crate::types::HandlerResponse;
 use mockpit::engine::types::ResponseGeneratorExt;
 use mockpit::engine::{MockMatcher, MockRegistry};
 use mockpit::types::{BodySource, DynamicResponse, RequestContext};
@@ -13,6 +13,10 @@ use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Scope tag for handlers registered via `use()` so `resetRuntimeHandlers`
+/// removes only them (MSW's resetHandlers keeps initial handlers).
+const RUNTIME_SCOPE: &str = "mockpit:runtime";
+
 /// High-performance HTTP mock server.
 ///
 /// Supports both MSW-style handler functions and declarative YAML/JSON mocks.
@@ -21,13 +25,13 @@ use std::sync::Arc;
 ///
 /// @example
 /// ```ts
-/// import { http, MockResponse, MockpitServer } from '@mockpit/node'
+/// import { http, HttpResponse, MockpitServer } from '@mockpit/node'
 ///
 /// const server = new MockpitServer()
 ///
 /// server.useHandlers([
 ///   http.get('/api/users/:id', ({ params }) => {
-///     return MockResponse.json({ id: params.id, name: 'John' })
+///     return HttpResponse.json({ id: params.id, name: 'John' })
 ///   }),
 /// ])
 ///
@@ -72,7 +76,7 @@ impl MockpitServer {
     ///
     /// @param handlers - Array of handlers created by `http.get()`, `http.post()`, etc.
     #[napi]
-    pub fn use_handlers(&mut self, handlers: Vec<&mut JsHandler>) -> Result<()> {
+    pub fn use_handlers(&mut self, handlers: Vec<&mut RequestHandler>) -> Result<()> {
         for handler in handlers {
             let fn_ref = handler.take_fn_ref();
             let mock_def = handler.take()?;
@@ -89,17 +93,18 @@ impl MockpitServer {
 
     /// Add runtime handlers (MSW's `server.use()`).
     ///
-    /// Runtime handlers take priority over initial handlers (priority 200 vs 100).
-    /// They are added to the same registry and participate in matching.
+    /// Runtime handlers take priority over initial handlers (priority 200 vs 100)
+    /// and are scoped so `resetRuntimeHandlers()` removes only them.
     ///
     /// @param handlers - Array of handlers created by `http.get()`, `http.post()`, etc.
     #[napi(js_name = "use")]
-    pub fn use_runtime(&mut self, handlers: Vec<&mut JsHandler>) -> Result<()> {
+    pub fn use_runtime(&mut self, handlers: Vec<&mut RequestHandler>) -> Result<()> {
         for handler in handlers {
             let fn_ref = handler.take_fn_ref();
             let mut mock_def = handler.take()?;
             // Runtime handlers get higher priority than initial handlers
             mock_def.priority = 200;
+            mock_def.scope = Some(RUNTIME_SCOPE.into());
             let mock_id = mock_def.id.to_string();
             self.registry.add_mock(mock_def);
 
@@ -127,9 +132,30 @@ impl MockpitServer {
         Ok(())
     }
 
-    /// Remove all handler-based mocks (those with IDs starting with "handler:").
-    ///
-    /// Declarative mocks loaded from files are not affected.
+    /// MSW's `server.resetHandlers()`: remove runtime handlers added via
+    /// `use()` and restore initial handlers (re-enabling consumed one-time
+    /// handlers). Handlers registered via `useHandlers()` stay.
+    #[napi]
+    pub fn reset_runtime_handlers(&self) -> Result<()> {
+        let runtime_ids: Vec<String> = self
+            .registry
+            .get_all_mocks()
+            .iter()
+            .filter(|m| m.scope.as_deref() == Some(RUNTIME_SCOPE))
+            .map(|m| m.id.to_string())
+            .collect();
+        for id in &runtime_ids {
+            self.registry.remove_mock(id);
+            self.handler_refs.write().unwrap().remove(id);
+        }
+        self.matcher.clear_cache();
+        self.restore_handlers()
+    }
+
+    /// Remove ALL handler-based mocks (initial and runtime). Used by
+    /// MSW's `server.resetHandlers(...nextHandlers)` overload, which
+    /// replaces the initial set. Declarative mocks loaded from files are
+    /// not affected.
     #[napi]
     pub fn reset_handlers(&self) -> Result<()> {
         let handler_ids: Vec<String> = self
@@ -154,9 +180,14 @@ impl MockpitServer {
     /// @returns Number of mocks loaded.
     #[napi]
     pub async fn load_mocks(&self, dir_path: String) -> Result<u32> {
+        // Scripts stay with the JS side: @mockpit/core's loader runs
+        // .js/.mjs mock files on V8 in this same process.
+        let options = mockpit::engine::registry::DirLoadOptions {
+            load_scripts: false,
+        };
         let count = self
             .registry
-            .load_from_directory(&dir_path)
+            .load_from_directory_with(&dir_path, options)
             .await
             .map_err(|e| Error::from_reason(format!("Failed to load mocks: {e}")))?;
         self.matcher.clear_cache();
@@ -249,10 +280,19 @@ impl MockpitServer {
         self.registry.needs_request_body()
     }
 
+    /// Whether any registered mock needs request headers (header matchers,
+    /// handler mocks, or header-referencing templates). The interceptor
+    /// skips marshalling headers when false.
+    #[napi(getter)]
+    pub fn needs_request_headers(&self) -> bool {
+        self.registry.needs_request_headers()
+    }
+
     /// List all registered handlers.
     ///
     /// Returns an array of handler info objects with id and method/path info.
-    /// Equivalent to MSW's `server.listHandlers()`.
+    /// Equivalent to MSW's `server.listHandlers()`. WebSocket mocks carry
+    /// `kind: "websocket"` (MSW's WebSocketHandler tag).
     #[napi]
     pub fn list_handlers(&self) -> Vec<HandlerInfo> {
         self.registry
@@ -262,8 +302,55 @@ impl MockpitServer {
                 id: m.id.to_string(),
                 methods: m.request.methods.iter().map(|m| m.to_string()).collect(),
                 enabled: m.enabled,
+                kind: m
+                    .streaming
+                    .as_ref()
+                    .filter(|s| s.is_ws())
+                    .map(|_| "websocket".to_string()),
             })
             .collect()
+    }
+
+    /// Every WebSocket mock matching a connection handshake, in
+    /// precedence order — the interceptor lane dispatches an intercepted
+    /// connection to ALL matching `ws` handlers (MSW semantics). No side
+    /// effects (no `once` consumption, no call tracking).
+    ///
+    /// @param url - The connection URL (`wss://host/path`).
+    #[napi]
+    pub fn match_ws_connections(&self, url: String) -> Result<Vec<WsConnectionMatch>> {
+        let uri: http::Uri = url
+            .parse()
+            .map_err(|e| Error::from_reason(format!("Invalid WebSocket URL: {e}")))?;
+        let host = uri
+            .authority()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_default();
+        let path = uri.path().to_string();
+        let query = uri.query().map(str::to_string);
+
+        let mut headers = http::HeaderMap::new();
+        if let Ok(value) = http::HeaderValue::from_str(&host) {
+            headers.insert(http::header::HOST, value);
+        }
+        headers.insert(
+            http::header::UPGRADE,
+            http::HeaderValue::from_static("websocket"),
+        );
+        headers.insert(
+            http::header::CONNECTION,
+            http::HeaderValue::from_static("Upgrade"),
+        );
+
+        Ok(self
+            .matcher
+            .find_ws_matches(&path, query.as_deref(), &headers)
+            .into_iter()
+            .map(|m| WsConnectionMatch {
+                mock_id: m.mock.id.to_string(),
+                params: m.captures.into_iter().collect(),
+            })
+            .collect())
     }
 
     /// Start the mock server on the given port.
@@ -360,9 +447,13 @@ impl MockpitServer {
     ///    - Declarative: response already built
     ///    - Handler: FunctionRef direct call (~1us)
     ///
-    /// Returns null if no mock matches.
+    /// Returns null if no mock matches. When a handler falls through
+    /// (returns null/undefined), resolves with `{ fallthrough: true,
+    /// mockId }` — re-call with that ID added to `excludeIds` to try the
+    /// next candidate (MSW semantics; the JS interceptor loops).
     #[allow(private_interfaces)] // MaybePromise is an internal raw-value wrapper
     #[napi(ts_return_type = "Promise<MatchedResponse | null>")]
+    #[allow(clippy::too_many_arguments)]
     pub fn match_request<'env>(
         &self,
         env: &'env Env,
@@ -370,12 +461,24 @@ impl MockpitServer {
         path: String,
         query: Option<String>,
         headers: Option<HashMap<String, String>>,
-        body: Option<String>,
+        body: Option<Either<String, Uint8Array>>,
+        request_id: Option<String>,
+        exclude_ids: Option<Vec<String>>,
     ) -> Result<PromiseRaw<'env, MaybePromise>> {
         let handler_refs = Arc::clone(&self.handler_refs);
         // Reuse the long-lived matcher (cheap Arc-based clone) instead of
         // building a fresh one with an empty LRU per request.
         let matcher = self.matcher.clone();
+        // Second clone captured by the JS-thread resolver: undoes `once`
+        // consumption when the handler falls through.
+        let resolver_matcher = self.matcher.clone();
+
+        // Copy the body out of JS-owned memory before crossing to tokio
+        // (a Uint8Array view must not outlive the JS callframe).
+        let body: Option<Vec<u8>> = body.map(|b| match b {
+            Either::A(s) => s.into_bytes(),
+            Either::B(arr) => arr.to_vec(),
+        });
 
         env.spawn_future_with_callback(
             // === Phase 1: Rust matching on tokio ===
@@ -396,14 +499,15 @@ impl MockpitServer {
                     }
                 }
 
-                let body_bytes = body.as_deref().map(str::as_bytes);
+                let body_bytes = body.as_deref();
 
-                let mock_match = matcher.find_match(
+                let mock_match = matcher.find_match_excluding(
                     &http_method,
                     &path,
                     query.as_deref(),
                     &header_map,
                     body_bytes,
+                    exclude_ids.as_deref().unwrap_or(&[]),
                 );
 
                 let Some(mock_match) = mock_match else {
@@ -416,7 +520,7 @@ impl MockpitServer {
 
                 if is_handler {
                     // Handler mock — build context, defer handler call to JS thread
-                    let mut context = RequestContext::from_request(
+                    let mut context = RequestContext::from_request_for_handler(
                         method.as_str(),
                         &path,
                         query.as_deref(),
@@ -429,6 +533,13 @@ impl MockpitServer {
                         status: mock_def.response.status,
                         def_headers: mock_def.response.headers.clone(),
                         context,
+                        kind: if mock_def.request.graphql_matcher.is_some() {
+                            HandlerKind::GraphQL
+                        } else {
+                            HandlerKind::Http
+                        },
+                        once: mock_def.once,
+                        request_id,
                     })
                 } else {
                     // Declarative — generate response fully on tokio
@@ -470,6 +581,9 @@ impl MockpitServer {
                         status: default_status,
                         def_headers,
                         context,
+                        kind,
+                        once,
+                        request_id,
                     } => {
                         let refs = handler_refs
                             .read()
@@ -480,7 +594,7 @@ impl MockpitServer {
 
                         // Direct napi_call_function via FunctionRef — ~1us vs ~22us TSFN
                         let func = fn_ref.borrow_back(env)?;
-                        let req = MockpitRequest::new(context);
+                        let req = ResolverArg::new(kind, context, request_id);
                         let raw_result: Unknown = func.call(req)?;
 
                         // Check if the handler returned a Promise (async handler)
@@ -500,62 +614,75 @@ impl MockpitServer {
                             #[allow(unsafe_code)]
                             let promise_raw: PromiseRaw<
                                 '_,
-                                Option<JsHandlerResponse>,
+                                Option<HandlerResponse>,
                             > = unsafe {
                                 FromNapiValue::from_napi_value(env.raw(), raw_result.raw())?
                             };
-                            let chained = promise_raw.then(move |ctx| match ctx.value {
-                                Some(js_resp) => {
-                                    let dynamic = DynamicResponse::from(js_resp);
-                                    Ok(Some(build_matched_response(
-                                        &mock_id,
-                                        default_status,
-                                        &def_headers,
-                                        dynamic,
-                                    )))
-                                }
-                                None => Ok(Some(MatchedResponse {
-                                    status: 200,
-                                    headers: HashMap::new(),
-                                    body: Uint8Array::from(Vec::new()),
-                                    mock_id: mock_id.to_string(),
-                                })),
+                            let chained = promise_raw.then(move |ctx| {
+                                Ok(Some(resolve_handler_response(
+                                    &mock_id,
+                                    default_status,
+                                    &def_headers,
+                                    ctx.value,
+                                    once,
+                                    &resolver_matcher,
+                                )))
                             })?;
                             Ok(MaybePromise(chained.value().value))
                         } else {
                             // Sync handler — extract directly, no Promise overhead
                             #[allow(unsafe_code)]
-                            let resp: Option<JsHandlerResponse> = unsafe {
+                            let resp: Option<HandlerResponse> = unsafe {
                                 FromNapiValue::from_napi_value(env.raw(), raw_result.raw())?
                             };
-                            match resp {
-                                Some(js_resp) => {
-                                    let dynamic = DynamicResponse::from(js_resp);
-                                    Ok(MaybePromise::resolved(
-                                        env,
-                                        Some(build_matched_response(
-                                            &mock_id,
-                                            default_status,
-                                            &def_headers,
-                                            dynamic,
-                                        )),
-                                    )?)
-                                }
-                                None => Ok(MaybePromise::resolved(
-                                    env,
-                                    Some(MatchedResponse {
-                                        status: 200,
-                                        headers: HashMap::new(),
-                                        body: Uint8Array::from(Vec::new()),
-                                        mock_id: mock_id.to_string(),
-                                    }),
-                                )?),
-                            }
+                            Ok(MaybePromise::resolved(
+                                env,
+                                Some(resolve_handler_response(
+                                    &mock_id,
+                                    default_status,
+                                    &def_headers,
+                                    resp,
+                                    once,
+                                    &resolver_matcher,
+                                )),
+                            )?)
                         }
                     }
                 }
             },
         )
+    }
+}
+
+/// Convert a handler's return value into the wire response. `None`
+/// (null/undefined) is MSW fall-through: the caller re-matches with this
+/// mock excluded, and a consumed `once` is undone since the handler was
+/// not used.
+fn resolve_handler_response(
+    mock_id: &str,
+    default_status: http::StatusCode,
+    def_headers: &FxHashMap<String, String>,
+    resp: Option<HandlerResponse>,
+    once: bool,
+    matcher: &MockMatcher,
+) -> MatchedResponse {
+    match resp {
+        Some(js_resp) => {
+            build_matched_response(mock_id, default_status, def_headers, js_resp.into())
+        }
+        None => {
+            if once {
+                matcher.reenable_mock(mock_id);
+            }
+            MatchedResponse {
+                status: 0,
+                status_text: None,
+                headers: HashMap::new(),
+                body: Uint8Array::from(Vec::new()),
+                mock_id: mock_id.to_string(),
+                fallthrough: Some(true),
+            }
+        }
     }
 }
 
@@ -565,6 +692,15 @@ pub struct HandlerInfo {
     pub id: String,
     pub methods: Vec<String>,
     pub enabled: bool,
+    /// `"websocket"` for WebSocket mocks (MSW's handler tag), absent otherwise.
+    pub kind: Option<String>,
+}
+
+/// One WebSocket mock matched by `matchWsConnections`.
+#[napi(object)]
+pub struct WsConnectionMatch {
+    pub mock_id: String,
+    pub params: HashMap<String, String>,
 }
 
 /// Result of matching a request against the mock registry.
@@ -575,9 +711,14 @@ pub struct HandlerInfo {
 #[napi(object)]
 pub struct MatchedResponse {
     pub status: u32,
+    /// Custom status text from the handler (Node interceptor applies it).
+    pub status_text: Option<String>,
     pub headers: HashMap<String, String>,
     pub body: Uint8Array,
     pub mock_id: String,
+    /// Set when a handler returned null/undefined: re-match with this
+    /// mock's ID excluded (MSW fall-through).
+    pub fallthrough: Option<bool>,
 }
 
 // -- Internal types --
@@ -620,6 +761,9 @@ enum MatchPhaseResult {
         status: http::StatusCode,
         def_headers: FxHashMap<String, String>,
         context: RequestContext,
+        kind: HandlerKind,
+        once: bool,
+        request_id: Option<String>,
     },
 }
 
@@ -642,9 +786,11 @@ fn build_matched_response(
     let body = Uint8Array::from(dynamic.body.to_vec());
     MatchedResponse {
         status: u32::from(status),
+        status_text: dynamic.status_text,
         headers,
         body,
         mock_id: mock_id.to_string(),
+        fallthrough: None,
     }
 }
 
@@ -655,31 +801,12 @@ struct ServerState {
     matcher: MockMatcher,
 }
 
-/// Catch-all handler — delegates to the canonical `services::serve::respond`
-/// so the standalone server and the CLI share one mock-response implementation.
+/// Catch-all handler — delegates to the canonical
+/// `services::serve::handle_request` so the standalone server and the
+/// CLI share one mock implementation (including WS upgrades and SSE).
 async fn mock_handler(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
-    let method = req.method().clone();
-    let uri = req.uri().clone();
-    let headers = req.headers().clone();
-
-    let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
-        .await
-        .ok();
-    let body_ref = body_bytes
-        .as_ref()
-        .filter(|b| !b.is_empty())
-        .map(|b| b.as_ref());
-
-    mockpit::services::serve::respond(
-        &state.matcher,
-        &method,
-        uri.path(),
-        uri.query(),
-        &headers,
-        body_ref,
-    )
-    .await
+    mockpit::services::serve::handle_request(&state.matcher, req).await
 }

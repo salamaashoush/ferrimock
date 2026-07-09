@@ -18,4 +18,6 @@ mod request_context;
 mod response_ns;
 mod server;
 mod services;
+mod sse_ns;
 mod types;
+mod ws_ns;

@@ -1,7 +1,8 @@
 //! Bridge JS handler functions to Rust `HandlerFn` via `ThreadsafeFunction`.
 //!
-//! Uses MockpitRequest (lazy class) instead of JsRequestContext (eager object)
-//! to avoid constructing a full JS object with all headers/query/body per request.
+//! Handlers receive the lazy resolver-info class matching their kind
+//! (`RequestInfo` for HTTP, `GraphQLRequestInfo` for GraphQL) instead
+//! of an eager object, so headers/query/body only convert on access.
 //!
 //! Two call paths:
 //! - **TSFN path** (server mode): cross-thread call via ThreadsafeFunction (~22us overhead)
@@ -11,17 +12,18 @@
 //! The deferred resolver callback has Env access, so we can borrow_back the FunctionRef
 //! and call the JS handler directly without the UV event loop queue+wakeup overhead.
 
-use crate::request_context::MockpitRequest;
-use crate::types::JsHandlerResponse;
+use crate::request_context::{HandlerKind, ResolverArg};
+use crate::types::HandlerResponse;
 use mockpit::types::{DynamicResponse, HandlerFn, RequestContext};
 use napi::bindgen_prelude::*;
 use std::sync::Arc;
 
-/// TSFN type: handler receives MockpitRequest (lazy class), returns Promise<response>.
+/// TSFN type: handler receives the resolver-info class for its kind,
+/// returns Promise<response>.
 pub type HandlerCallbackTsfn = napi::threadsafe_function::ThreadsafeFunction<
-    MockpitRequest,
-    Promise<Option<JsHandlerResponse>>,
-    MockpitRequest,
+    ResolverArg,
+    Promise<Option<HandlerResponse>>,
+    ResolverArg,
     Status,
     false, // callee_handled
     true,  // weak
@@ -31,10 +33,10 @@ pub type HandlerCallbackTsfn = napi::threadsafe_function::ThreadsafeFunction<
 /// FunctionRef for direct same-thread handler calls (interceptor fast path).
 ///
 /// Returns `Unknown` so we can inspect the raw JS return value.
-/// Sync handlers return the JsHandlerResponse object directly.
+/// Sync handlers return the HandlerResponse object directly.
 /// Async handlers return a Promise — we detect this with napi_is_promise
 /// and chain .then() to extract the value.
-pub type HandlerFnRef = FunctionRef<MockpitRequest, Unknown<'static>>;
+pub type HandlerFnRef = FunctionRef<ResolverArg, Unknown<'static>>;
 
 /// Result of converting a JS handler function — contains both TSFN and FunctionRef.
 pub struct HandlerBridge {
@@ -43,20 +45,28 @@ pub struct HandlerBridge {
 }
 
 /// Convert a JS function into both a TSFN-based `HandlerFn` and a `FunctionRef`.
-pub fn js_to_handler_bridge(
-    callback: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
+///
+/// Generic over the declared argument type: the factories type the
+/// callback for TS declarations, but the bridge is type-erased.
+pub fn js_to_handler_bridge<Arg: JsValuesTupleIntoVec>(
+    callback: Function<'_, Arg, Promise<Option<HandlerResponse>>>,
+    kind: HandlerKind,
 ) -> Result<HandlerBridge> {
-    // Create FunctionRef with Unknown return type so we can inspect the raw value.
-    // The underlying napi_ref is type-erased — phantom Return only affects call().
     use napi::JsValue;
     let v = callback.value();
     #[allow(unsafe_code)]
-    // SAFETY: v.value is a valid napi_value from the Function parameter
+    // SAFETY: v.value is a valid napi_value from the Function parameter;
+    // the Arg/Return generics are phantom (only affect call typing).
     let fn_ref: HandlerFnRef = unsafe { FromNapiValue::from_napi_value(v.env, v.value)? };
     let fn_ref = Arc::new(fn_ref);
 
-    // Build TSFN for server mode (cross-thread calls)
-    let tsfn: HandlerCallbackTsfn = callback
+    // Build TSFN for server mode (cross-thread calls), re-typed to the
+    // erased resolver argument.
+    #[allow(unsafe_code)]
+    // SAFETY: same napi_value; TSFN generics only affect call typing.
+    let erased: Function<'_, ResolverArg, Promise<Option<HandlerResponse>>> =
+        unsafe { FromNapiValue::from_napi_value(v.env, v.value)? };
+    let tsfn: HandlerCallbackTsfn = erased
         .build_threadsafe_function()
         .callee_handled::<false>()
         .weak::<true>()
@@ -68,14 +78,31 @@ pub fn js_to_handler_bridge(
     let handler_fn: HandlerFn = Arc::new(move |ctx: RequestContext| {
         let tsfn = Arc::clone(&tsfn);
         Box::pin(async move {
-            // MockpitRequest is a thin wrapper -- no HashMap cloning here.
-            // Fields are converted to JS values lazily when the handler accesses them.
-            let req = MockpitRequest::new(ctx);
+            let arg = ResolverArg::new(kind, ctx, None);
 
-            match tsfn.call_async(req).await {
+            match tsfn.call_async(arg).await {
                 Ok(promise) => match promise.await {
-                    Ok(Some(resp)) => Ok(DynamicResponse::from(resp)),
-                    Ok(None) => Ok(DynamicResponse::body_only(bytes::Bytes::new())),
+                    Ok(Some(resp)) => {
+                        let dynamic = DynamicResponse::from(resp);
+                        // The stream stash lives on the interceptor side of
+                        // the boundary; it cannot be delivered over the
+                        // standalone TCP server.
+                        if dynamic
+                            .headers
+                            .as_ref()
+                            .is_some_and(|h| h.contains_key("x-mockpit-stream-id"))
+                        {
+                            return Err(mockpit::MockpitError::msg(
+                                "handler Response was routed to the interceptor stash while the \
+                                 standalone HTTP server was serving; run the TCP server without \
+                                 an active interceptor to get buffered Response bodies",
+                            ));
+                        }
+                        Ok(dynamic)
+                    }
+                    // MSW semantics: undefined/null falls through to the
+                    // next matching mock (the serve loop retries).
+                    Ok(None) => Ok(DynamicResponse::fallthrough()),
                     Err(e) => Err(mockpit::MockpitError::msg(format!("JS handler error: {e}"))),
                 },
                 Err(e) => Err(mockpit::MockpitError::msg(format!(
@@ -86,12 +113,4 @@ pub fn js_to_handler_bridge(
     });
 
     Ok(HandlerBridge { handler_fn, fn_ref })
-}
-
-/// Legacy: Convert a JS function into a Rust `HandlerFn` only (TSFN path).
-/// Used by code that doesn't need the FunctionRef fast path.
-pub fn js_to_handler_fn(
-    callback: Function<'_, MockpitRequest, Promise<Option<JsHandlerResponse>>>,
-) -> Result<HandlerFn> {
-    Ok(js_to_handler_bridge(callback)?.handler_fn)
 }

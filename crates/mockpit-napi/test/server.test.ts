@@ -3,8 +3,9 @@ import {
   MockpitServer,
   http,
   graphql,
-  MockResponse,
-  type MockpitRequest,
+  HttpResponse,
+  type RequestInfo,
+  type GraphQLRequestInfo,
 } from "../index.js";
 
 describe("MockpitServer", () => {
@@ -41,7 +42,7 @@ describe("MockpitServer", () => {
   it("handles GET with JSON response", async () => {
     server.useHandlers([
       http.get("/api/hello", async () => {
-        return MockResponse.json({ message: "Hello, World!" });
+        return HttpResponse.json({ message: "Hello, World!" });
       }),
     ]);
 
@@ -59,8 +60,8 @@ describe("MockpitServer", () => {
 
   it("extracts :param captures", async () => {
     server.useHandlers([
-      http.get("/users/:id", async (ctx: MockpitRequest) => {
-        return MockResponse.json({ userId: ctx.params.id });
+      http.get("/users/:id", async (ctx: RequestInfo) => {
+        return HttpResponse.json({ userId: ctx.params.id });
       }),
     ]);
 
@@ -75,8 +76,8 @@ describe("MockpitServer", () => {
     server.useHandlers([
       http.get(
         "/users/:userId/posts/:postId",
-        async (ctx: MockpitRequest) => {
-          return MockResponse.json({
+        async (ctx: RequestInfo) => {
+          return HttpResponse.json({
             userId: ctx.params.userId,
             postId: ctx.params.postId,
           });
@@ -94,11 +95,12 @@ describe("MockpitServer", () => {
 
   it("handles POST with JSON request body", async () => {
     server.useHandlers([
-      http.post("/api/login", async (ctx: MockpitRequest) => {
-        if (ctx.bodyJson?.username === "admin") {
-          return MockResponse.json({ token: "secret-token" });
+      http.post("/api/login", async (ctx: RequestInfo) => {
+        const login = await ctx.request.json().catch(() => null);
+        if (login?.username === "admin") {
+          return HttpResponse.json({ token: "secret-token" });
         }
-        return MockResponse.json({ error: "Forbidden" }, { status: 403 });
+        return HttpResponse.json({ error: "Forbidden" }, { status: 403 });
       }),
     ]);
 
@@ -127,8 +129,8 @@ describe("MockpitServer", () => {
 
   it("handles PUT", async () => {
     server.useHandlers([
-      http.put("/api/items/:id", async (ctx: MockpitRequest) => {
-        return MockResponse.json({ updated: ctx.params.id });
+      http.put("/api/items/:id", async (ctx: RequestInfo) => {
+        return HttpResponse.json({ updated: ctx.params.id });
       }),
     ]);
 
@@ -139,8 +141,8 @@ describe("MockpitServer", () => {
 
   it("handles DELETE", async () => {
     server.useHandlers([
-      http.delete("/api/items/:id", async (ctx: MockpitRequest) => {
-        return MockResponse.empty(204);
+      http.delete("/api/items/:id", async (ctx: RequestInfo) => {
+        return { status: 204 };
       }),
     ]);
 
@@ -150,8 +152,8 @@ describe("MockpitServer", () => {
 
   it("handles PATCH", async () => {
     server.useHandlers([
-      http.patch("/api/items/:id", async (ctx: MockpitRequest) => {
-        return MockResponse.json({ patched: true });
+      http.patch("/api/items/:id", async (ctx: RequestInfo) => {
+        return HttpResponse.json({ patched: true });
       }),
     ]);
 
@@ -164,8 +166,8 @@ describe("MockpitServer", () => {
 
   it("handles any method with http.all", async () => {
     server.useHandlers([
-      http.all("/api/any", async (ctx: MockpitRequest) => {
-        return MockResponse.json({ method: ctx.method });
+      http.all("/api/any", async (ctx: RequestInfo) => {
+        return HttpResponse.json({ method: ctx.request.method });
       }),
     ]);
 
@@ -178,11 +180,11 @@ describe("MockpitServer", () => {
     expect(post.method).toBe("POST");
   });
 
-  // ---- MockResponse variants ----
+  // ---- HttpResponse variants ----
 
   it("returns text response", async () => {
     server.useHandlers([
-      http.get("/text", async () => MockResponse.text("Hello plain text")),
+      http.get("/text", async () => HttpResponse.text("Hello plain text")),
     ]);
 
     const res = await fetch(`${baseUrl}/text`);
@@ -193,7 +195,7 @@ describe("MockpitServer", () => {
   it("returns HTML response", async () => {
     server.useHandlers([
       http.get("/html", async () =>
-        MockResponse.html("<h1>Hello HTML</h1>")
+        HttpResponse.html("<h1>Hello HTML</h1>")
       ),
     ]);
 
@@ -205,7 +207,7 @@ describe("MockpitServer", () => {
   it("returns custom status and headers", async () => {
     server.useHandlers([
       http.get("/custom", async () =>
-        MockResponse.json({ created: true }, { status: 201, headers: { "x-request-id": "abc" } })
+        HttpResponse.json({ created: true }, { status: 201, headers: { "x-request-id": "abc" } })
       ),
     ]);
 
@@ -227,7 +229,7 @@ describe("MockpitServer", () => {
 
   it("resetHandlers removes handler-based mocks", async () => {
     server.useHandlers([
-      http.get("/temp", async () => MockResponse.json({ temp: true })),
+      http.get("/temp", async () => HttpResponse.json({ temp: true })),
     ]);
 
     // Should work
@@ -247,8 +249,8 @@ describe("MockpitServer", () => {
 
   it("both overlapping handlers are registered and one wins", async () => {
     server.useHandlers([
-      http.get("/overlap", async () => MockResponse.json({ handler: "a" })),
-      http.get("/overlap", async () => MockResponse.json({ handler: "b" })),
+      http.get("/overlap", async () => HttpResponse.json({ handler: "a" })),
+      http.get("/overlap", async () => HttpResponse.json({ handler: "b" })),
     ]);
 
     const body = await (await fetch(`${baseUrl}/overlap`)).json();
@@ -257,20 +259,21 @@ describe("MockpitServer", () => {
     expect(["a", "b"]).toContain(body.handler);
   });
 
-  // ---- Request context fields ----
+  // ---- Resolver info (MSW shape) ----
 
-  it("provides full request context to handler", async () => {
+  it("provides { request, params, cookies, requestId } to the handler", async () => {
     server.useHandlers([
-      http.post("/ctx-test/:id", async (ctx: MockpitRequest) => {
-        return MockResponse.json({
-          method: ctx.method,
-          path: ctx.path,
-          uri: ctx.uri,
+      http.post("/ctx-test/:id", async (ctx: RequestInfo) => {
+        const url = new URL(ctx.request.url);
+        const parsed = await ctx.request.json();
+        return HttpResponse.json({
+          method: ctx.request.method,
+          path: url.pathname,
           params: ctx.params,
-          query: ctx.query,
-          headersSent: !!ctx.headers["content-type"],
-          hasBody: !!ctx.body,
-          hasBodyJson: !!ctx.bodyJson,
+          query: Object.fromEntries(url.searchParams),
+          headersSent: ctx.request.headers.has("content-type"),
+          hasBody: !!parsed,
+          hasRequestId: ctx.requestId.length > 0,
         });
       }),
     ]);
@@ -289,7 +292,7 @@ describe("MockpitServer", () => {
     expect(body.query.baz).toBe("qux");
     expect(body.headersSent).toBe(true);
     expect(body.hasBody).toBe(true);
-    expect(body.hasBodyJson).toBe(true);
+    expect(body.hasRequestId).toBe(true);
   });
 });
 
@@ -312,9 +315,9 @@ describe("GraphQL handlers", () => {
 
   it("matches GraphQL query by operation name", async () => {
     server.useHandlers([
-      graphql.query("GetUser", async (ctx: MockpitRequest) => {
-        const variables = ctx.bodyJson?.variables;
-        return MockResponse.json({
+      graphql.query("GetUser", async (ctx: GraphQLRequestInfo) => {
+        const variables = ctx.variables;
+        return HttpResponse.json({
           data: {
             user: { id: variables?.id ?? "unknown", name: "Test User" },
           },
@@ -341,7 +344,7 @@ describe("GraphQL handlers", () => {
   it("matches GraphQL mutation by operation name", async () => {
     server.useHandlers([
       graphql.mutation("CreateUser", async () => {
-        return MockResponse.json({
+        return HttpResponse.json({
           data: { createUser: { id: "new-1", success: true } },
         });
       }),
