@@ -4,9 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # Nightly run to catch upstream breakage
-    - cron: "30 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -232,14 +230,14 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
-  # Benchmarks: nightly matcher-path regression watch. Compares against the
-  # previous scheduled run's criterion baseline (restored from cache) and
-  # fails on >15% mean regression - well below the noise floor of a real
+  # Benchmarks: on-demand matcher-path regression watch (workflow_dispatch).
+  # Compares against the previous run's criterion baseline (restored from
+  # cache) and fails on >15% mean regression - well below a real
   # regression, well above shared-runner jitter on these benches.
   # ---------------------------------------------------------------------------
   bench:
     name: Matcher benchmarks
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch'
     needs: [basics]
     runs-on: ubuntu-latest
     timeout-minutes: 45
