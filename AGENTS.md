@@ -24,14 +24,15 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 - `server` - HTTP server utilities: hot reload, graceful shutdown
 - `api` - Mock management HTTP API (axum router)
 - `recorder` - HTTP request/response recording
+- `scripting` - JS-scripted mock handlers on embedded QuickJS (feature `scripting`)
 
 **mockpit-napi** (cdylib) -- Node.js NAPI bindings:
-- `http_ns.rs` - `http.get/post/put/delete/patch/head/options/all` with RegExp support
-- `graphql_ns.rs` - `graphql.query/mutation/operation`
-- `response_ns.rs` - `MockResponse.json/text/html/xml/arrayBuffer/empty/error`
+- `http_ns.rs` - `http.get/post/put/delete/patch/head/options/all` with RegExp, absolute URLs, `{ once }`
+- `graphql_ns.rs` - `graphql.query/mutation/operation` (string or RegExp names, endpoint scoping)
+- `response_ns.rs` - `HttpResponse.json/text/html/xml/arrayBuffer/redirect/error` builders
 - `handler_bridge.rs` - HandlerFn (TSFN for server) + FunctionRef (direct call for interceptor)
-- `request_context.rs` - MockpitRequest with lazy getters (params, headers, cookies, body)
-- `server.rs` - MockpitServer with FunctionRef-optimized matchRequest, use/resetHandlers/listHandlers
+- `request_context.rs` - RequestInfo / GraphQLRequestInfo resolver info (MSW shapes; `request` is a real Fetch Request)
+- `server.rs` - MockpitServer with FunctionRef-optimized matchRequest (fall-through/exclude support), use/resetHandlers/resetRuntimeHandlers/listHandlers
 - `fake_ns.rs` - 115+ fake data generators exposed to JS
 
 **mockpit-cli** (binary) -- CLI for mock management and fake data generation.
@@ -39,13 +40,17 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 ### JavaScript Packages
 
 **@mockpit/core** -- Main user-facing package:
-- `interceptor.ts` - MockpitInterceptor (patches fetch/XHR), lifecycle events, boundary, onUnhandledRequest
+- `node.ts` - setupServer (the MSW drop-in entry point, exported as `mockpit/node`)
+- `interceptor.ts` - MockpitInterceptor (patches fetch/XHR/ClientRequest), fall-through loop, lifecycle events, boundary, onUnhandledRequest
+- `http-response.ts` - HttpResponse class extending the native Response
+- `registration.ts` - http/graphql factories (Response normalization, generators, graphql.link, collection window)
 - `msw-compat.ts` - delay(), passthrough(), bypass() utilities
-- `events.ts` - LifecycleEvents emitter (request:start/match/unhandled/end, response:mocked/bypass)
-- `graphql-link.ts` - URL-scoped GraphQL handlers (graphqlLink)
+- `events.ts` - LifecycleEvents emitter (request:start/match/unhandled/end, response:mocked/bypass, unhandledException)
 - `config.ts` / `loader.ts` - Config loading
 
-**@mockpit/cli** -- CLI wrapper (delegates to Rust binary).
+**mockpit** (npm) -- bare-specifier alias re-exporting @mockpit/core, so mock files
+`import { http } from 'mockpit'` in both Node and the embedded QuickJS runtime.
+The only CLI is the Rust binary (mockpit-cli).
 
 **@mockpit/playwright** -- Playwright fixture adapter.
 
@@ -94,17 +99,62 @@ Key files:
 4. Once handlers auto-disable after first match
 5. Response generation: inline, template (Tera), file, or handler (JS function)
 
+### QuickJS Scripting (feature `scripting`)
+
+`.js`/`.mjs`/`.ts`/`.mts` mock files run on embedded QuickJS (rquickjs 0.12,
+`parallel` feature) — no Node needed. Architecture:
+
+- rolldown bundler front-end (`scripting/bundle.rs`): TS transpile, node_modules +
+  relative import resolution, tree-shaking, single ESM output; only the `mockpit`
+  specifier stays external (re-links against the runtime ModuleDef). Source maps
+  remap error positions back to original files (`remap_error`).
+- Bytecode disk cache (`scripting/bytecode_cache.rs`): `Module::write` output cached
+  under an ABI-tagged dir (QuickJS version, crate version, arch, endianness, pointer
+  width), validated by content hashes of every transitive input from the source map.
+  `MOCKPIT_CACHE_DIR` overrides location; `MOCKPIT_NO_BYTECODE_CACHE` disables.
+- GOTCHA: rolldown_common force-enables `serde_json/arbitrary_precision`
+  workspace-wide, which breaks serde untagged-enum buffering on floats. HAR parsing
+  goes through `config::parse_har` (AP-safe); never `serde_json::from_str::<Har>`.
+
+- One `ScriptEngine` per script file (`scripting/host.rs`). Hot reload / poison
+  recovery = drop the file's engine, re-evaluate on a fresh one. Module-scope state
+  resets on reload.
+- Single-owner VM event loop (`scripting/vm.rs`): exactly one never-completing tokio
+  task polls the runtime scheduler; everything else submits jobs via `VmHandle`.
+  Never use transient `async_with!` against the runtime — rquickjs's scheduler has a
+  single waker slot and a short-lived poller kills it.
+- `http.get(path, fn)` at evaluation time persists the handler into VM-side slots
+  (`scripting/slots.rs`) and the loader builds normal `MockDefinition`s with
+  `BodySource::Handler` — matching never crosses into JS.
+- Two-layer timeout (`scripting/bridge.rs`): QuickJS interrupt handler kills runaway
+  bytecode at `handler_timeout` (poisons the engine); a tokio backstop (+1s grace)
+  frees requests parked on host awaits.
+- `fake.*` dispatches through the same Tera function registry templates use
+  (`scripting/bindings/fake.rs`) — one source of truth, embedder plugin functions
+  (`register_template_function`) work from JS automatically.
+- Tests: `tests/scripting_tests.rs`. Bench: `benches/script_performance.rs`
+  (~10us per scripted handler call).
+
 ### MSW API Compatibility
 
-Implemented:
-- `http.get/post/put/delete/patch/head/options/all` with string and RegExp paths
-- `graphql.query/mutation/operation` + `graphqlLink(url)`
-- `MockResponse.json/text/html/xml/arrayBuffer/empty/error`
+Implemented (MSW and web-standard naming only; no aliases):
+- `setupServer(...handlers)` from `mockpit/node`: listen/close/use/resetHandlers(...next)/restoreHandlers/listHandlers/boundary/events
+- `http.get/post/put/delete/patch/head/options/all` with string, RegExp, and absolute-URL predicates; `{ once: true }`
+- `graphql.query/mutation/operation` (string or RegExp operation names) + `graphql.link(url)`
+- `HttpResponse` (extends Response in Node; native class in QuickJS): json/text/html/xml/arrayBuffer/formData/redirect/error + constructor
+- Resolver info: `{ request, params, cookies, requestId }`; GraphQL: `{ query, variables, operationName, cookies, request, requestId }`
+- `undefined` return = fall-through to the next handler; generator resolvers
 - `delay()`, `passthrough()`, `bypass()`
-- Request context: params, headers, cookies, body, bodyJson, query, requestId
-- `server.use()`, `resetHandlers()`, `restoreHandlers()`, `listHandlers()`
-- `server.boundary()`, lifecycle events, `onUnhandledRequest` strategies
-- One-time handlers (`once: true`)
+- Lifecycle events incl. `unhandledException`; `onUnhandledRequest` strategies
+- `ReadableStream` response bodies: the interceptor delivers the handler's
+  original Response (live stream, zero copies) via the stream stash; the
+  standalone TCP server and the QuickJS lane deliver drained (buffered) bodies
+- `request.formData()` + `HttpResponse.formData()`: native on Node (real
+  Request/Response); native `FormData`/`File` classes + multipart/urlencoded
+  codecs on the QuickJS lane
+
+Not covered (by design): `setupWorker` (browser service worker; the engine is a
+native addon).
 
 ## Code Standards
 

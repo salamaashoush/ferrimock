@@ -526,6 +526,102 @@ mocks:
 
 Supported duration formats: `100ms`, `2s`, `500us`.
 
+## WebSocket Mocks
+
+A mock with a top-level `ws:` block answers WebSocket upgrade handshakes instead of producing an HTTP response.
+The mock is automatically scoped to `GET` requests carrying `Upgrade: websocket`, so plain GETs on the same path
+fall through to other mocks. `response:` may only contribute extra headers; `sse`/`ws` cannot combine with a
+response body, `patch`, request transforms, or a top-level `delay`.
+
+```yaml
+mocks:
+- id: chat
+  match: { url: "/ws/chat/:room" }
+  ws:
+    subprotocol: chat.v1                      # negotiated on the 101 response
+    echo: false                               # echo unmatched messages back
+    upstream: wss://real.example.com/ws       # optional passthrough target
+    on_connect:                               # actions run when a client connects
+      - send: { type: welcome }               # objects are JSON-stringified
+      - delay: 100ms
+      - send_template: '{"room":"{{ captures.room }}"}'
+    on_message:                               # first matching rule wins
+      - match: { exact: ping }
+        actions: [ { send: pong } ]
+      - match: { json_path: "$.type", equals: subscribe }
+        actions: [ { send_template: '{"ok":true,"got":{{ body_json.type }}}' } ]
+      - match: { regex: "^bin:" }
+        actions: [ { send_binary: "AAECAwQ=" } ]   # base64 binary frame
+      - match: { binary_base64: "AAEC" }           # binary frame equals these bytes
+        actions: [ { send: got-exact-bytes } ]
+      - match: { binary_prefix_base64: "//4=" }    # binary frame starts with these bytes
+        actions: [ { send: got-prefix } ]
+      - match: { any: true }
+        actions: [ forward ]                  # relay to upstream (requires upstream)
+      - match: { exact: bye }
+        actions: [ { close: { code: 4000, reason: done } } ]
+```
+
+- **Actions**: `send` (string or object), `send_template` (Tera), `send_binary` (base64), `delay`, `echo`,
+  `forward` (requires `upstream`), `close` (code 1000..=4999).
+- **Message matchers**: exactly one of `exact`, `regex`, `json_path` (+ optional `equals`), `binary_base64`,
+  `binary_prefix_base64`, `any`. `exact`/`regex`/`json_path` apply to text frames only; the `binary_*`
+  matchers are the byte-frame counterparts (`binary_base64` whole-frame equality, `binary_prefix_base64`
+  prefix); `any` matches both frame kinds.
+- **Templates** render with the request context; the triggering message is exposed as `{{ body }}` /
+  `{{ body_json }}` (the message is the body-analog of an HTTP mock).
+- **Passthrough**: with `upstream` set, upstream frames relay to the client; unmatched client messages relay
+  upstream when `echo` is off and no rule matches; the `forward` action relays the triggering frame explicitly.
+- Script mocks get the MSW-compatible `ws.link(url)` API (see the scripting docs): connection listeners receive
+  `{ client, server, params, info }` (`info.protocols` lists the subprotocols the client offered);
+  `server.connect()` dials the link's absolute URL and auto-forwards both directions unless a `message`
+  listener calls `event.preventDefault()`. Client `close` events carry `{ code, reason }`. `ws.link` also
+  accepts a RegExp, tested against the bare path and against `ws(s)://host/path` reconstructions of the
+  handshake (MSW's full-href idiom).
+- **Teardown**: removing or hot-reloading a mock closes its live connections with `1001 Going Away` instead of
+  letting them keep running on the stale definition.
+- **HAR import**: Chrome DevTools captures with `_webSocketMessages` convert into declarative `ws` mocks —
+  server frames recorded before the first client message replay in `on_connect` with the recorded inter-frame
+  delays, and each client message becomes an `on_message` exact-match (or `binary_base64`) rule replying with
+  the frames that followed it. If the same client payload recurs with a different reply, the pairing is
+  ambiguous and every server frame folds into the `on_connect` sequence instead.
+
+## SSE Mocks (Server-Sent Events)
+
+A mock with a top-level `sse:` block streams `text/event-stream` playback instead of a buffered body.
+
+```yaml
+mocks:
+- id: ticker
+  match: { url: "/api/ticker", methods: [GET] }
+  sse:
+    retry: 3000          # initial retry: field (milliseconds)
+    keep_alive: 15s      # comment-ping interval for idle connections
+    repeat: 3            # integer or "forever" (default 1)
+    close_after: true    # false holds the connection open after playback
+    events:
+      - "hello"                                            # bare string = data-only event
+      - { event: price, id: "1", data: { px: 123 } }       # objects serialize to JSON
+      - { event: price, data_template: '{"px": {{ fake(type="int", min=1, max=999) }}}', delay: 200ms }
+      - { retry: 5000 }                                    # retry-only event
+```
+
+- `delay` on an event sleeps before emitting it; `data_template` renders per emission with the request context
+  (captures, query, headers, vars, fake functions).
+- **Upstream passthrough**: `sse: { upstream: https://real.example.com/stream }` relays the real endpoint's
+  frames to the client verbatim (exclusive with every playback field). The upstream connection is dialed once
+  per client; a failed dial answers `502 Bad Gateway`.
+- Script mocks get the MSW-compatible `sse(path, resolver)` API: the resolver receives
+  `{ request, params, cookies, client, server }`; `client.send({ id?, event?, data?, retry? })` emits frames,
+  `client.close()` ends the stream, `client.error()` aborts the connection mid-stream. When the handler path
+  is an absolute `http(s)://` URL, `server.connect()` dials that real endpoint and forwards its frames to the
+  client; listeners on the returned source (`open`, `error`, `message`, or a named event) run first and can
+  `event.preventDefault()` to swallow a frame.
+- The declarative lane matches on path alone (curl-friendly); the Node `mockpit` package's `sse()` additionally
+  requires `accept: text/event-stream` for strict MSW parity (the accept check applies on the interceptor lane
+  only — `MockpitServer.listen()` serves the same handler curl-style).
+- Removing or hot-reloading a mock ends its live streams.
+
 ## Request Transforms (Passthrough Mode)
 
 Modify requests before forwarding to upstream. When any `request.*` field is set, the mock operates in **passthrough
