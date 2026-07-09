@@ -6,7 +6,7 @@ use super::ui;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use mockpit::services::create::{CreateInput, create, generate_template_body};
+use mockpit::services::create::{CreateInput, MockKind, create, generate_template_body};
 
 /// Wizard state holding all configuration
 #[derive(Debug, Clone)]
@@ -81,6 +81,7 @@ pub fn run_wizard(
     initial_id: Option<String>,
     initial_priority: u32,
     initial_collection: Option<String>,
+    kind: &str,
 ) -> anyhow::Result<()> {
     crate::say!();
     crate::say!("{}", ui::header("Mock Creation Wizard"));
@@ -94,6 +95,33 @@ pub fn run_wizard(
         ui::dim("Press Enter to accept defaults shown in [brackets].")
     );
     crate::say!();
+
+    // Kind selection: an explicit --kind skips the prompt.
+    let mut kind: MockKind = kind.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+    if kind == MockKind::Http {
+        print!(
+            "{} [{}]: ",
+            ui::emphasis("Mock kind (http/ws/sse)"),
+            ui::dim("http")
+        );
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if !input.is_empty() {
+            kind = input.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+    }
+    if kind != MockKind::Http {
+        return run_streaming_wizard(
+            kind,
+            initial_url,
+            output,
+            initial_id,
+            initial_priority,
+            initial_collection,
+        );
+    }
 
     // Initialize state with any provided defaults
     let mut state = WizardState {
@@ -131,6 +159,126 @@ pub fn run_wizard(
 
     // Step 6: Review & Save
     step_review_and_save(&state)
+}
+
+/// Simplified flow for streaming kinds: URL + metadata, then a scaffold
+/// (echo/ping-pong rules for ws, a timed event sequence for sse) the
+/// user edits afterwards.
+fn run_streaming_wizard(
+    kind: MockKind,
+    initial_url: Option<String>,
+    output: Option<String>,
+    initial_id: Option<String>,
+    priority: u32,
+    collection: Option<String>,
+) -> anyhow::Result<()> {
+    let (label, default_url) = match kind {
+        MockKind::Ws => ("WebSocket", "/ws/chat"),
+        // Http never reaches here (the full wizard handles it).
+        MockKind::Sse | MockKind::Http => ("Server-Sent Events", "/events"),
+    };
+    crate::say!("{}", ui::header(&format!("{label} Mock")));
+    crate::say!();
+
+    let default_url = initial_url.unwrap_or_else(|| default_url.to_string());
+    print!(
+        "{} [{}]: ",
+        ui::emphasis("URL Pattern"),
+        ui::dim(&default_url)
+    );
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    let url = if input.is_empty() {
+        default_url
+    } else {
+        input.to_string()
+    };
+    crate::say!();
+
+    let format = output
+        .as_deref()
+        .and_then(|out| {
+            PathBuf::from(out)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_string)
+        })
+        .map_or_else(
+            || "yaml".to_string(),
+            |ext| {
+                if ext == "yml" {
+                    "yaml".to_string()
+                } else {
+                    ext
+                }
+            },
+        );
+
+    let result = create(CreateInput {
+        url,
+        method: "GET".into(),
+        status: 200,
+        body: None,
+        template: false,
+        id: initial_id,
+        priority,
+        collection,
+        format: format.clone(),
+        kind,
+    })?;
+
+    crate::say!("{}", ui::header("Preview"));
+    crate::say!();
+    for line in result.content.lines() {
+        println!("  {line}");
+    }
+    crate::say!();
+
+    let default_path = output
+        .unwrap_or_else(|| format!("{}/{}.{format}", crate::config::mocks_dir(), result.mock_id));
+    print!(
+        "{} [{}]: ",
+        ui::emphasis("Output file"),
+        ui::dim(&default_path)
+    );
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    let output_path = PathBuf::from(if input.is_empty() {
+        &default_path
+    } else {
+        input
+    });
+
+    print!("{} ", ui::emphasis("Save? (Y/n):"));
+    io::stdout().flush()?;
+    let mut confirm = String::new();
+    io::stdin().read_line(&mut confirm)?;
+    if confirm.trim().eq_ignore_ascii_case("n") {
+        crate::say!("{}", ui::warning("Cancelled"));
+        return Ok(());
+    }
+
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&output_path, result.content)?;
+    crate::say!(
+        "{}",
+        ui::success(&format!(
+            "Created {label} mock: {}",
+            ui::path(&output_path.display().to_string())
+        ))
+    );
+    crate::say!();
+    crate::say!(
+        "{}",
+        ui::dim("Tip: edit the scaffolded rules/events, then `mockpit mock serve` to try it")
+    );
+    Ok(())
 }
 
 fn step_request_matching(state: &mut WizardState) -> anyhow::Result<()> {
@@ -908,6 +1056,7 @@ fn generate_mock_content(state: &WizardState, body: &str, format: &str) -> anyho
         priority: state.priority,
         collection: state.collection.clone(),
         format: format.to_string(),
+        kind: MockKind::Http,
     })?;
     Ok(result.content)
 }

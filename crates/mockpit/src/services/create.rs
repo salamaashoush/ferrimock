@@ -21,6 +21,32 @@ pub struct CreateInput {
     pub collection: Option<String>,
     /// Output format: "json" or "yaml"
     pub format: String,
+    /// Mock kind: "http" (default), "ws", or "sse"
+    pub kind: MockKind,
+}
+
+/// What kind of mock to scaffold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MockKind {
+    #[default]
+    Http,
+    Ws,
+    Sse,
+}
+
+impl std::str::FromStr for MockKind {
+    type Err = crate::MockpitError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "http" => Ok(Self::Http),
+            "ws" | "websocket" => Ok(Self::Ws),
+            "sse" => Ok(Self::Sse),
+            other => Err(crate::mp_err!(
+                "Unknown mock kind '{other}': expected http, ws, or sse"
+            )),
+        }
+    }
 }
 
 impl Default for CreateInput {
@@ -35,6 +61,7 @@ impl Default for CreateInput {
             priority: 100,
             collection: None,
             format: "yaml".into(),
+            kind: MockKind::Http,
         }
     }
 }
@@ -60,44 +87,100 @@ fn generate_mock_id(method: &str, url: &str) -> String {
 
 /// Create a new mock definition.
 pub fn create(input: CreateInput) -> Result<CreateResult, crate::MockpitError> {
-    let mock_id = input
-        .id
-        .unwrap_or_else(|| generate_mock_id(&input.method, &input.url));
+    let mock_id = input.id.clone().unwrap_or_else(|| match input.kind {
+        MockKind::Http => generate_mock_id(&input.method, &input.url),
+        MockKind::Ws => generate_mock_id("ws", &input.url),
+        MockKind::Sse => generate_mock_id("sse", &input.url),
+    });
 
-    // An explicit body always wins (e.g. the wizard supplies an edited
-    // template); otherwise generate a template body or fall back to a default.
-    let body = match (input.template, input.body) {
-        (_, Some(b)) => b,
-        (true, None) => generate_template_body(&input.method, &input.url),
-        (false, None) => r#"{"message": "Mock response"}"#.to_string(),
-    };
-
-    let body_key = if input.template { "template" } else { "body" };
-
-    let mock = serde_json::json!({
-        "mocks": [{
+    let mock = match input.kind {
+        MockKind::Http => {
+            // An explicit body always wins (e.g. the wizard supplies an
+            // edited template); otherwise generate a template body or
+            // fall back to a default.
+            let body = match (input.template, input.body) {
+                (_, Some(b)) => b,
+                (true, None) => generate_template_body(&input.method, &input.url),
+                (false, None) => r#"{"message": "Mock response"}"#.to_string(),
+            };
+            let body_key = if input.template { "template" } else { "body" };
+            serde_json::json!({
+                "id": mock_id,
+                "priority": input.priority,
+                "enabled": true,
+                "match": {
+                    "method": input.method.to_uppercase(),
+                    "url": input.url,
+                },
+                "response": {
+                    "status": input.status,
+                    "headers": {
+                        "content-type": "application/json",
+                    },
+                    body_key: body,
+                },
+            })
+        }
+        MockKind::Ws => serde_json::json!({
             "id": mock_id,
             "priority": input.priority,
             "enabled": true,
             "match": {
-                "method": input.method.to_uppercase(),
+                "method": "GET",
                 "url": input.url,
             },
-            "response": {
-                "status": input.status,
-                "headers": {
-                    "content-type": "application/json",
-                },
-                body_key: body,
+            "ws": {
+                "on_connect": [
+                    { "send": "welcome" },
+                ],
+                "on_message": [
+                    {
+                        "match": { "exact": "ping" },
+                        "actions": [ { "send": "pong" } ],
+                    },
+                    {
+                        "match": { "any": true },
+                        "actions": [ "echo" ],
+                    },
+                ],
             },
-        }],
+        }),
+        MockKind::Sse => serde_json::json!({
+            "id": mock_id,
+            "priority": input.priority,
+            "enabled": true,
+            "match": {
+                "method": "GET",
+                "url": input.url,
+            },
+            "sse": {
+                "retry": 3000,
+                "events": [
+                    { "data": "hello" },
+                    { "delay": "1s", "event": "tick", "id": "1", "data": { "count": 1 } },
+                    { "delay": "1s", "event": "done", "data": "bye" },
+                ],
+            },
+        }),
+    };
+
+    let collection = serde_json::json!({
+        "mocks": [mock],
         "name": input.collection.as_deref().unwrap_or(&mock_id),
         "enabled": true,
     });
 
-    let content = match input.format.as_str() {
-        "json" => serde_json::to_string_pretty(&mock)?,
-        _ => serde_yaml::to_string(&mock)?,
+    let content = if input.format == "json" {
+        serde_json::to_string_pretty(&collection)?
+    } else {
+        // Round-trip through JSON text: serializing serde_json numbers
+        // directly with serde_yaml emits arbitrary-precision private
+        // maps when a dependency force-enables that feature (the
+        // rolldown bundler does, workspace-wide).
+        let json = serde_json::to_string(&collection)?;
+        let value: serde_yaml::Value = serde_yaml::from_str(&json)
+            .map_err(|e| crate::mp_err!("mock serialization failed: {e}"))?;
+        serde_yaml::to_string(&value)?
     };
 
     Ok(CreateResult { mock_id, content })
