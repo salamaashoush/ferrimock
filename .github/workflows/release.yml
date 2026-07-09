@@ -241,6 +241,10 @@ jobs:
         with:
           name: napi-x86_64-unknown-linux-gnu
           path: crates/mockpit-napi/
+      # Tests import the packages by name ('@mockpit/core', 'mockpit'),
+      # which resolve through dist/ - they need the JS build.
+      - name: Build JS packages
+        run: bun run build
       - name: Run JS tests
         run: bun test ./packages/core/test/ ./crates/mockpit-napi/test/
 

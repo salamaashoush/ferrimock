@@ -149,6 +149,10 @@ jobs:
       - name: Build NAPI native module
         working-directory: crates/mockpit-napi
         run: bunx @napi-rs/cli build --platform --release
+      # Tests import the packages by name ('@mockpit/core', 'mockpit'),
+      # which resolve through dist/ - they need the JS build.
+      - name: Build JS packages
+        run: bun run build
       - name: Run JS tests
         run: bun test ./packages/core/test/ ./crates/mockpit-napi/test/
 
