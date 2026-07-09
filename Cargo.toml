@@ -11,6 +11,9 @@ resolver = "2"
 version = "0.1.6"
 authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
 edition = "2024"
+# Verified floor for the stable feature set; the `scripting` feature
+# needs nightly regardless (rolldown's oxc tree uses if-let guards).
+rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/salamaashoush/mockpit"
 description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"
