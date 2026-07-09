@@ -1137,6 +1137,7 @@ async fn test_export_single_mock_to_har() {
             BodySource::inline(r#"{"id":"123","name":"Test"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1178,6 +1179,7 @@ async fn test_export_multiple_mocks_to_har() {
             },
             response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
             vars: None,
+            streaming: None,
         },
         MockDefinition {
             id: "mock-2".into(),
@@ -1197,6 +1199,7 @@ async fn test_export_multiple_mocks_to_har() {
             },
             response: ResponseGenerator::new(StatusCode::CREATED, BodySource::inline("{}")),
             vars: None,
+            streaming: None,
         },
     ];
 
@@ -1237,6 +1240,7 @@ async fn test_export_mock_with_delay() {
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}"))
             .with_delay(std::time::Duration::from_millis(250)),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1273,6 +1277,7 @@ async fn test_export_mock_with_headers() {
             .with_header("content-type", "application/json")
             .with_header("x-custom", "value"),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1317,6 +1322,7 @@ async fn test_export_mock_with_regex_pattern() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1352,6 +1358,7 @@ async fn test_export_mock_with_prefix_pattern() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1386,6 +1393,7 @@ async fn test_export_mock_with_file_body() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::file("/path/to/file.json")),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1421,6 +1429,7 @@ async fn test_export_mock_with_template_body() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::template("{{ user.name }}")),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1456,6 +1465,7 @@ async fn test_export_mock_with_no_methods() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1490,6 +1500,7 @@ async fn test_export_mock_with_multiple_methods() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1536,6 +1547,7 @@ async fn test_export_mock_includes_metadata() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     };
 
     let har = export_mocks_to_har(&[Arc::new(mock)]).unwrap();
@@ -1757,3 +1769,4 @@ async fn test_mocks_no_scope_by_default() {
 
     assert!(mocks[0].scope.is_none());
 }
+

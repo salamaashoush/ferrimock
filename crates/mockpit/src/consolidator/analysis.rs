@@ -651,6 +651,8 @@ mod tests {
                 }),
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
             MockConfig {
                 id: "test-2".into(),
@@ -679,6 +681,8 @@ mod tests {
                 }),
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
         ];
 
@@ -862,6 +866,8 @@ mod tests {
                 }),
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
             MockConfig {
                 id: "test-2".into(),
@@ -897,6 +903,8 @@ mod tests {
                 }),
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
         ];
 
@@ -955,6 +963,8 @@ mod tests {
             }),
             patch: None,
             delay: None,
+            sse: None,
+            ws: None,
         }];
 
         let responses: Vec<serde_json::Value> = mocks
@@ -1011,6 +1021,8 @@ mod tests {
                 response_config: None,
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -1040,6 +1052,8 @@ mod tests {
                 response_config: None,
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
         ];
 
@@ -1085,6 +1099,8 @@ mod tests {
                 response_config: None,
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -1114,6 +1130,8 @@ mod tests {
                 response_config: None,
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
         ];
 
@@ -1163,6 +1181,8 @@ mod tests {
                 response_config: None,
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -1193,6 +1213,8 @@ mod tests {
                 response_config: None,
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
         ];
 
@@ -1230,6 +1252,8 @@ mod tests {
             response_config: None,
             patch: None,
             delay: None,
+            sse: None,
+            ws: None,
         }];
 
         let analysis = ResponseAnalyzer::analyze_graphql_variables(&mocks);
@@ -1261,6 +1285,8 @@ mod tests {
             response_config: None,
             patch: None,
             delay: None,
+            sse: None,
+            ws: None,
         }];
 
         let analysis = ResponseAnalyzer::analyze_graphql_variables(&mocks);

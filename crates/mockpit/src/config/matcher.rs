@@ -735,6 +735,7 @@ impl GraphQLMatchConfig {
             GraphQLMatchConfig::Boolean(true) => {
                 // match.graphql = true → match any introspection
                 Ok(GraphQLMatcher {
+                    operation_name_regex: None,
                     operation_name: None,
                     operation_type: None,
                     match_any: false,
@@ -751,6 +752,7 @@ impl GraphQLMatchConfig {
                 "*" => {
                     // Match any GraphQL operation
                     Ok(GraphQLMatcher {
+                        operation_name_regex: None,
                         operation_name: None,
                         operation_type: None,
                         match_any: true,
@@ -761,6 +763,7 @@ impl GraphQLMatchConfig {
                 "query" => {
                     // Match any query
                     Ok(GraphQLMatcher {
+                        operation_name_regex: None,
                         operation_name: None,
                         operation_type: Some(GraphQLOperationType::Query),
                         match_any: false,
@@ -771,6 +774,7 @@ impl GraphQLMatchConfig {
                 "mutation" => {
                     // Match any mutation
                     Ok(GraphQLMatcher {
+                        operation_name_regex: None,
                         operation_name: None,
                         operation_type: Some(GraphQLOperationType::Mutation),
                         match_any: false,
@@ -781,6 +785,7 @@ impl GraphQLMatchConfig {
                 "subscription" => {
                     // Match any subscription
                     Ok(GraphQLMatcher {
+                        operation_name_regex: None,
                         operation_name: None,
                         operation_type: Some(GraphQLOperationType::Subscription),
                         match_any: false,
@@ -791,6 +796,7 @@ impl GraphQLMatchConfig {
                 operation_name => {
                     // Match specific operation name (any type)
                     Ok(GraphQLMatcher {
+                        operation_name_regex: None,
                         operation_name: Some(operation_name.to_string()),
                         operation_type: None,
                         match_any: false,
@@ -854,6 +860,7 @@ impl GraphQLMatchConfig {
                 }
 
                 Ok(GraphQLMatcher {
+                    operation_name_regex: None,
                     operation_name,
                     operation_type,
                     match_any: false,

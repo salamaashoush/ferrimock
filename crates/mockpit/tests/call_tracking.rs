@@ -31,6 +31,7 @@ fn create_test_mock(id: &str) -> MockDefinition {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     }
 }
 

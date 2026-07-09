@@ -6,7 +6,7 @@
 //! # Examples
 //!
 //! ```rust,ignore
-//! use mockpit::handler::{http, MockResponse};
+//! use mockpit::handler::{http, HttpResponse};
 //! use mockpit::prelude::*;
 //!
 //! let registry = MockRegistry::new();
@@ -14,7 +14,7 @@
 //! // Handler-based mock
 //! registry.add_mock(http::get("/users/:id", |ctx| async move {
 //!     let id = ctx.captures.get("id").unwrap();
-//!     Ok(MockResponse::json(&serde_json::json!({ "id": id }))?)
+//!     Ok(HttpResponse::json(&serde_json::json!({ "id": id }))?)
 //! }));
 //!
 //! // Works alongside declarative mocks in the same registry
@@ -67,12 +67,22 @@ impl IntoHandlerFn for HandlerFn {
 }
 
 /// Create a `MockDefinition` from method, path pattern, and handler function.
+///
+/// Absolute-URL predicates (`https://api.example.com/users/:id`) split into
+/// a Host-header matcher plus the path pattern, so MSW handlers written
+/// against full URLs match (scheme is ignored; requests carry no scheme by
+/// the time they reach the matcher).
 fn build_handler_mock(
     method: Option<Method>,
     path: &str,
     handler: impl IntoHandlerFn,
     id_prefix: &str,
 ) -> MockDefinition {
+    let (host, path) = match UrlPattern::split_absolute_url(path) {
+        Some((host, path)) => (Some(host), path),
+        None => (None, path),
+    };
+
     let url_pattern = if path == "*" {
         // Wildcard: match everything
         SmallVec::new() // empty url_patterns = match all
@@ -90,12 +100,21 @@ fn build_handler_mock(
         None => SmallVec::new(), // empty = match all methods
     };
 
+    let header_matchers = match host {
+        Some(host) => SmallVec::from_elem(
+            crate::types::HeaderMatcher::exact(::http::header::HOST, host),
+            1,
+        ),
+        None => SmallVec::new(),
+    };
+
     MockDefinition {
         id: next_handler_id(id_prefix),
         priority: 100, // High default priority for handler mocks
         request: RequestMatcher {
             methods,
             url_patterns: url_pattern,
+            header_matchers,
             ..RequestMatcher::default()
         },
         response: ResponseGenerator::new(
@@ -108,6 +127,7 @@ fn build_handler_mock(
         source_file: None,
         request_transforms: None,
         vars: None,
+        streaming: None,
     }
 }
 
@@ -126,11 +146,11 @@ fn build_handler_mock(
 /// # Examples
 ///
 /// ```rust,ignore
-/// use mockpit::handler::{http, MockResponse};
+/// use mockpit::handler::{http, HttpResponse};
 ///
 /// let mock = http::get("/users/:id", |ctx| async move {
 ///     let id = ctx.captures.get("id").unwrap();
-///     Ok(MockResponse::json(&serde_json::json!({ "id": id, "name": "John" }))?)
+///     Ok(HttpResponse::json(&serde_json::json!({ "id": id, "name": "John" }))?)
 /// });
 /// ```
 pub mod http {
@@ -184,12 +204,12 @@ pub mod http {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use mockpit::handler::{graphql, MockResponse};
+/// use mockpit::handler::{graphql, HttpResponse};
 ///
 /// let mock = graphql::query("GetUser", |ctx| async move {
 ///     let body = ctx.body_json.as_ref().unwrap();
 ///     let variables = body.get("variables");
-///     Ok(MockResponse::json(&serde_json::json!({
+///     Ok(HttpResponse::json(&serde_json::json!({
 ///         "data": { "user": { "id": variables.and_then(|v| v.get("id")) } }
 ///     }))?)
 /// });
@@ -197,7 +217,6 @@ pub mod http {
 pub mod graphql {
     use super::*;
     use crate::types::{GraphQLMatcher, GraphQLOperationType};
-    use rustc_hash::FxHashMap;
 
     /// Create a handler mock for a GraphQL query operation.
     pub fn query(operation_name: &str, handler: impl IntoHandlerFn) -> MockDefinition {
@@ -223,13 +242,27 @@ pub mod graphql {
     pub fn operation(handler: impl IntoHandlerFn) -> MockDefinition {
         let mut mock = build_handler_mock(Some(Method::POST), "*", handler, "GQL_OP");
         mock.request.graphql_matcher = Some(GraphQLMatcher {
-            operation_name: None,
-            operation_type: None,
             match_any: true,
-            variable_matchers: FxHashMap::default(),
-            introspection_matcher: None,
+            ..GraphQLMatcher::default()
         });
         mock
+    }
+
+    /// Create a handler mock for a GraphQL query whose operation name
+    /// matches a regex (MSW's RegExp operation predicate).
+    pub fn query_regex(pattern: regex::Regex, handler: impl IntoHandlerFn) -> MockDefinition {
+        build_graphql_regex_mock(GraphQLOperationType::Query, pattern, handler, "GQL_QUERY")
+    }
+
+    /// Create a handler mock for a GraphQL mutation whose operation name
+    /// matches a regex.
+    pub fn mutation_regex(pattern: regex::Regex, handler: impl IntoHandlerFn) -> MockDefinition {
+        build_graphql_regex_mock(
+            GraphQLOperationType::Mutation,
+            pattern,
+            handler,
+            "GQL_MUTATION",
+        )
     }
 
     fn build_graphql_mock(
@@ -243,9 +276,22 @@ pub mod graphql {
         mock.request.graphql_matcher = Some(GraphQLMatcher {
             operation_name: op_name.map(String::from),
             operation_type: op_type,
-            match_any: false,
-            variable_matchers: FxHashMap::default(),
-            introspection_matcher: None,
+            ..GraphQLMatcher::default()
+        });
+        mock
+    }
+
+    fn build_graphql_regex_mock(
+        op_type: GraphQLOperationType,
+        pattern: regex::Regex,
+        handler: impl IntoHandlerFn,
+        id_prefix: &str,
+    ) -> MockDefinition {
+        let mut mock = build_handler_mock(Some(Method::POST), "*", handler, id_prefix);
+        mock.request.graphql_matcher = Some(GraphQLMatcher {
+            operation_name_regex: Some(pattern),
+            operation_type: Some(op_type),
+            ..GraphQLMatcher::default()
         });
         mock
     }
@@ -258,20 +304,20 @@ pub mod graphql {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use mockpit::handler::MockResponse;
+/// use mockpit::handler::HttpResponse;
 ///
 /// // JSON response (200 OK)
-/// let resp = MockResponse::json(&serde_json::json!({"key": "value"}))?;
+/// let resp = HttpResponse::json(&serde_json::json!({"key": "value"}))?;
 ///
 /// // Text with custom status
-/// let resp = MockResponse::text("Not Found").with_status(http::StatusCode::NOT_FOUND);
+/// let resp = HttpResponse::text("Not Found").with_status(http::StatusCode::NOT_FOUND);
 ///
 /// // Empty response
-/// let resp = MockResponse::empty(http::StatusCode::NO_CONTENT);
+/// let resp = HttpResponse::empty(http::StatusCode::NO_CONTENT);
 /// ```
-pub struct MockResponse;
+pub struct HttpResponse;
 
-impl MockResponse {
+impl HttpResponse {
     /// Create a JSON response with status 200.
     ///
     /// Sets `Content-Type: application/json` automatically.
@@ -284,6 +330,7 @@ impl MockResponse {
                     .collect(),
             ),
             body: bytes::Bytes::from(body),
+            ..DynamicResponse::default()
         })
     }
 
@@ -297,6 +344,7 @@ impl MockResponse {
                 std::iter::once(("content-type".to_string(), "text/plain".to_string())).collect(),
             ),
             body: bytes::Bytes::from(body.into()),
+            ..DynamicResponse::default()
         }
     }
 
@@ -310,6 +358,7 @@ impl MockResponse {
                 std::iter::once(("content-type".to_string(), "text/html".to_string())).collect(),
             ),
             body: bytes::Bytes::from(body.into()),
+            ..DynamicResponse::default()
         }
     }
 
@@ -317,8 +366,7 @@ impl MockResponse {
     pub fn empty(status: StatusCode) -> DynamicResponse {
         DynamicResponse {
             status: Some(status),
-            headers: None,
-            body: bytes::Bytes::new(),
+            ..DynamicResponse::default()
         }
     }
 }
@@ -404,7 +452,7 @@ mod tests {
     fn test_http_get_creates_mock_definition() {
         let mock = http::get(
             "/users/:id",
-            |_ctx| async move { Ok(MockResponse::text("ok")) },
+            |_ctx| async move { Ok(HttpResponse::text("ok")) },
         );
 
         assert!(mock.enabled);
@@ -416,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_http_all_matches_any_method() {
-        let mock = http::all("/test", |_ctx| async move { Ok(MockResponse::text("ok")) });
+        let mock = http::all("/test", |_ctx| async move { Ok(HttpResponse::text("ok")) });
 
         // Empty methods = match all
         assert!(mock.request.methods.is_empty());
@@ -424,23 +472,23 @@ mod tests {
 
     #[test]
     fn test_handler_ids_are_unique() {
-        let mock1 = http::get("/a", |_ctx| async move { Ok(MockResponse::text("a")) });
-        let mock2 = http::get("/b", |_ctx| async move { Ok(MockResponse::text("b")) });
+        let mock1 = http::get("/a", |_ctx| async move { Ok(HttpResponse::text("a")) });
+        let mock2 = http::get("/b", |_ctx| async move { Ok(HttpResponse::text("b")) });
         assert_ne!(mock1.id, mock2.id);
     }
 
     #[test]
     fn test_wildcard_path() {
-        let mock = http::get("*", |_ctx| async move { Ok(MockResponse::text("ok")) });
+        let mock = http::get("*", |_ctx| async move { Ok(HttpResponse::text("ok")) });
         // Wildcard = empty url_patterns (match all)
         assert!(mock.request.url_patterns.is_empty());
     }
 
-    // ---- MockResponse builder tests ----
+    // ---- HttpResponse builder tests ----
 
     #[test]
     fn test_mock_response_json() {
-        let resp = MockResponse::json(&serde_json::json!({"key": "value"})).unwrap();
+        let resp = HttpResponse::json(&serde_json::json!({"key": "value"})).unwrap();
         assert_eq!(resp.status, Some(StatusCode::OK));
         assert_eq!(
             resp.headers.as_ref().unwrap().get("content-type").unwrap(),
@@ -452,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_mock_response_text() {
-        let resp = MockResponse::text("hello");
+        let resp = HttpResponse::text("hello");
         assert_eq!(resp.status, Some(StatusCode::OK));
         assert_eq!(
             resp.headers.as_ref().unwrap().get("content-type").unwrap(),
@@ -463,20 +511,20 @@ mod tests {
 
     #[test]
     fn test_mock_response_empty() {
-        let resp = MockResponse::empty(StatusCode::NO_CONTENT);
+        let resp = HttpResponse::empty(StatusCode::NO_CONTENT);
         assert_eq!(resp.status, Some(StatusCode::NO_CONTENT));
         assert!(resp.body.is_empty());
     }
 
     #[test]
     fn test_dynamic_response_ext_with_status() {
-        let resp = MockResponse::text("err").with_status(StatusCode::BAD_REQUEST);
+        let resp = HttpResponse::text("err").with_status(StatusCode::BAD_REQUEST);
         assert_eq!(resp.status, Some(StatusCode::BAD_REQUEST));
     }
 
     #[test]
     fn test_dynamic_response_ext_with_header() {
-        let resp = MockResponse::text("ok").with_header("x-custom", "value");
+        let resp = HttpResponse::text("ok").with_header("x-custom", "value");
         assert_eq!(
             resp.headers.as_ref().unwrap().get("x-custom").unwrap(),
             "value"
@@ -489,7 +537,7 @@ mod tests {
     async fn test_handler_mock_in_registry() {
         let registry = MockRegistry::new();
         let mock = http::get("/api/hello", |_ctx| async move {
-            Ok(MockResponse::json(&serde_json::json!({"msg": "hi"})).unwrap())
+            Ok(HttpResponse::json(&serde_json::json!({"msg": "hi"})).unwrap())
         });
 
         registry.add_mock(mock);
@@ -517,7 +565,7 @@ mod tests {
         let registry = MockRegistry::new();
         let mock = http::get(
             "/users/:id",
-            |_ctx| async move { Ok(MockResponse::text("ok")) },
+            |_ctx| async move { Ok(HttpResponse::text("ok")) },
         );
 
         registry.add_mock(mock);
@@ -569,7 +617,7 @@ mod tests {
                 .cloned()
                 .unwrap_or_else(|| "world".to_string());
             Ok(
-                MockResponse::json(&serde_json::json!({"greeting": format!("Hello, {name}!")}))
+                HttpResponse::json(&serde_json::json!({"greeting": format!("Hello, {name}!")}))
                     .unwrap(),
             )
         });
@@ -630,12 +678,13 @@ mod tests {
                 BodySource::inline(r#"{"static":true}"#),
             ),
             vars: None,
+            streaming: None,
         };
         registry.add_mock(declarative);
 
         // Add a handler mock (lower priority)
         let handler = http::get("/api/dynamic", |_ctx| async move {
-            Ok(MockResponse::json(&serde_json::json!({"dynamic": true})).unwrap())
+            Ok(HttpResponse::json(&serde_json::json!({"dynamic": true})).unwrap())
         });
         registry.add_mock(handler);
 
@@ -684,7 +733,7 @@ mod tests {
     #[test]
     fn test_graphql_query_handler() {
         let mock = graphql::query("GetUser", |_ctx| async move {
-            Ok(MockResponse::json(&serde_json::json!({"data": {"user": {}}})).unwrap())
+            Ok(HttpResponse::json(&serde_json::json!({"data": {"user": {}}})).unwrap())
         });
 
         assert!(mock.request.graphql_matcher.is_some());
@@ -696,7 +745,7 @@ mod tests {
     #[test]
     fn test_graphql_operation_handler() {
         let mock = graphql::operation(|_ctx| async move {
-            Ok(MockResponse::json(&serde_json::json!({"data": {}})).unwrap())
+            Ok(HttpResponse::json(&serde_json::json!({"data": {}})).unwrap())
         });
 
         let gql = mock.request.graphql_matcher.as_ref().unwrap();

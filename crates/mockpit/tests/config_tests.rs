@@ -318,6 +318,8 @@ async fn test_into_mock_definitions_with_dir() {
             }),
             patch: None,
             delay: None,
+            sse: None,
+            ws: None,
         }],
     };
 
@@ -354,6 +356,8 @@ async fn test_mock_config_missing_match() {
         }),
         patch: None,
         delay: None,
+        sse: None,
+        ws: None,
     };
 
     let result = config.into_mock_definition().await;
@@ -389,6 +393,8 @@ async fn test_mock_config_missing_return() {
         response_config: None,
         patch: None,
         delay: None,
+        sse: None,
+        ws: None,
     };
 
     // No response_config means it defaults to empty response (no longer an error)
@@ -1829,6 +1835,8 @@ async fn test_body_file_with_config_dir() {
         }),
         patch: None,
         delay: None,
+        sse: None,
+        ws: None,
     };
 
     let result = config
@@ -1868,6 +1876,8 @@ async fn test_body_file_not_found_fallback() {
         }),
         patch: None,
         delay: None,
+        sse: None,
+        ws: None,
     };
 
     // Should succeed but file will be loaded on-demand

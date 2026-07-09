@@ -263,6 +263,103 @@ struct ServerState {
     registry: Arc<MockRegistry>,
 }
 
+/// Whether the request is a WebSocket upgrade handshake.
+fn is_ws_upgrade(method: &http::Method, headers: &http::HeaderMap) -> bool {
+    method == http::Method::GET
+        && headers
+            .get(http::header::UPGRADE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+        && headers
+            .get(http::header::CONNECTION)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                v.split(',')
+                    .any(|part| part.trim().eq_ignore_ascii_case("upgrade"))
+            })
+}
+
+/// Canonical mock entry point for full axum requests.
+///
+/// Shared by every mock server router: branches to the WebSocket
+/// upgrade path BEFORE buffering the request body; everything else
+/// buffers and delegates to [`respond`].
+pub async fn handle_request(
+    matcher: &MockMatcher,
+    req: axum::extract::Request,
+) -> axum::response::Response {
+    use axum::extract::FromRequestParts;
+
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let headers = req.headers().clone();
+
+    if is_ws_upgrade(&method, &headers) {
+        // Upgrade requests carry no body; match first, extract second
+        // (WebSocketUpgrade is FromRequestParts, so a matched request
+        // can still be reassembled if extraction fails).
+        let ws_match = matcher
+            .find_match(&method, uri.path(), uri.query(), &headers, None)
+            .filter(|m| {
+                m.mock
+                    .streaming
+                    .as_ref()
+                    .is_some_and(crate::types::StreamingResponse::is_ws)
+            });
+
+        if let Some(mock_match) = ws_match {
+            let (mut parts, body) = req.into_parts();
+            if let Ok(upgrade) =
+                axum::extract::ws::WebSocketUpgrade::from_request_parts(&mut parts, &()).await
+            {
+                return crate::server::ws::upgrade_response(
+                    upgrade,
+                    mock_match,
+                    &method,
+                    &uri,
+                    &headers,
+                    &matcher.streaming_connections(),
+                );
+            }
+            // Not actually upgradable (e.g. missing hyper OnUpgrade
+            // extension); fall through to the buffered path.
+            let req = axum::extract::Request::from_parts(parts, body);
+            return buffered_respond(matcher, req).await;
+        }
+        // No WS mock matched: 426 when the upgrade hit a non-WS mock is
+        // handled inside respond(); unmatched upgrades 404 like any request.
+    }
+
+    buffered_respond(matcher, req).await
+}
+
+async fn buffered_respond(
+    matcher: &MockMatcher,
+    req: axum::extract::Request,
+) -> axum::response::Response {
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let headers = req.headers().clone();
+
+    let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
+        .await
+        .ok();
+    let body_ref = body_bytes
+        .as_ref()
+        .filter(|b| !b.is_empty())
+        .map(std::convert::AsRef::as_ref);
+
+    respond(
+        matcher,
+        &method,
+        uri.path(),
+        uri.query(),
+        &headers,
+        body_ref,
+    )
+    .await
+}
+
 /// Canonical mock-response builder shared by every mock server.
 ///
 /// Used by this service, the NAPI `MockpitServer.listen()` path, and the CLI:
@@ -281,71 +378,195 @@ pub async fn respond(
     use axum::response::IntoResponse;
     use http::header;
 
-    let Some(mock_match) = matcher.find_match(method, path, query, headers, body) else {
+    fn unmatched(
+        method: &http::Method,
+        path: &str,
+        query: Option<&str>,
+        via_passthrough: bool,
+    ) -> axum::response::Response {
         let body = serde_json::json!({
             "error": "No matching mock found",
             "method": method.as_str(),
             "path": path,
             "query": query
         });
-        return (
+        let mut response = (
             http::StatusCode::NOT_FOUND,
             [(header::CONTENT_TYPE, "application/json")],
             body.to_string(),
         )
             .into_response();
-    };
+        // Embedders with an upstream (proxies) key off this header to
+        // forward the request instead of serving the 404.
+        if via_passthrough && let Ok(value) = http::HeaderValue::from_str("1") {
+            response
+                .headers_mut()
+                .insert(crate::types::PASSTHROUGH_HEADER, value);
+        }
+        response
+    }
 
-    let mock_def = &mock_match.mock;
-    let dynamic = mock_def
-        .response
-        .generate_dynamic(
-            method.as_str(),
-            path,
-            query,
-            headers,
-            body,
-            mock_match.captures,
-            mock_def.vars.as_ref(),
-        )
-        .await;
+    fn marker_set(headers: Option<&rustc_hash::FxHashMap<String, String>>, name: &str) -> bool {
+        headers.is_some_and(|h| h.get(name).is_some_and(|v| v == "1"))
+    }
 
-    match dynamic {
-        Ok(resp) => {
-            let status = resp.status.unwrap_or(mock_def.response.status);
-            let mut response = http::Response::builder().status(status);
-            for (key, value) in &mock_def.response.headers {
-                response = response.header(key.as_str(), value.as_str());
-            }
-            if let Some(dyn_headers) = &resp.headers {
-                for (key, value) in dyn_headers {
+    // Fall-through loop: a handler returning undefined excludes its mock
+    // and re-matches, so the next candidate (or the 404) gets the request
+    // (MSW semantics). Bounded by the number of registered mocks.
+    let mut exclude: Vec<String> = Vec::new();
+
+    loop {
+        let Some(mock_match) =
+            matcher.find_match_excluding(method, path, query, headers, body, &exclude)
+        else {
+            return unmatched(method, path, query, false);
+        };
+
+        let mock_def = &mock_match.mock;
+
+        if let Some(streaming) = &mock_def.streaming {
+            return match streaming {
+                crate::types::StreamingResponse::Sse(script) if script.upstream.is_some() => {
+                    crate::server::sse::upstream_response(
+                        mock_def,
+                        std::sync::Arc::clone(script),
+                        &matcher.streaming_connections(),
+                    )
+                    .await
+                }
+                crate::types::StreamingResponse::Sse(script) => {
+                    crate::server::sse::declarative_response(
+                        mock_def,
+                        std::sync::Arc::clone(script),
+                        method,
+                        path,
+                        query,
+                        headers,
+                        mock_match.captures,
+                        &matcher.streaming_connections(),
+                    )
+                }
+                crate::types::StreamingResponse::SseHandler(handler) => {
+                    crate::server::sse::handler_response(
+                        mock_def,
+                        std::sync::Arc::clone(handler),
+                        method,
+                        path,
+                        query,
+                        headers,
+                        mock_match.captures,
+                        &matcher.streaming_connections(),
+                    )
+                }
+                // WS mock hit by a non-upgrade request: the handshake is
+                // required — the upgrade path lives in handle_request.
+                crate::types::StreamingResponse::Ws(_)
+                | crate::types::StreamingResponse::WsHandler(_) => (
+                    http::StatusCode::UPGRADE_REQUIRED,
+                    [
+                        (header::UPGRADE, "websocket"),
+                        (
+                            http::header::HeaderName::from_static("x-mock-id"),
+                            mock_def.id.as_str(),
+                        ),
+                    ],
+                    "WebSocket upgrade required",
+                )
+                    .into_response(),
+            };
+        }
+
+        let dynamic = mock_def
+            .response
+            .generate_dynamic(
+                method.as_str(),
+                path,
+                query,
+                headers,
+                body,
+                mock_match.captures,
+                mock_def.vars.as_ref(),
+            )
+            .await;
+
+        return match dynamic {
+            Ok(resp) => {
+                if marker_set(resp.headers.as_ref(), crate::types::FALLTHROUGH_HEADER) {
+                    if mock_def.once {
+                        matcher.reenable_mock(mock_def.id.as_str());
+                    }
+                    exclude.push(mock_def.id.to_string());
+                    continue;
+                }
+                if marker_set(resp.headers.as_ref(), crate::types::PASSTHROUGH_HEADER) {
+                    return unmatched(method, path, query, true);
+                }
+                if marker_set(resp.headers.as_ref(), crate::types::NETWORK_ERROR_HEADER) {
+                    // Simulate a network failure: commit headers, then error
+                    // the body stream so the connection is torn down
+                    // mid-response (fetch surfaces a TypeError, curl an
+                    // aborted transfer).
+                    let aborted = futures::stream::once(async {
+                        Err::<bytes::Bytes, std::io::Error>(std::io::Error::other(
+                            "mockpit simulated network error",
+                        ))
+                    });
+                    return http::Response::builder()
+                        .status(http::StatusCode::OK)
+                        .header("X-Mock-Id", mock_def.id.as_str())
+                        .body(Body::from_stream(aborted))
+                        .unwrap_or_else(|_| {
+                            (
+                                http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "Response build error",
+                            )
+                                .into_response()
+                        });
+                }
+                let status = resp.status.unwrap_or(mock_def.response.status);
+                let mut response = http::Response::builder().status(status);
+                for (key, value) in &mock_def.response.headers {
                     response = response.header(key.as_str(), value.as_str());
                 }
+                if let Some(dyn_headers) = &resp.headers {
+                    for (key, value) in dyn_headers {
+                        // Multiple Set-Cookie values arrive newline-joined
+                        // (single-valued header maps upstream); emit each
+                        // as its own header.
+                        if key.eq_ignore_ascii_case("set-cookie") && value.contains('\n') {
+                            for cookie in value.split('\n').filter(|c| !c.is_empty()) {
+                                response = response.header(key.as_str(), cookie);
+                            }
+                        } else {
+                            response = response.header(key.as_str(), value.as_str());
+                        }
+                    }
+                }
+                response
+                    .header("X-Mock-Id", mock_def.id.as_str())
+                    .body(Body::from(resp.body))
+                    .unwrap_or_else(|_| {
+                        (
+                            http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "Response build error",
+                        )
+                            .into_response()
+                    })
             }
-            response
-                .header("X-Mock-Id", mock_def.id.as_str())
-                .body(Body::from(resp.body))
-                .unwrap_or_else(|_| {
-                    (
-                        http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "Response build error",
-                    )
-                        .into_response()
-                })
-        }
-        Err(e) => {
-            let body = serde_json::json!({
-                "error": "Mock response generation failed",
-                "mock_id": mock_def.id.as_str(),
-                "details": e.to_string()
-            });
-            (
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                [(header::CONTENT_TYPE, "application/json")],
-                body.to_string(),
-            )
-                .into_response()
-        }
+            Err(e) => {
+                let body = serde_json::json!({
+                    "error": "Mock response generation failed",
+                    "mock_id": mock_def.id.as_str(),
+                    "details": e.to_string()
+                });
+                (
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    body.to_string(),
+                )
+                    .into_response()
+            }
+        };
     }
 }
 
@@ -353,25 +574,5 @@ async fn mock_handler(
     axum::extract::State(state): axum::extract::State<Arc<ServerState>>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
-    let method = req.method().clone();
-    let uri = req.uri().clone();
-    let headers = req.headers().clone();
-
-    let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
-        .await
-        .ok();
-    let body_ref = body_bytes
-        .as_ref()
-        .filter(|b| !b.is_empty())
-        .map(std::convert::AsRef::as_ref);
-
-    respond(
-        &state.matcher,
-        &method,
-        uri.path(),
-        uri.query(),
-        &headers,
-        body_ref,
-    )
-    .await
+    handle_request(&state.matcher, req).await
 }

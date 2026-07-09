@@ -1,5 +1,10 @@
 //! Core types for the mock engine
 
+pub mod streaming;
+
+pub use streaming::*;
+
+use bytes::Bytes;
 use globset::{Glob, GlobMatcher};
 use http::header::{HeaderName, HeaderValue};
 use http::{HeaderMap, Method, StatusCode};
@@ -14,6 +19,21 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Marker header set by `HttpResponse.error()`: the transport layer
+/// (interceptor or mock server) simulates a network failure instead of
+/// delivering the response.
+pub const NETWORK_ERROR_HEADER: &str = "x-mockpit-network-error";
+
+/// Marker header set by `passthrough()` in scripted handlers: the
+/// request should be treated as unhandled (interceptor forwards to the
+/// real network; the standalone server falls through to unmatched).
+pub const PASSTHROUGH_HEADER: &str = "x-mockpit-passthrough";
+
+/// Marker header for a handler that returned `undefined`/`null`: the
+/// request falls through to the next matching mock (MSW semantics),
+/// unlike `passthrough()` which skips all remaining handlers.
+pub const FALLTHROUGH_HEADER: &str = "x-mockpit-fallthrough";
 
 /// Type alias for async handler functions that receive request context and produce dynamic responses.
 ///
@@ -47,6 +67,9 @@ pub struct RequestContext {
     pub headers: FxHashMap<String, String>,
     /// Request body as string
     pub body: Option<String>,
+    /// Raw body bytes, stored only when the body is not valid UTF-8
+    /// (`body` is None then); use [`RequestContext::body_as_bytes`]
+    pub body_bytes: Option<Bytes>,
     /// Request body parsed as JSON
     pub body_json: Option<Value>,
     /// Cascading variables (merged from global -> collection -> mock levels)
@@ -68,6 +91,25 @@ impl RequestContext {
         body: Option<&[u8]>,
     ) -> Self {
         Self::from_request_selective(method, uri, query, headers, body, true, true)
+    }
+
+    /// Create request context for a handler invocation: full headers and
+    /// body string, but no eager JSON parse — both handler runtimes
+    /// (V8 and QuickJS) parse the body lazily on first `bodyJson` access.
+    pub fn from_request_for_handler(
+        method: &str,
+        uri: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+    ) -> Self {
+        let mut ctx = Self::from_request_selective(method, uri, query, headers, body, true, false);
+        match body.map(std::str::from_utf8) {
+            Some(Ok(s)) => ctx.body = Some(s.to_string()),
+            Some(Err(_)) => ctx.body_bytes = body.map(Bytes::copy_from_slice),
+            None => {}
+        }
+        ctx
     }
 
     /// Create request context, materializing only the fields the consumer needs.
@@ -113,12 +155,17 @@ impl RequestContext {
         };
 
         // Validate UTF-8 in-place (no copy) and parse JSON only when referenced.
-        let (body_str, body_json) = if want_body {
-            let s = body.and_then(|b| std::str::from_utf8(b).ok().map(String::from));
-            let json = s.as_ref().and_then(|s| serde_json::from_str(s).ok());
-            (s, json)
+        let (body_str, body_bytes, body_json) = if want_body {
+            match body.map(std::str::from_utf8) {
+                Some(Ok(s)) => {
+                    let json = serde_json::from_str(s).ok();
+                    (Some(s.to_string()), None, json)
+                }
+                Some(Err(_)) => (None, body.map(Bytes::copy_from_slice), None),
+                None => (None, None, None),
+            }
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         Self {
@@ -129,9 +176,17 @@ impl RequestContext {
             captures: FxHashMap::default(), // Will be populated by matcher
             headers: header_map,
             body: body_str,
+            body_bytes,
             body_json,
             vars: None, // Will be populated from mock definition's cascaded vars
         }
+    }
+
+    /// Raw body bytes regardless of UTF-8 validity.
+    pub fn body_as_bytes(&self) -> Option<&[u8]> {
+        self.body_bytes
+            .as_deref()
+            .or_else(|| self.body.as_deref().map(str::as_bytes))
     }
 
     /// Add a capture variable (builder pattern)
@@ -166,7 +221,10 @@ impl RequestContext {
             // Get named captures
             for name in pattern.capture_names().flatten() {
                 if let Some(value) = caps.name(name) {
-                    captures.insert(name.to_string(), value.as_str().to_string());
+                    captures.insert(
+                        capture_param_key(name).to_string(),
+                        value.as_str().to_string(),
+                    );
                 }
             }
         }
@@ -234,6 +292,9 @@ pub struct MockDefinition {
     /// Cascading variables (merged from global -> collection -> mock levels)
     /// These are injected into the template context as {{ vars.key }}
     pub vars: Option<serde_json::Map<String, Value>>,
+    /// Long-lived connection behavior (WebSocket/SSE); None for every
+    /// plain HTTP mock
+    pub streaming: Option<StreamingResponse>,
 }
 
 /// Request matching criteria.
@@ -271,8 +332,25 @@ pub enum UrlPattern {
     Suffix(String),
     /// Regular expression match
     Regex(Regex),
+    /// Regular expression tested against the bare path AND against
+    /// `ws://host/path` / `wss://host/path` reconstructions of the
+    /// request. Backs `ws.link(RegExp)`, whose MSW idiom matches the
+    /// full connection href; the matcher supplies the host from the
+    /// handshake's Host header.
+    HrefRegex(Regex),
     /// Glob pattern match
     Glob(GlobMatcher),
+}
+
+/// Regex group names must be identifiers, so positional `*` wildcards are
+/// compiled as `__wcN` and mapped back to MSW's numeric params keys
+/// (`"0"`, `"1"`, …) at extraction time.
+pub(crate) const WILDCARD_CAPTURE_PREFIX: &str = "__wc";
+
+pub(crate) fn capture_param_key(name: &str) -> &str {
+    name.strip_prefix(WILDCARD_CAPTURE_PREFIX)
+        .filter(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+        .unwrap_or(name)
 }
 
 impl UrlPattern {
@@ -282,9 +360,25 @@ impl UrlPattern {
             UrlPattern::Exact(s) => path == s,
             UrlPattern::Prefix(s) => path.starts_with(s),
             UrlPattern::Suffix(s) => path.ends_with(s),
-            UrlPattern::Regex(re) => re.is_match(path),
+            UrlPattern::Regex(re) | UrlPattern::HrefRegex(re) => re.is_match(path),
             UrlPattern::Glob(g) => g.is_match(path),
         }
+    }
+
+    /// Test an [`UrlPattern::HrefRegex`] against reconstructed hrefs.
+    /// The scheme is unknowable server-side (plain-HTTP servers can sit
+    /// behind TLS termination), so both `ws://` and `wss://` variants
+    /// are tried.
+    pub fn matches_href(&self, host: &str, path: &str, query: Option<&str>) -> bool {
+        let UrlPattern::HrefRegex(re) = self else {
+            return false;
+        };
+        let suffix = match query {
+            Some(q) => format!("{path}?{q}"),
+            None => path.to_string(),
+        };
+        re.is_match(&format!("ws://{host}{suffix}"))
+            || re.is_match(&format!("wss://{host}{suffix}"))
     }
 
     /// Extract named captures from a regex pattern match
@@ -298,7 +392,10 @@ impl UrlPattern {
                     // Get named captures
                     for name in re.capture_names().flatten() {
                         if let Some(value) = caps.name(name) {
-                            captures.insert(name.to_string(), value.as_str().to_string());
+                            captures.insert(
+                                capture_param_key(name).to_string(),
+                                value.as_str().to_string(),
+                            );
                         }
                     }
 
@@ -308,10 +405,12 @@ impl UrlPattern {
                 }
                 None
             }
-            // Other pattern types don't support captures
+            // Other pattern types don't support captures (HrefRegex
+            // mirrors MSW's RegExp handlers, whose params are empty)
             UrlPattern::Exact(_)
             | UrlPattern::Prefix(_)
             | UrlPattern::Suffix(_)
+            | UrlPattern::HrefRegex(_)
             | UrlPattern::Glob(_) => None,
         }
     }
@@ -349,7 +448,8 @@ impl UrlPattern {
     ///
     /// Supports:
     /// - `:param` — named path parameter (matches one segment)
-    /// - `*` as a full segment — wildcard (matches everything)
+    /// - `*` as a full segment — greedy wildcard (crosses `/`, like
+    ///   path-to-regexp); captured positionally as params `"0"`, `"1"`, …
     /// - Literal segments — escaped for regex safety
     ///
     /// # Examples
@@ -360,13 +460,16 @@ impl UrlPattern {
     /// assert!(!pattern.matches("/users/123/extra"));
     /// ```
     pub fn path_pattern(pattern: &str) -> Result<Self, regex::Error> {
+        let mut wildcard_index = 0usize;
         let regex_str = pattern
             .split('/')
             .map(|segment| {
                 if let Some(param) = segment.strip_prefix(':') {
                     format!("(?P<{param}>[^/]+)")
                 } else if segment == "*" {
-                    ".*".to_string()
+                    let group = format!("(?P<{WILDCARD_CAPTURE_PREFIX}{wildcard_index}>.*)");
+                    wildcard_index += 1;
+                    group
                 } else {
                     regex::escape(segment)
                 }
@@ -375,6 +478,21 @@ impl UrlPattern {
             .join("/");
 
         UrlPattern::regex(&format!("^{regex_str}$"))
+    }
+
+    /// Split an absolute-URL predicate (`https://api.example.com/users/:id`)
+    /// into its host (`api.example.com`, including any port) and path
+    /// (`/users/:id`). Returns None for path-only predicates. Matching is
+    /// scheme-agnostic: the host becomes a Host-header matcher and the path
+    /// goes through [`UrlPattern::path_pattern`].
+    pub fn split_absolute_url(pattern: &str) -> Option<(&str, &str)> {
+        let rest = pattern
+            .strip_prefix("https://")
+            .or_else(|| pattern.strip_prefix("http://"))?;
+        match rest.find('/') {
+            Some(idx) => Some(rest.split_at(idx)),
+            None => Some((rest, "/")),
+        }
     }
 }
 
@@ -640,41 +758,7 @@ impl BodyMatcher {
     /// - Nested arrays: `$.data.items[1].subitems[0].id`
     /// - Mixed: `$.response.users[2].addresses[0].city`
     fn json_path_match(json: &serde_json::Value, path: &str, expected: &serde_json::Value) -> bool {
-        // Remove leading $. or $ if present
-        let path = path.strip_prefix("$.").unwrap_or(path);
-        let path = path.strip_prefix('$').unwrap_or(path);
-
-        // Parse path segments (handles both dots and array indices)
-        let segments = Self::parse_jsonpath_segments(path);
-
-        // Traverse JSON following the path
-        let mut current = json;
-        for segment in segments {
-            match segment {
-                PathSegment::Key(key) => {
-                    // Object property access
-                    if let Some(value) = current.get(key) {
-                        current = value;
-                    } else {
-                        return false;
-                    }
-                }
-                PathSegment::Index(idx) => {
-                    // Array index access
-                    if let Some(array) = current.as_array() {
-                        if let Some(value) = array.get(idx) {
-                            current = value;
-                        } else {
-                            return false; // Index out of bounds
-                        }
-                    } else {
-                        return false; // Not an array
-                    }
-                }
-            }
-        }
-
-        current == expected
+        json_path_lookup(json, path).is_some_and(|found| found == expected)
     }
 
     /// Parse JSONPath segments handling both object keys and array indices
@@ -683,7 +767,7 @@ impl BodyMatcher {
     /// - `"user.name"` -> `[Key("user"), Key("name")]`
     /// - `"users[0].name"` -> `[Key("users"), Index(0), Key("name")]`
     /// - `"data[1][2].value"` -> `[Key("data"), Index(1), Index(2), Key("value")]`
-    fn parse_jsonpath_segments(path: &str) -> Vec<PathSegment> {
+    pub(crate) fn parse_jsonpath_segments(path: &str) -> Vec<PathSegment> {
         let mut segments = Vec::new();
         let mut current_key = String::new();
         let mut chars = path.chars();
@@ -737,18 +821,40 @@ impl BodyMatcher {
 
 /// Path segment for JSONPath traversal
 #[derive(Debug, Clone, PartialEq)]
-enum PathSegment {
+pub(crate) enum PathSegment {
     /// Object key access
     Key(String),
     /// Array index access
     Index(usize),
 }
 
+/// Resolve a simple JSONPath (`$.a.b[0].c`) against a JSON value.
+///
+/// Shared by body matchers and WebSocket message rules.
+pub fn json_path_lookup<'a>(
+    json: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
+    let path = path.strip_prefix("$.").unwrap_or(path);
+    let path = path.strip_prefix('$').unwrap_or(path);
+
+    let mut current = json;
+    for segment in BodyMatcher::parse_jsonpath_segments(path) {
+        current = match segment {
+            PathSegment::Key(key) => current.get(key)?,
+            PathSegment::Index(idx) => current.as_array()?.get(idx)?,
+        };
+    }
+    Some(current)
+}
+
 /// GraphQL operation matcher
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GraphQLMatcher {
     /// Operation name (e.g., "GetUser")
     pub operation_name: Option<String>,
+    /// Operation name as a regex (MSW accepts RegExp operation predicates)
+    pub operation_name_regex: Option<Regex>,
     /// Operation type (query, mutation, subscription)
     pub operation_type: Option<GraphQLOperationType>,
     /// Match any operation (wildcard)
@@ -864,10 +970,14 @@ pub struct ResolvedRequestTransforms {
 
 /// Dynamic response metadata that can be returned by scripts/templates
 /// This allows runtime control of status codes and headers
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DynamicResponse {
     /// HTTP status code (overrides mock definition if present)
     pub status: Option<StatusCode>,
+    /// Custom status text. HTTP/2 dropped reason phrases, so this never
+    /// reaches the wire on the standalone server; the Node interceptor
+    /// applies it when reconstructing the JS `Response`.
+    pub status_text: Option<String>,
     /// Additional response headers (merged with mock definition headers)
     pub headers: Option<FxHashMap<String, String>>,
     /// Response body bytes
@@ -878,10 +988,27 @@ impl DynamicResponse {
     /// Create a new dynamic response with just a body (uses mock defaults for status/headers)
     pub fn body_only(body: bytes::Bytes) -> Self {
         Self {
-            status: None,
-            headers: None,
             body,
+            ..Self::default()
         }
+    }
+
+    /// A response that signals MSW-style fall-through: the caller should
+    /// retry matching with this mock excluded.
+    pub fn fallthrough() -> Self {
+        let mut headers = FxHashMap::default();
+        headers.insert(FALLTHROUGH_HEADER.to_string(), "1".to_string());
+        Self {
+            headers: Some(headers),
+            ..Self::default()
+        }
+    }
+
+    /// Whether this response carries the fall-through marker.
+    pub fn is_fallthrough(&self) -> bool {
+        self.headers
+            .as_ref()
+            .is_some_and(|h| h.get(FALLTHROUGH_HEADER).is_some_and(|v| v == "1"))
     }
 
     /// Parse a JSON value into a DynamicResponse
@@ -929,6 +1056,7 @@ impl DynamicResponse {
                     status,
                     headers,
                     body: body_bytes,
+                    ..Self::default()
                 });
             }
         }
@@ -1162,7 +1290,7 @@ impl BodySource {
     /// Create a template body source with pre-computed hash
     pub fn template(content: impl Into<String>) -> Self {
         let source = content.into();
-        let hash = Self::compute_hash(&source);
+        let hash = template_hash(&source);
         BodySource::Template { source, hash }
     }
 
@@ -1202,15 +1330,16 @@ impl BodySource {
             _ => false,
         }
     }
+}
 
-    /// Compute FxHash for a template string
-    fn compute_hash(template: &str) -> u64 {
-        use rustc_hash::FxHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = FxHasher::default();
-        template.hash(&mut hasher);
-        hasher.finish()
-    }
+/// FxHash of a template source — the key into the shared render cache
+/// (used by response bodies and streaming SSE/WS payload templates).
+pub fn template_hash(template: &str) -> u64 {
+    use rustc_hash::FxHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = FxHasher::default();
+    template.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]
@@ -1434,6 +1563,7 @@ mod tests {
             },
             response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
             vars: None,
+            streaming: None,
         };
 
         assert_eq!(mock.id, "test-mock");

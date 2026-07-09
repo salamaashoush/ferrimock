@@ -80,6 +80,7 @@ fn test_e2e_basic_query_matching() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -164,6 +165,7 @@ fn test_e2e_mutation_with_variables() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -240,6 +242,7 @@ fn test_e2e_introspection_query() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -315,6 +318,7 @@ fn test_e2e_priority_based_error_handling() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     // Low priority: Success mock for valid input
@@ -353,6 +357,7 @@ fn test_e2e_priority_based_error_handling() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(error_mock);
@@ -455,6 +460,7 @@ fn test_e2e_subscription_matching() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -514,6 +520,7 @@ fn test_e2e_apollo_client_headers() {
             BodySource::inline(r#"{"data": {"items": []}}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -592,6 +599,7 @@ fn test_e2e_variable_based_routing() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     // Mock 2: Route to slow query for status=archived
@@ -638,6 +646,7 @@ fn test_e2e_variable_based_routing() {
             ),
         ),
         vars: None,
+        streaming: None,
     };
 
     // Mock 3: Default fallback
@@ -667,6 +676,7 @@ fn test_e2e_variable_based_routing() {
             BodySource::inline(r#"{"data": {"users": []}}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(cache_mock);

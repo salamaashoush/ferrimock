@@ -24,6 +24,9 @@ pub enum MockpitError {
     /// A referenced item was not found.
     #[error("not found: {0}")]
     NotFound(String),
+    /// Script evaluation or scripted handler failure.
+    #[error("script error: {0}")]
+    Script(String),
     /// Filesystem I/O failure.
     #[error(transparent)]
     Io(#[from] std::io::Error),

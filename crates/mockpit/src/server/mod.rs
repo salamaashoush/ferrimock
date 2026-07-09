@@ -9,7 +9,9 @@ pub mod debouncer;
 pub mod file_watcher;
 pub mod hot_reload;
 pub mod serve;
+pub mod sse;
 pub mod state;
+pub mod ws;
 
 pub use debouncer::{DebouncedEvent, EventDebouncer};
 pub use file_watcher::{FileEvent, FileEventFilter, FileWatcher};

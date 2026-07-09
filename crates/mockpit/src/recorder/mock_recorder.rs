@@ -702,6 +702,8 @@ impl MockRecorder {
                 } else {
                     Some(format!("{}ms", interaction.duration.as_millis()))
                 },
+                sse: None,
+                ws: None,
             };
 
             // Determine if this is the first entry being written to the file.
@@ -951,6 +953,8 @@ impl MockRecorder {
                 } else {
                     Some(format!("{}ms", interaction.duration.as_millis()))
                 },
+                sse: None,
+                ws: None,
             };
 
             mocks.push(mock_config);
@@ -1392,7 +1396,7 @@ mod tests {
 
         // Load and verify HAR structure
         let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-        let har: Har = serde_json::from_str(&content).unwrap();
+        let har: Har = crate::config::har::parse_har(&content).unwrap();
 
         // Extract log from Spec enum
         let log = match &har.log {
@@ -1475,7 +1479,7 @@ mod tests {
         // Verify the HAR file
         assert!(file_path.exists());
         let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-        let har: Har = serde_json::from_str(&content).unwrap();
+        let har: Har = crate::config::har::parse_har(&content).unwrap();
 
         // Extract log from Spec enum
         let log = match &har.log {
@@ -1519,7 +1523,7 @@ mod tests {
 
         let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
         let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-        let har: Har = serde_json::from_str(&content).unwrap();
+        let har: Har = crate::config::har::parse_har(&content).unwrap();
 
         // Extract log from Spec enum
         let log = match &har.log {

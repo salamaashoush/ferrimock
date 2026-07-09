@@ -7,6 +7,8 @@ use crate::types::MockDefinition;
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MockSummary {
     pub id: String,
+    /// Mock kind: "http", "sse", or "ws".
+    pub kind: String,
     pub priority: u32,
     pub enabled: bool,
     pub methods: Vec<String>,
@@ -21,6 +23,11 @@ impl From<&MockDefinition> for MockSummary {
     fn from(m: &MockDefinition) -> Self {
         Self {
             id: m.id.to_string(),
+            kind: m
+                .streaming
+                .as_ref()
+                .map_or("http", crate::types::StreamingResponse::kind)
+                .to_string(),
             priority: m.priority,
             enabled: m.enabled,
             methods: m

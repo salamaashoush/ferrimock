@@ -34,6 +34,7 @@ fn create_test_mock(id: &str, path: &str) -> MockDefinition {
             BodySource::inline("{\"status\": \"ok\"}"),
         ),
         vars: None,
+        streaming: None,
     }
 }
 
@@ -100,6 +101,7 @@ fn test_call_tracking_with_different_methods() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);

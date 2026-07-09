@@ -36,6 +36,7 @@ fn test_mock_priority_ordering() {
             BodySource::inline(r#"{"priority":"low"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     let high_priority = MockDefinition {
@@ -60,6 +61,7 @@ fn test_mock_priority_ordering() {
             BodySource::inline(r#"{"priority":"high"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(low_priority);

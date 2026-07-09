@@ -40,6 +40,7 @@ fn create_simple_mock(id: &str, path: &str) -> MockDefinition {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"status": "ok"}"#)),
         vars: None,
+        streaming: None,
     }
 }
 
@@ -62,6 +63,7 @@ fn create_regex_mock(id: &str, pattern: &str) -> MockDefinition {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"status": "ok"}"#)),
         vars: None,
+        streaming: None,
     }
 }
 
@@ -89,6 +91,7 @@ fn create_complex_mock(id: &str) -> MockDefinition {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"status": "ok"}"#)),
         vars: None,
+        streaming: None,
     }
 }
 
@@ -111,6 +114,7 @@ fn create_file_mock(id: &str, file_path: PathBuf) -> MockDefinition {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::file(file_path)),
         vars: None,
+        streaming: None,
     }
 }
 
@@ -138,6 +142,7 @@ fn create_template_mock(id: &str) -> MockDefinition {
             ),
         ),
         vars: None,
+        streaming: None,
     }
 }
 
@@ -368,6 +373,7 @@ fn bench_miss_at_scale(c: &mut Criterion) {
                     BodySource::inline(r#"{"status": "ok"}"#),
                 ),
                 vars: None,
+                streaming: None,
             };
             registry.add_mock(mock);
         }
@@ -829,6 +835,7 @@ fn bench_structured_response(c: &mut Criterion) {
         query: FxHashMap::default(),
         headers: FxHashMap::default(),
         body: None,
+        body_bytes: None,
         body_json: None,
         vars: None,
     };

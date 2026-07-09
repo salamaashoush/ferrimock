@@ -373,7 +373,10 @@ pub async fn get_mock(
                     Some(crate::engine::types::UrlPattern::Exact(path)) => path.clone(),
                     Some(crate::engine::types::UrlPattern::Prefix(prefix)) => format!("{prefix}*"),
                     Some(crate::engine::types::UrlPattern::Suffix(suffix)) => format!("*{suffix}"),
-                    Some(crate::engine::types::UrlPattern::Regex(pattern)) => {
+                    Some(
+                        crate::engine::types::UrlPattern::Regex(pattern)
+                        | crate::engine::types::UrlPattern::HrefRegex(pattern),
+                    ) => {
                         format!("~{pattern}")
                     }
                     Some(crate::engine::types::UrlPattern::Glob(_)) => "[glob pattern]".to_string(),
@@ -478,7 +481,10 @@ pub async fn get_mock(
                     Some(crate::engine::types::UrlPattern::Exact(path)) => path.clone(),
                     Some(crate::engine::types::UrlPattern::Prefix(prefix)) => format!("{prefix}*"),
                     Some(crate::engine::types::UrlPattern::Suffix(suffix)) => format!("*{suffix}"),
-                    Some(crate::engine::types::UrlPattern::Regex(pattern)) => {
+                    Some(
+                        crate::engine::types::UrlPattern::Regex(pattern)
+                        | crate::engine::types::UrlPattern::HrefRegex(pattern),
+                    ) => {
                         format!("~{pattern}")
                     }
                     Some(crate::engine::types::UrlPattern::Glob(_)) => "[glob]".to_string(),

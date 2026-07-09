@@ -175,6 +175,7 @@ mod tests {
             },
             response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
             vars: None,
+            streaming: None,
         }
     }
 

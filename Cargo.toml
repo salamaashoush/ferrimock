@@ -124,6 +124,7 @@ tokio = { version = "1.50", features = ["full"] }
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 
 # Serialization
 base64 = "0.22"
@@ -186,6 +187,19 @@ graphql-parser = "0.4"
 
 # Template engine
 tera = "1.20"
+
+# QuickJS scripting (scripting feature)
+# `full-async` does NOT imply `parallel`; without it AsyncRuntime is !Send/!Sync
+# and HandlerFn closures (Send + Sync) cannot reach the VM.
+rquickjs = { version = "0.12", features = ["full-async", "parallel", "macro", "loader", "array-buffer"] }
+rquickjs-serde = "0.6"
+# Bundler front-end: rolldown bundles + tree-shakes + transpiles TS to one ESM
+# module (resolving node_modules), compiled once to QuickJS bytecode.
+rolldown = "1"
+rolldown_common = "1"
+rolldown_plugin = "1"
+# Remap QuickJS error line:col (bundled output) back to original .ts/.js.
+sourcemap = "9"
 
 # Testing
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }

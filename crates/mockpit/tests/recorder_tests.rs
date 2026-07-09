@@ -1071,7 +1071,7 @@ async fn test_har_with_query_string_parsing() {
 
     let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    let har: har::Har = serde_json::from_str(&content).unwrap();
+    let har: har::Har = mockpit::config::parse_har(&content).unwrap();
 
     let har::Spec::V1_2(log) = &har.log else {
         panic!("Expected V1_2 spec");
@@ -2072,7 +2072,7 @@ async fn test_har_status_code_text_mapping() {
 
     let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    let har: har::Har = serde_json::from_str(&content).unwrap();
+    let har: har::Har = mockpit::config::parse_har(&content).unwrap();
 
     let har::Spec::V1_2(log) = &har.log else {
         panic!("Expected V1_2 spec");
@@ -2137,7 +2137,7 @@ async fn test_har_unknown_status_code() {
 
     let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    let har: har::Har = serde_json::from_str(&content).unwrap();
+    let har: har::Har = mockpit::config::parse_har(&content).unwrap();
 
     let har::Spec::V1_2(log) = &har.log else {
         panic!("Expected V1_2 spec");
@@ -2168,7 +2168,7 @@ async fn test_har_query_string_without_value() {
 
     let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    let har: har::Har = serde_json::from_str(&content).unwrap();
+    let har: har::Har = mockpit::config::parse_har(&content).unwrap();
 
     let har::Spec::V1_2(log) = &har.log else {
         panic!("Expected V1_2 spec");
@@ -2207,7 +2207,7 @@ async fn test_har_no_query_string() {
 
     let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    let har: har::Har = serde_json::from_str(&content).unwrap();
+    let har: har::Har = mockpit::config::parse_har(&content).unwrap();
 
     let har::Spec::V1_2(log) = &har.log else {
         panic!("Expected V1_2 spec");
@@ -2240,7 +2240,7 @@ async fn test_har_with_post_data() {
 
     let file_path = recorder.save(RecordingFormat::Har).await.unwrap();
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    let har: har::Har = serde_json::from_str(&content).unwrap();
+    let har: har::Har = mockpit::config::parse_har(&content).unwrap();
 
     let har::Spec::V1_2(log) = &har.log else {
         panic!("Expected V1_2 spec");

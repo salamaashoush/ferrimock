@@ -19,10 +19,11 @@ pub mod patches;
 pub mod patterns;
 pub mod request_transform;
 pub mod response;
+pub mod streaming;
 pub mod template_formatter;
 
 // Re-export commonly used types
-pub use har::{DomainFilter, HarLoadOptions, HarLoader};
+pub use har::{DomainFilter, HarLoadOptions, HarLoader, parse_har};
 pub use matcher::{
     BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig,
 };

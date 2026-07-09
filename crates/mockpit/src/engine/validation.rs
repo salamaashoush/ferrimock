@@ -262,6 +262,60 @@ impl MockValidator {
                 });
             }
 
+            // Validate streaming (ws/sse) configuration
+            if mock.sse.is_some() || mock.ws.is_some() {
+                let mut conflict = |message: &str| {
+                    let line_number = Self::find_line_number(file_content, &mock.id);
+                    errors.push(ValidationError {
+                        mock_id: mock_id.clone(),
+                        error_type: ErrorType::ConflictingModes,
+                        message: message.to_string(),
+                        snippet: None,
+                        suggestion: Some(
+                            "A ws/sse mock may only combine `match`, `response.headers`, and its own block"
+                                .to_string(),
+                        ),
+                        line_number,
+                    });
+                };
+                if mock.sse.is_some() && mock.ws.is_some() {
+                    conflict("Cannot combine `sse` and `ws` in one mock");
+                }
+                if mock.patch.is_some() {
+                    conflict("Cannot combine `sse`/`ws` with `patch`");
+                }
+                if mock.delay.is_some() {
+                    conflict("Cannot combine `sse`/`ws` with a top-level `delay`");
+                }
+                if mock.request.as_ref().is_some_and(|r| !r.is_empty()) {
+                    conflict("Cannot combine `sse`/`ws` with request transforms");
+                }
+                if mock
+                    .response_config
+                    .as_ref()
+                    .is_some_and(crate::config::response::ResponseConfig::is_full_mock)
+                {
+                    conflict("Cannot combine `sse`/`ws` with a full mock response body");
+                }
+
+                let script_error = match (&mock.sse, &mock.ws) {
+                    (Some(sse), _) => sse.clone().into_script().err(),
+                    (None, Some(ws)) => ws.clone().into_script().err(),
+                    (None, None) => None,
+                };
+                if let Some(e) = script_error {
+                    let line_number = Self::find_line_number(file_content, &mock.id);
+                    errors.push(ValidationError {
+                        mock_id: mock_id.clone(),
+                        error_type: ErrorType::InvalidStreamingConfig,
+                        message: e.to_string(),
+                        snippet: None,
+                        suggestion: None,
+                        line_number,
+                    });
+                }
+            }
+
             // Validate match configuration
             if let Some(ref match_config) = mock.match_config {
                 // Validate HTTP methods
@@ -477,14 +531,16 @@ impl MockValidator {
                 let has_request_transforms = mock.request.as_ref().is_some_and(|r| !r.is_empty());
                 let has_patch = mock.patch.is_some();
                 let has_delay = mock.delay.is_some();
-                if !has_request_transforms && !has_patch && !has_delay {
+                let has_streaming = mock.sse.is_some() || mock.ws.is_some();
+                if !has_request_transforms && !has_patch && !has_delay && !has_streaming {
                     errors.push(ValidationError {
                         mock_id: mock_id.clone(),
                         error_type: ErrorType::MissingField,
                         message: "Missing 'response' configuration".to_string(),
                         snippet: None,
                         suggestion: Some(
-                            "Add response, patch, delay, or request transform configuration"
+                            "Add response, sse, ws, patch, delay, or request transform \
+                             configuration"
                                 .to_string(),
                         ),
                         line_number: None,
@@ -1018,24 +1074,34 @@ impl MockValidator {
                         }
                     }
 
-                    // Regex vs Regex, Glob vs Glob, and other complex combinations:
-                    // Conservative approach - assume they might overlap
-                    // (Proper static analysis is too complex for regex/glob patterns)
+                    // Regex vs Regex, Glob vs Glob, href regexes, and other
+                    // complex combinations: conservative approach - assume
+                    // they might overlap (proper static analysis is too
+                    // complex for regex/glob patterns)
                     (
                         UrlPattern::Regex(_)
+                        | UrlPattern::HrefRegex(_)
                         | UrlPattern::Prefix(_)
                         | UrlPattern::Suffix(_)
                         | UrlPattern::Glob(_),
-                        UrlPattern::Regex(_) | UrlPattern::Glob(_),
+                        UrlPattern::Regex(_) | UrlPattern::HrefRegex(_) | UrlPattern::Glob(_),
                     )
                     | (
-                        UrlPattern::Regex(_) | UrlPattern::Glob(_) | UrlPattern::Suffix(_),
+                        UrlPattern::Regex(_)
+                        | UrlPattern::HrefRegex(_)
+                        | UrlPattern::Glob(_)
+                        | UrlPattern::Suffix(_),
                         UrlPattern::Prefix(_),
                     )
                     | (
-                        UrlPattern::Regex(_) | UrlPattern::Glob(_) | UrlPattern::Prefix(_),
+                        UrlPattern::Regex(_)
+                        | UrlPattern::HrefRegex(_)
+                        | UrlPattern::Glob(_)
+                        | UrlPattern::Prefix(_),
                         UrlPattern::Suffix(_),
-                    ) => {
+                    )
+                    | (UrlPattern::Exact(_), UrlPattern::HrefRegex(_))
+                    | (UrlPattern::HrefRegex(_), UrlPattern::Exact(_)) => {
                         // Conservative: assume overlap for complex pattern combinations
                         return true;
                     }
@@ -1475,6 +1541,8 @@ pub enum ErrorType {
     InvalidPatchRegex,
     /// Invalid HTTP header name in response patch
     InvalidPatchHeaderName,
+    /// Invalid ws/sse streaming configuration
+    InvalidStreamingConfig,
 }
 
 impl ErrorType {
@@ -1501,6 +1569,7 @@ impl ErrorType {
             ErrorType::MutuallyExclusiveFields => "E018".to_string(),
             ErrorType::InvalidPatchRegex => "E019".to_string(),
             ErrorType::InvalidPatchHeaderName => "E020".to_string(),
+            ErrorType::InvalidStreamingConfig => "E021".to_string(),
         }
     }
 }
@@ -1639,6 +1708,7 @@ mod tests {
             source_file: None,
             request_transforms: None,
             vars: None,
+            streaming: None,
             request: RequestMatcher {
                 methods: smallvec![Method::POST],
                 url_patterns: smallvec![UrlPattern::exact("/api/users")],
@@ -1669,6 +1739,7 @@ mod tests {
             source_file: None,
             request_transforms: None,
             vars: None,
+            streaming: None,
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
                 url_patterns: smallvec![
@@ -1776,6 +1847,7 @@ mod tests {
             source_file: None,
             request_transforms: None,
             vars: None,
+            streaming: None,
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
                 url_patterns: smallvec![UrlPattern::exact("/api/users")],
@@ -1806,6 +1878,7 @@ mod tests {
             source_file: None,
             request_transforms: None,
             vars: None,
+            streaming: None,
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
                 url_patterns: smallvec![UrlPattern::exact("/api/users")],
@@ -1853,6 +1926,7 @@ mod tests {
             source_file: None,
             request_transforms: None,
             vars: None,
+            streaming: None,
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
                 url_patterns: smallvec![UrlPattern::exact("/api/data")],
@@ -1886,6 +1960,7 @@ mod tests {
             source_file: None,
             request_transforms: None,
             vars: None,
+            streaming: None,
             request: RequestMatcher {
                 methods: smallvec![Method::GET],
                 url_patterns: smallvec![UrlPattern::exact("/api/data")],
