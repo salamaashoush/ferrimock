@@ -25,7 +25,7 @@ mod renderer;
 mod engine;
 mod fake_data;
 mod filters;
-mod functions;
+pub(crate) mod functions;
 pub mod graphql_helpers;
 pub mod plugin;
 pub mod store;

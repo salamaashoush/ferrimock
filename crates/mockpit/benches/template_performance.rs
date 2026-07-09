@@ -29,6 +29,7 @@ fn bench_render_cache_hit(c: &mut Criterion) {
             m
         },
         body: None,
+        body_bytes: None,
         body_json: None,
         vars: None,
     };
@@ -112,6 +113,7 @@ fn bench_render_control_flow(c: &mut Criterion) {
         query: FxHashMap::default(),
         headers: FxHashMap::default(),
         body: None,
+        body_bytes: None,
         body_json: None,
         vars: None,
     };
@@ -273,6 +275,7 @@ fn bench_precomputed_hash(c: &mut Criterion) {
         query: FxHashMap::default(),
         headers: FxHashMap::default(),
         body: None,
+        body_bytes: None,
         body_json: None,
         vars: None,
     };

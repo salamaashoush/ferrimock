@@ -98,6 +98,12 @@ impl MockMatcher {
         self.cache.lock().clear();
     }
 
+    /// The registry's live streaming-connection tracker (WS/SSE drivers
+    /// register connections; registry removal paths tear them down).
+    pub fn streaming_connections(&self) -> Arc<crate::streaming::StreamingConnections> {
+        self.registry.streaming_connections()
+    }
+
     /// Find a matching mock for the given request
     ///
     /// This implements the full matching flow:
@@ -113,14 +119,36 @@ impl MockMatcher {
         headers: &HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<MockMatch> {
+        self.find_match_excluding(method, path, query, headers, body, &[])
+    }
+
+    /// [`Self::find_match`] with a set of mock IDs to skip.
+    ///
+    /// Used for MSW-style fall-through: when a handler returns
+    /// `undefined`, the caller retries matching with that mock excluded so
+    /// the next candidate (or the network) gets the request. A non-empty
+    /// exclusion list bypasses the exact-index and LRU fast paths — they
+    /// cannot represent "best match except these".
+    pub fn find_match_excluding(
+        &self,
+        method: &Method,
+        path: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+        exclude: &[String],
+    ) -> Option<MockMatch> {
         // Return None if the mock system is disabled
         if !self.registry.is_enabled() {
             return None;
         }
 
+        let use_fast_paths = exclude.is_empty();
+
         // FAST PATH 1: Exact-match index for simple requests (no query/body/conditional mocks)
         // This is O(1) and avoids all lock contention on the LRU cache.
-        if query.is_none()
+        if use_fast_paths
+            && query.is_none()
             && body.is_none()
             && let Some(mock) = self.registry.try_exact_match_simple(method, path)
             && mock.enabled
@@ -134,7 +162,7 @@ impl MockMatcher {
         // Cache eligibility: we can cache results for requests without query/body.
         // The mock-level cacheability check ensures we only cache mocks without
         // header/body/query matchers, so it's safe to cache even when headers are present.
-        let can_use_cache = query.is_none() && body.is_none();
+        let can_use_cache = use_fast_paths && query.is_none() && body.is_none();
 
         if can_use_cache {
             let hash = cache_hash(method, path);
@@ -145,7 +173,8 @@ impl MockMatcher {
                 if let Some(mock_id) = cache.get(&hash) {
                     // Cache hit! Retrieve the mock by ID and verify it's still cacheable
                     if let Some(mock) = self.registry.get_mock(mock_id.as_str()) {
-                        let is_cacheable = mock.request.query_matchers.is_empty()
+                        let is_cacheable = mock.enabled
+                            && mock.request.query_matchers.is_empty()
                             && mock.request.header_matchers.is_empty()
                             && mock.request.body_matcher.is_none()
                             && !matches!(mock.response.body, crate::types::BodySource::Handler(_));
@@ -197,16 +226,34 @@ impl MockMatcher {
             None
         };
 
-        // Find the first mock that matches all criteria (cheapest checks first)
+        // Find the first mock that matches all criteria (cheapest checks
+        // first). Track whether any higher-precedence conditional mock
+        // matched on method+URL but lost on its conditions — caching the
+        // winner would then serve it to future requests whose headers/
+        // query/body WOULD satisfy the conditional competitor.
+        let mut conditional_competitor = false;
         let matched_mock = all_mocks
             .iter()
             .find(|&mock| {
-                self.matches_method(mock, method)
-                    && self.matches_url(mock, path, query)
-                    && self.matches_headers(mock, headers)
+                let candidate = (exclude.is_empty()
+                    || !exclude.iter().any(|id| id == mock.id.as_str()))
+                    && self.matches_method(mock, method)
+                    && self.matches_url(mock, path, query, headers);
+                if !candidate {
+                    return false;
+                }
+                let conditional = !mock.request.header_matchers.is_empty()
+                    || !mock.request.query_matchers.is_empty()
+                    || mock.request.body_matcher.is_some()
+                    || mock.request.graphql_matcher.is_some();
+                let matched = self.matches_headers(mock, headers)
                     && self.matches_query(mock, query, parsed_query.as_ref())
                     && self.matches_graphql(mock, body, parsed_body_json.as_ref())
-                    && self.matches_body(mock, body, parsed_body_json.as_ref())
+                    && self.matches_body(mock, body, parsed_body_json.as_ref());
+                if conditional && !matched {
+                    conditional_competitor = true;
+                }
+                matched
             })
             .map(Arc::clone);
 
@@ -219,7 +266,8 @@ impl MockMatcher {
             if can_use_cache {
                 let is_cacheable = mock.request.query_matchers.is_empty()
                     && mock.request.header_matchers.is_empty()
-                    && mock.request.body_matcher.is_none();
+                    && mock.request.body_matcher.is_none()
+                    && !conditional_competitor;
 
                 if is_cacheable {
                     let hash = cache_hash(method, path);
@@ -238,6 +286,13 @@ impl MockMatcher {
         if mock.once {
             let _ = self.registry.disable_mock(mock.id.as_str());
         }
+    }
+
+    /// Undo a `once` consumption. MSW does not count a handler as used
+    /// when its resolver falls through, but `once` mocks are disabled at
+    /// match time — fall-through paths re-enable the mock afterwards.
+    pub fn reenable_mock(&self, id: &str) {
+        let _ = self.registry.enable_mock(id);
     }
 
     /// Record a call to the mock if call tracking is enabled.
@@ -301,7 +356,13 @@ impl MockMatcher {
 
     /// Check if the mock's URL patterns match the request path
     #[allow(clippy::unused_self)]
-    fn matches_url(&self, mock: &MockDefinition, path: &str, query: Option<&str>) -> bool {
+    fn matches_url(
+        &self,
+        mock: &MockDefinition,
+        path: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+    ) -> bool {
         // Empty URL patterns means match all URLs
         if mock.request.url_patterns.is_empty() {
             return true;
@@ -321,16 +382,62 @@ impl MockMatcher {
         // Slow path: if there's a query string, try matching full URL (path?query)
         // This is needed for exact-match patterns from recordings that include query params.
         // Only allocate the format string if the fast path didn't match.
-        if let Some(q) = query {
-            let full_url = format!("{path}?{q}");
+        if let Some(q) = query
+            && mock
+                .request
+                .url_patterns
+                .iter()
+                .any(|pattern| pattern.matches(&format!("{path}?{q}")))
+        {
+            return true;
+        }
+
+        // Href regexes (`ws.link(RegExp)`) additionally test scheme-ful
+        // reconstructions built from the handshake's Host header.
+        if let Some(host) = headers
+            .get(http::header::HOST)
+            .and_then(|value| value.to_str().ok())
+        {
             return mock
                 .request
                 .url_patterns
                 .iter()
-                .any(|pattern| pattern.matches(&full_url));
+                .any(|pattern| pattern.matches_href(host, path, query));
         }
 
         false
+    }
+
+    /// Every enabled WebSocket mock matching a connection handshake, in
+    /// precedence order. Unlike [`Self::find_match`] this has no side
+    /// effects (no `once` consumption, no call tracking, no caching):
+    /// the Node interceptor lane dispatches a connection to ALL matching
+    /// `ws` handlers (MSW semantics), not just the best one.
+    pub fn find_ws_matches(
+        &self,
+        path: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+    ) -> Vec<MockMatch> {
+        if !self.registry.is_enabled() {
+            return Vec::new();
+        }
+        self.registry
+            .get_enabled_mocks_arc()
+            .iter()
+            .filter(|mock| {
+                mock.streaming
+                    .as_ref()
+                    .is_some_and(crate::types::StreamingResponse::is_ws)
+                    && self.matches_method(mock, &Method::GET)
+                    && self.matches_url(mock, path, query, headers)
+                    && self.matches_headers(mock, headers)
+            })
+            .map(|mock| MockMatch {
+                mock: Arc::clone(mock),
+                captures: self.extract_url_captures(mock, path),
+            })
+            .collect()
     }
 
     /// Check if the mock's header matchers match the request headers
@@ -390,11 +497,32 @@ impl MockMatcher {
             return false;
         }
 
-        // Check operation name if specified
-        if let Some(expected_name) = &graphql_matcher.operation_name {
-            let actual_name = json.get("operationName").and_then(|v| v.as_str());
+        // Check operation name if specified. Clients often omit the
+        // explicit operationName field, so fall back to the name declared
+        // in the query document (MSW matches on the parsed document name).
+        if graphql_matcher.operation_name.is_some()
+            || graphql_matcher.operation_name_regex.is_some()
+        {
+            let actual_name = json
+                .get("operationName")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    json.get("query")
+                        .and_then(|v| v.as_str())
+                        .and_then(Self::operation_name_from_query)
+                });
 
-            if actual_name != Some(expected_name.as_str()) {
+            let Some(actual) = actual_name else {
+                return false;
+            };
+            if let Some(expected) = &graphql_matcher.operation_name
+                && actual != expected.as_str()
+            {
+                return false;
+            }
+            if let Some(re) = &graphql_matcher.operation_name_regex
+                && !re.is_match(actual)
+            {
                 return false;
             }
         }
@@ -508,6 +636,21 @@ impl MockMatcher {
         }
 
         None
+    }
+
+    /// Extract the operation name declared in a GraphQL document
+    /// (`query GetUser(...) {` -> `GetUser`). Anonymous operations return None.
+    pub fn operation_name_from_query(query: &str) -> Option<&str> {
+        let trimmed = query.trim_start();
+        let rest = trimmed
+            .strip_prefix("query")
+            .or_else(|| trimmed.strip_prefix("mutation"))
+            .or_else(|| trimmed.strip_prefix("subscription"))?;
+        let rest = rest.trim_start();
+        let end = rest
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(rest.len());
+        if end == 0 { None } else { rest.get(..end) }
     }
 
     /// Check if the mock's body matcher matches the request body
@@ -840,6 +983,7 @@ mod tests {
             },
             response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
             vars: None,
+            streaming: None,
         }
     }
 
@@ -1346,6 +1490,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: Some("GetUser".to_string()),
             operation_type: None,
             match_any: false,
@@ -1399,6 +1544,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: None,
             operation_type: Some(crate::types::GraphQLOperationType::Query),
             match_any: false,
@@ -1450,6 +1596,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: Some("CreateUser".to_string()),
             operation_type: Some(crate::types::GraphQLOperationType::Mutation),
             match_any: false,
@@ -1490,6 +1637,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: Some("GetUser".to_string()),
             operation_type: None,
             match_any: false,
@@ -1544,6 +1692,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: Some("CreateUser".to_string()),
             operation_type: Some(crate::types::GraphQLOperationType::Mutation),
             match_any: false,
@@ -1595,6 +1744,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: None,
             operation_type: None,
             match_any: false,
@@ -1661,6 +1811,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: None,
             operation_type: None,
             match_any: false,
@@ -1712,6 +1863,7 @@ mod tests {
             vec![],
         );
         mock.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: None,
             operation_type: None,
             match_any: true,
@@ -1766,6 +1918,7 @@ mod tests {
         let mut variables_high = FxHashMap::default();
         variables_high.insert("id".to_string(), serde_json::json!("999"));
         high_priority.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: Some("GetUser".to_string()),
             operation_type: None,
             match_any: false,
@@ -1783,6 +1936,7 @@ mod tests {
             vec![],
         );
         low_priority.request.graphql_matcher = Some(crate::types::GraphQLMatcher {
+            operation_name_regex: None,
             operation_name: Some("GetUser".to_string()),
             operation_type: None,
             match_any: false,

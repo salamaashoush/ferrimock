@@ -224,6 +224,16 @@ pub struct MockConfig {
     /// When set alone (no response/patch/request), enables passthrough with delay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delay: Option<String>,
+
+    /// Server-Sent Events playback (streaming mock; `response` may only
+    /// carry extra headers)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sse: Option<super::streaming::SseConfig>,
+
+    /// WebSocket behavior (streaming mock; `response` may only carry
+    /// extra headers)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ws: Option<super::streaming::WsConfig>,
 }
 
 impl MockConfig {
@@ -259,6 +269,44 @@ impl MockConfig {
         let is_full_mock = response_config
             .as_ref()
             .is_some_and(super::response::ResponseConfig::is_full_mock);
+
+        // Streaming mocks (ws/sse) are exclusive with body-producing and
+        // upstream-patching modes; `response` may only carry status-less
+        // extras (headers).
+        let streaming = match (self.sse, self.ws) {
+            (Some(_), Some(_)) => {
+                return Err(crate::mp_err!("Cannot combine `sse` and `ws` in one mock"));
+            }
+            (Some(sse), None) => Some(crate::types::StreamingResponse::Sse(std::sync::Arc::new(
+                sse.into_script()?,
+            ))),
+            (None, Some(ws)) => Some(crate::types::StreamingResponse::Ws(std::sync::Arc::new(
+                ws.into_script()?,
+            ))),
+            (None, None) => None,
+        };
+        if streaming.is_some() {
+            if is_full_mock {
+                return Err(crate::mp_err!(
+                    "Cannot combine `sse`/`ws` with a full mock response body; \
+                     `response` may only set extra headers"
+                ));
+            }
+            if self.patch.is_some() {
+                return Err(crate::mp_err!("Cannot combine `sse`/`ws` with `patch`"));
+            }
+            if has_request_transforms {
+                return Err(crate::mp_err!(
+                    "Cannot combine `sse`/`ws` with request transforms"
+                ));
+            }
+            if self.delay.is_some() {
+                return Err(crate::mp_err!(
+                    "Cannot combine `sse`/`ws` with a top-level `delay`; \
+                     use per-event/per-action delays instead"
+                ));
+            }
+        }
 
         // Validation: conflicting combinations
         if is_full_mock && has_request_transforms {
@@ -319,6 +367,26 @@ impl MockConfig {
             None
         };
 
+        let mut request = request_config.into_request_matcher()?;
+        if streaming
+            .as_ref()
+            .is_some_and(super::super::types::StreamingResponse::is_ws)
+        {
+            if request.methods.is_empty() {
+                request.methods.push(http::Method::GET);
+            } else if request.methods.iter().any(|m| m != http::Method::GET) {
+                return Err(crate::mp_err!(
+                    "`ws` mocks must match GET (the WebSocket handshake method)"
+                ));
+            }
+            // Scope the mock to upgrade handshakes so plain GETs on the
+            // same path fall through to other mocks.
+            let upgrade_matcher =
+                crate::types::HeaderMatcher::regex(http::header::UPGRADE, "(?i)^websocket$")
+                    .map_err(|e| crate::mp_err!("internal upgrade matcher: {e}"))?;
+            request.header_matchers.push(upgrade_matcher);
+        }
+
         Ok(MockDefinition {
             id: self.id,
             priority: self.priority,
@@ -327,9 +395,10 @@ impl MockConfig {
             scope: self.scope,
             source_file: None,
             request_transforms,
-            request: request_config.into_request_matcher()?,
+            request,
             response,
             vars: None,
+            streaming,
         })
     }
 }

@@ -246,6 +246,8 @@ impl MockGenerator {
             }),
             patch: None,
             delay: None,
+            sse: None,
+            ws: None,
         })
     }
 

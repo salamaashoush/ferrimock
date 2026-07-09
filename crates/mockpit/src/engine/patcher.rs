@@ -1186,6 +1186,7 @@ mod tests {
                 headers,
                 query: rustc_hash::FxHashMap::default(),
                 body: None,
+                body_bytes: None,
                 body_json: None,
                 vars: None,
             },

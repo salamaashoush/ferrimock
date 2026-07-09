@@ -165,7 +165,14 @@ impl MockConsolidator {
             self.stats.original_count
         );
 
-        let groups = PatternDetector::group_similar_mocks(&collection.mocks);
+        // Streaming mocks (ws/sse) have no consolidatable response shape;
+        // pass them through untouched.
+        let (streaming_mocks, http_mocks): (Vec<_>, Vec<_>) = collection
+            .mocks
+            .into_iter()
+            .partition(|m| m.sse.is_some() || m.ws.is_some());
+
+        let groups = PatternDetector::group_similar_mocks(&http_mocks);
         println!("   ✓ Grouped into {} request patterns", groups.len());
 
         let mut consolidated_mocks = Vec::new();
@@ -173,6 +180,7 @@ impl MockConsolidator {
             let processed = self.process_mock_group(group_id, group)?;
             consolidated_mocks.extend(processed);
         }
+        consolidated_mocks.extend(streaming_mocks);
 
         self.stats.consolidated_count = consolidated_mocks.len();
         self.stats.reduction_ratio =

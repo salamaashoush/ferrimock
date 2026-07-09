@@ -169,7 +169,8 @@ impl ResponseGeneratorExt for ResponseGenerator {
                 render_to_dynamic(source, *hash, &context, None, self.structured_response)
             }
             BodySource::Handler(handler_fn) => {
-                let mut context = RequestContext::from_request(method, uri, query, headers, body);
+                let mut context =
+                    RequestContext::from_request_for_handler(method, uri, query, headers, body);
                 context.captures = captures;
                 context.vars = vars.cloned();
                 handler_fn(context).await

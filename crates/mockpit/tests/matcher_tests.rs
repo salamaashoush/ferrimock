@@ -45,6 +45,7 @@ fn create_test_mock(
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
         vars: None,
+        streaming: None,
     }
 }
 

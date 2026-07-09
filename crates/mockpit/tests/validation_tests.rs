@@ -600,6 +600,8 @@ async fn test_validate_config_directly() {
             }),
             patch: None,
             delay: None,
+            sse: None,
+            ws: None,
         }],
     };
 
@@ -1315,6 +1317,8 @@ async fn test_validate_config_directly_with_errors() {
             }),
             patch: None,
             delay: None,
+            sse: None,
+            ws: None,
         }],
     };
 
@@ -1368,6 +1372,8 @@ async fn test_validate_config_with_warnings() {
                 }),
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
             MockConfig {
                 id: "duplicate".into(),
@@ -1398,6 +1404,8 @@ async fn test_validate_config_with_warnings() {
                 }),
                 patch: None,
                 delay: None,
+                sse: None,
+                ws: None,
             },
         ],
     };

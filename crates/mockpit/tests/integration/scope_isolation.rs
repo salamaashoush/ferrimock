@@ -45,6 +45,7 @@ fn test_scope_isolation_between_tests() {
             BodySource::inline(r#"{"token":"suite1-token"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     let mock2 = MockDefinition {
@@ -62,6 +63,7 @@ fn test_scope_isolation_between_tests() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"id":"user1"}"#)),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock1);
@@ -91,6 +93,7 @@ fn test_scope_isolation_between_tests() {
             BodySource::inline(r#"{"token":"suite2-token"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock3);
@@ -112,6 +115,7 @@ fn test_scope_isolation_between_tests() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"status":"ok"}"#)),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(global_mock);
@@ -183,6 +187,7 @@ fn test_scope_ttl_expiration() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"temp":true}"#)),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -210,6 +215,7 @@ fn test_scope_ttl_expiration() {
             BodySource::inline(r#"{"permanent":true}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(permanent_mock);
@@ -273,6 +279,7 @@ fn test_scope_info_queries() {
                 BodySource::inline(r#"{"test":"api"}"#),
             ),
             vars: None,
+            streaming: None,
         };
         registry.add_mock(mock);
     }
@@ -296,6 +303,7 @@ fn test_scope_info_queries() {
                 BodySource::inline(r#"{"test":"ui"}"#),
             ),
             vars: None,
+            streaming: None,
         };
         registry.add_mock(mock);
     }
@@ -359,6 +367,7 @@ fn test_scope_with_duplicate_mock_ids() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"scope":"a"}"#)),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock_a);
@@ -381,6 +390,7 @@ fn test_scope_with_duplicate_mock_ids() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"scope":"b"}"#)),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock_b);
@@ -421,6 +431,7 @@ fn test_scope_with_priority_matching() {
             BodySource::inline(r#"{"priority":"low","scope":"yes"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     // Add high priority global mock
@@ -442,6 +453,7 @@ fn test_scope_with_priority_matching() {
             BodySource::inline(r#"{"priority":"high","scope":"no"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(low_priority);
@@ -497,6 +509,7 @@ fn test_realistic_test_suite_workflow() {
                 BodySource::inline(r#"{"token":"test-token","user_id":"123"}"#),
             ),
             vars: None,
+            streaming: None,
         });
 
         registry.add_mock(MockDefinition {
@@ -517,6 +530,7 @@ fn test_realistic_test_suite_workflow() {
                 BodySource::inline(r#"{"id":"123","name":"Test User"}"#),
             ),
             vars: None,
+            streaming: None,
         });
 
         assert_eq!(registry.get_mocks_by_scope(scope_id).len(), 2);
@@ -553,6 +567,7 @@ fn test_realistic_test_suite_workflow() {
                 BodySource::inline(r#"{"file_id":"file-456"}"#),
             ),
             vars: None,
+            streaming: None,
         });
 
         assert_eq!(registry.get_mocks_by_scope(scope_id).len(), 1);
@@ -597,6 +612,7 @@ fn test_realistic_test_suite_workflow() {
                     BodySource::inline(format!(r#"{{"test":{i}}}"#)),
                 ),
                 vars: None,
+                streaming: None,
             });
         }
 

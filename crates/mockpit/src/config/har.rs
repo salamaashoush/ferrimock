@@ -17,6 +17,32 @@ use url::Url;
 
 use super::{MatchConfig, MockConfig, ResponseConfig};
 
+/// Parse HAR text robustly under `serde_json/arbitrary_precision`.
+///
+/// The `har` crate's `Spec` is `#[serde(untagged)]`; when a transitive
+/// dependency (the rolldown bundler behind the `scripting` feature)
+/// force-enables `arbitrary_precision` workspace-wide, serde's untagged
+/// buffering re-emits floats (`time`, `timings.*`) as private-Number
+/// maps and direct `from_str::<Har>` fails with
+/// "invalid type: map, expected f64". Picking the version manually and
+/// deserializing the plain (non-untagged) `Log` struct avoids the
+/// buffering entirely.
+pub fn parse_har(content: &str) -> Result<Har> {
+    if let Ok(har) = serde_json::from_str::<Har>(content) {
+        return Ok(har);
+    }
+    let value: serde_json::Value = serde_json::from_str(content)?;
+    let log = value
+        .get("log")
+        .cloned()
+        .ok_or_else(|| crate::mp_err!("HAR file has no `log` object"))?;
+    let log: v1_2::Log =
+        serde_json::from_value(log).map_err(|e| crate::mp_err!("Failed to parse HAR log: {e}"))?;
+    Ok(Har {
+        log: Spec::V1_2(log),
+    })
+}
+
 /// Default body size threshold for extraction (100 KB)
 const DEFAULT_BODY_SIZE_THRESHOLD: usize = 100 * 1024;
 
@@ -197,7 +223,7 @@ impl HarLoader {
     /// Load HAR file and convert to mock definitions
     pub async fn load_from_file(&self, path: impl AsRef<Path>) -> Result<Vec<MockConfig>> {
         let content = tokio::fs::read_to_string(path.as_ref()).await?;
-        let har: Har = serde_json::from_str(&content)?;
+        let har = parse_har(&content)?;
 
         self.convert_har_to_mocks(har).await
     }
@@ -419,6 +445,8 @@ impl HarLoader {
             } else {
                 None
             },
+            sse: None,
+            ws: None,
         }))
     }
 

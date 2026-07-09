@@ -46,6 +46,10 @@ impl HotReloadManager {
         watch_dirs: Vec<PathBuf>,
         config: HotReloadConfig,
     ) -> crate::Result<Self> {
+        #[cfg(feature = "scripting")]
+        let filter = FileEventFilter::new()
+            .with_extensions(&["json", "yaml", "yml", "har", "js", "mjs", "ts", "mts"]);
+        #[cfg(not(feature = "scripting"))]
         let filter = FileEventFilter::new().with_extensions(&["json", "yaml", "yml", "har"]);
         let watcher = FileWatcher::new(filter)?;
         let debouncer = EventDebouncer::new(Duration::from_millis(config.debounce_ms));

@@ -38,6 +38,7 @@ fn test_end_to_end_mock_matching() {
             BodySource::inline(r#"{"type":"user","id":"123","name":"Test User"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -79,6 +80,7 @@ fn test_mock_with_regex_pattern() {
         },
         response: ResponseGenerator::new(StatusCode::OK, BodySource::inline(r#"{"type":"file"}"#)),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -147,6 +149,7 @@ fn test_mock_with_header_matching() {
             BodySource::inline(r#"{"authorized":true}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -261,6 +264,7 @@ fn test_mock_with_body_matcher() {
             BodySource::inline(r#"{"matched": true}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -320,6 +324,7 @@ fn test_mock_with_conditions() {
             BodySource::inline(r#"{"filtered": true}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -379,6 +384,7 @@ fn test_glob_pattern_matching() {
             BodySource::inline(r#"{"matched": "glob"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(mock);
@@ -447,6 +453,7 @@ fn test_complex_conditional_matching() {
             BodySource::inline(r#"{"admin_action": "executed"}"#),
         ),
         vars: None,
+        streaming: None,
     };
 
     registry.add_mock(admin_mock);
@@ -522,6 +529,7 @@ fn test_complex_priority_matching() {
             BodySource::inline(r#"{"priority": "low"}"#),
         ),
         vars: None,
+        streaming: None,
     });
 
     registry.add_mock(MockDefinition {
@@ -546,6 +554,7 @@ fn test_complex_priority_matching() {
             BodySource::inline(r#"{"priority": "medium"}"#),
         ),
         vars: None,
+        streaming: None,
     });
 
     registry.add_mock(MockDefinition {
@@ -570,6 +579,7 @@ fn test_complex_priority_matching() {
             BodySource::inline(r#"{"priority": "high"}"#),
         ),
         vars: None,
+        streaming: None,
     });
 
     let matcher = MockMatcher::new(registry);

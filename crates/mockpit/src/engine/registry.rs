@@ -38,6 +38,20 @@ fn exact_match_key(method: &str, path: &str) -> u64 {
     hasher.finish()
 }
 
+/// Options for [`MockRegistry::load_from_directory_with`].
+#[derive(Debug, Clone, Copy)]
+pub struct DirLoadOptions {
+    /// Load `.js`/`.mjs` script mocks (requires the `scripting` feature).
+    /// Disable when a JS runtime alongside this process owns those files.
+    pub load_scripts: bool,
+}
+
+impl Default for DirLoadOptions {
+    fn default() -> Self {
+        Self { load_scripts: true }
+    }
+}
+
 /// Represents a single call to a mock
 #[derive(Clone, Debug, Serialize)]
 pub struct MockCall {
@@ -147,6 +161,10 @@ impl SortedMocksCache {
 pub struct MockRegistry {
     /// Mock definitions stored by ID (Arc'd for efficient cloning)
     mocks: Arc<DashMap<LeanString, Arc<MockDefinition>>>,
+    /// Registration sequence per mock id: the tiebreak among
+    /// equal-priority mocks (first registered matches first).
+    insertion_seq: Arc<DashMap<LeanString, u64>>,
+    insertion_counter: Arc<AtomicU64>,
     /// Recorded interactions (request/response pairs)
     recordings: Arc<DashMap<String, RecordedInteraction>>,
     /// Scope manager for test isolation
@@ -178,8 +196,18 @@ pub struct MockRegistry {
     /// Lets callers (e.g. the fetch interceptor) skip reading the request body when
     /// no mock could ever use it.
     has_body_dependent_mocks: Arc<AtomicBool>,
+    /// Whether any enabled mock needs request headers (header matchers, handler
+    /// mocks, or header-referencing templates). Lets the interceptor skip
+    /// marshalling headers when no mock could ever use them.
+    has_header_dependent_mocks: Arc<AtomicBool>,
     /// Global variables from MockConfig.vars, cascaded into all loaded collections
     global_vars: Arc<RwLock<Option<serde_json::Map<String, serde_json::Value>>>>,
+    /// Live WS/SSE connections per mock id; removal paths close them so
+    /// reloaded definitions never keep serving through stale handlers
+    streaming_conns: Arc<crate::streaming::StreamingConnections>,
+    /// Script engines behind `.js`/`.mjs` mock files (one per file)
+    #[cfg(feature = "scripting")]
+    script_host: Arc<crate::scripting::ScriptHost>,
 }
 
 impl MockRegistry {
@@ -190,6 +218,8 @@ impl MockRegistry {
 
         Self {
             mocks: Arc::new(DashMap::new()),
+            insertion_seq: Arc::new(DashMap::new()),
+            insertion_counter: Arc::new(AtomicU64::new(0)),
             recordings: Arc::new(DashMap::new()),
             scope_manager: Arc::new(ScopeManager::new()),
             enabled: Arc::new(AtomicBool::new(true)),
@@ -206,8 +236,24 @@ impl MockRegistry {
             index_rebuild_lock: Arc::new(Mutex::new(())),
             has_conditional_mocks: Arc::new(AtomicBool::new(false)),
             has_body_dependent_mocks: Arc::new(AtomicBool::new(false)),
+            has_header_dependent_mocks: Arc::new(AtomicBool::new(false)),
             global_vars: Arc::new(RwLock::new(None)),
+            streaming_conns: Arc::new(crate::streaming::StreamingConnections::default()),
+            #[cfg(feature = "scripting")]
+            script_host: Arc::new(crate::scripting::ScriptHost::new()),
         }
+    }
+
+    /// Live streaming-connection tracker shared with the serve layer.
+    pub fn streaming_connections(&self) -> Arc<crate::streaming::StreamingConnections> {
+        Arc::clone(&self.streaming_conns)
+    }
+
+    /// The host owning the engines behind `.js`/`.mjs` mock files.
+    /// Use it to tune [`crate::scripting::ScriptEngineConfig`] before loading.
+    #[cfg(feature = "scripting")]
+    pub fn script_host(&self) -> &Arc<crate::scripting::ScriptHost> {
+        &self.script_host
     }
 
     /// Set global variables that will be cascaded into all loaded mock collections.
@@ -236,6 +282,20 @@ impl MockRegistry {
     /// Also scans for scenario files in the scenarios subdirectory.
     /// Returns the number of mocks loaded.
     pub async fn load_from_directory(&self, dir_path: &str) -> crate::Result<usize> {
+        self.load_from_directory_with(dir_path, DirLoadOptions::default())
+            .await
+    }
+
+    /// [`Self::load_from_directory`] with explicit options.
+    ///
+    /// `load_scripts: false` silently leaves `.js`/`.mjs` files to another
+    /// runtime — the NAPI addon uses it because Node loads script mocks
+    /// itself (V8), so the embedded engine must not double-load them.
+    pub async fn load_from_directory_with(
+        &self,
+        dir_path: &str,
+        options: DirLoadOptions,
+    ) -> crate::Result<usize> {
         use std::path::Path;
 
         let path = Path::new(dir_path);
@@ -253,9 +313,10 @@ impl MockRegistry {
             .await
             .map_err(|e| crate::mp_err!("Failed to read directory {dir_path}: {e}"))?;
 
-        // Collect all mock collection files (JSON, YAML) and HAR files
+        // Collect all mock collection files (JSON, YAML), HAR files, and scripts
         let mut collection_files = Vec::new();
         let mut har_files = Vec::new();
+        let mut script_files = Vec::new();
         while let Some(entry) = entries
             .next_entry()
             .await
@@ -267,8 +328,23 @@ impl MockRegistry {
                     collection_files.push(entry_path);
                 } else if ext == "har" {
                     har_files.push(entry_path);
+                } else if matches!(ext, "js" | "mjs" | "ts" | "mts") {
+                    script_files.push(entry_path);
                 }
             }
+        }
+
+        if !options.load_scripts {
+            script_files.clear();
+        }
+
+        #[cfg(not(feature = "scripting"))]
+        if !script_files.is_empty() {
+            eprintln!(
+                "Warning: {} script mock file(s) in {dir_path} ignored (build with the `scripting` feature to load .js/.mjs mocks)",
+                script_files.len()
+            );
+            script_files.clear();
         }
 
         // Load all collection files in parallel using join_all
@@ -322,7 +398,51 @@ impl MockRegistry {
             }
         }
 
+        // Load script files in parallel (each gets its own engine)
+        #[cfg(feature = "scripting")]
+        {
+            let script_tasks: Vec<_> = script_files
+                .iter()
+                .map(|file| self.load_script_file(file, Some(path)))
+                .collect();
+            for (i, result) in futures::future::join_all(script_tasks)
+                .await
+                .into_iter()
+                .enumerate()
+            {
+                match result {
+                    Ok(count) => {
+                        loaded_count += count;
+                    }
+                    Err(e) => {
+                        if let Some(file) = script_files.get(i) {
+                            eprintln!(
+                                "Warning: Failed to load script mocks from {}: {e}",
+                                file.display()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(loaded_count)
+    }
+
+    /// Load a single `.js`/`.mjs` mock script file. `root` bounds what
+    /// the script may import (defaults to the file's parent directory).
+    #[cfg(feature = "scripting")]
+    pub async fn load_script_file(
+        &self,
+        path: &std::path::Path,
+        root: Option<&std::path::Path>,
+    ) -> crate::Result<usize> {
+        let definitions = self.script_host.load_file(path, root).await?;
+        let count = definitions.len();
+        for mock in definitions {
+            self.add_mock(mock);
+        }
+        Ok(count)
     }
 
     /// Load a single mock collection file
@@ -411,17 +531,29 @@ impl MockRegistry {
 
     /// Add a mock definition to the registry
     pub fn add_mock(&self, mock: MockDefinition) {
+        // Registration order is the tiebreak among equal-priority mocks
+        // (first registered matches first, MSW semantics) — DashMap
+        // iteration order is arbitrary, so record an explicit sequence.
+        let seq = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
+        self.insertion_seq.insert(mock.id.clone(), seq);
         self.mocks.insert(mock.id.clone(), Arc::new(mock));
         self.sorted_mocks_cache.invalidate();
         self.invalidate_exact_index();
     }
 
-    /// Remove a mock definition by ID
+    /// Remove a mock definition by ID.
+    ///
+    /// Live WS/SSE connections served by the removed mock are closed
+    /// (WS close 1001, SSE stream end): a reload replaces the
+    /// definition, and connections must not keep running on the stale
+    /// handler.
     pub fn remove_mock(&self, id: &str) -> Option<Arc<MockDefinition>> {
         let result = self.mocks.remove(id).map(|(_, v)| v);
         if result.is_some() {
+            self.insertion_seq.remove(id);
             self.sorted_mocks_cache.invalidate();
             self.invalidate_exact_index();
+            self.streaming_conns.close_mock(id);
         }
         result
     }
@@ -459,8 +591,15 @@ impl MockRegistry {
             .filter(|m| m.enabled)
             .collect();
 
-        // Sort by priority (highest first)
-        mocks.sort_by_key(|m| std::cmp::Reverse(m.priority));
+        // Sort by priority (highest first), then registration order
+        // (first registered wins ties — MSW handler-order semantics).
+        mocks.sort_by_key(|m| {
+            let seq = self
+                .insertion_seq
+                .get(&m.id)
+                .map_or(u64::MAX, |entry| *entry.value());
+            (std::cmp::Reverse(m.priority), seq)
+        });
 
         let arc = Arc::new(mocks);
         self.sorted_mocks_cache.update(Arc::clone(&arc));
@@ -510,6 +649,7 @@ impl MockRegistry {
         let mut index: ExactMatchIndex = HashMap::with_hasher(BuildNoHashHasher::default());
         let mut has_conditional = false;
         let mut has_body_dependent = false;
+        let mut has_header_dependent = false;
 
         for mock in enabled.iter() {
             // Body/graphql matchers need the body; handler mocks may read it
@@ -519,6 +659,15 @@ impl MockRegistry {
                 || matches!(mock.response.body, crate::types::BodySource::Handler(_));
             if body_dependent {
                 has_body_dependent = true;
+            }
+
+            // Header matchers need headers; handler mocks may read them, and
+            // header-referencing templates do (same conservative rule).
+            if !mock.request.header_matchers.is_empty()
+                || mock.response.context_uses_headers
+                || matches!(mock.response.body, crate::types::BodySource::Handler(_))
+            {
+                has_header_dependent = true;
             }
 
             let is_conditional = !mock.request.header_matchers.is_empty()
@@ -555,6 +704,8 @@ impl MockRegistry {
             .store(has_conditional, Ordering::Release);
         self.has_body_dependent_mocks
             .store(has_body_dependent, Ordering::Release);
+        self.has_header_dependent_mocks
+            .store(has_header_dependent, Ordering::Release);
         *self.exact_match_index.write() = index;
         // Record that our index is now built at the current sorted version
         let current_sorted = self.sorted_mocks_cache.version.load(Ordering::Acquire);
@@ -607,14 +758,24 @@ impl MockRegistry {
         self.has_body_dependent_mocks.load(Ordering::Acquire)
     }
 
-    /// Clear all mocks from the registry
+    /// Whether any enabled mock needs request headers (header matchers, handler
+    /// mocks, or header-referencing templates). Callers can skip marshalling
+    /// headers entirely when this is false.
+    pub fn needs_request_headers(&self) -> bool {
+        self.ensure_exact_index();
+        self.has_header_dependent_mocks.load(Ordering::Acquire)
+    }
+
+    /// Clear all mocks from the registry (closing live WS/SSE connections)
     pub fn clear(&self) {
         self.mocks.clear();
+        self.insertion_seq.clear();
         self.sorted_mocks_cache.invalidate();
         self.invalidate_exact_index();
         #[allow(clippy::disallowed_types)]
         let empty = HashMap::with_hasher(BuildNoHashHasher::default());
         *self.exact_match_index.write() = empty;
+        self.streaming_conns.close_all();
     }
 
     /// Get the number of mocks in the registry
@@ -925,6 +1086,15 @@ impl MockRegistry {
             match ext {
                 "json" | "yaml" | "yml" => self.load_collection_file(path).await,
                 "har" => self.load_har_file(path).await,
+                #[cfg(feature = "scripting")]
+                "js" | "mjs" | "ts" | "mts" => {
+                    let definitions = self.script_host.reload_file(path).await?;
+                    let count = definitions.len();
+                    for mock in definitions {
+                        self.add_mock(mock);
+                    }
+                    Ok(count)
+                }
                 _ => Err(crate::mp_err!("Unsupported file extension: {ext}")),
             }
         } else {
@@ -940,6 +1110,17 @@ impl MockRegistry {
         let count = ids.len();
         for id in ids {
             self.remove_mock(&id);
+        }
+        #[cfg(feature = "scripting")]
+        {
+            let path = std::path::Path::new(source_file);
+            if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e, "js" | "mjs" | "ts" | "mts"))
+            {
+                self.script_host.unload_file(path);
+            }
         }
         count
     }
@@ -1004,6 +1185,7 @@ mod tests {
             },
             response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
             vars: None,
+            streaming: None,
         }
     }
 
@@ -1031,6 +1213,7 @@ mod tests {
             },
             response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
             vars: None,
+            streaming: None,
         }
     }
 

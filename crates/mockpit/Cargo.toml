@@ -42,7 +42,7 @@ codegen = ["type-detector"]
 graphql = ["engine", "dep:graphql-parser"]
 
 # HTTP server with hot reload and graceful shutdown
-server = ["engine", "dep:axum", "dep:tower-http", "dep:notify"]
+server = ["engine", "dep:axum", "dep:tower-http", "dep:notify", "dep:tokio-tungstenite", "dep:reqwest"]
 
 # Mock management HTTP API (axum router)
 api = ["server"]
@@ -50,8 +50,21 @@ api = ["server"]
 # Config schema generation (for editor extensions)
 schema = ["dep:schemars"]
 
+# JS/TS-scripted mock handlers on an embedded QuickJS engine, with a
+# rolldown bundler front-end (TS transpile, node_modules resolution) and
+# a bytecode disk cache
+scripting = [
+  "engine",
+  "dep:rquickjs",
+  "dep:rquickjs-serde",
+  "dep:rolldown",
+  "dep:rolldown_common",
+  "dep:rolldown_plugin",
+  "dep:sourcemap",
+]
+
 # Everything
-full = ["engine", "graphql", "server", "api", "schema"]
+full = ["engine", "graphql", "server", "api", "schema", "scripting"]
 
 [dependencies]
 # ---- Always required (engine feature) ----
@@ -114,9 +127,20 @@ graphql-parser = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+# SSE upstream passthrough client (rustls; already a workspace dep via the CLI)
+reqwest = { workspace = true, optional = true }
 
 # Schema (schema feature)
 schemars = { version = "1", optional = true }
+
+# QuickJS scripting (scripting feature)
+rquickjs = { workspace = true, optional = true }
+rquickjs-serde = { workspace = true, optional = true }
+rolldown = { workspace = true, optional = true }
+rolldown_common = { workspace = true, optional = true }
+rolldown_plugin = { workspace = true, optional = true }
+sourcemap = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -127,6 +151,8 @@ tempfile = { workspace = true }
 serial_test = { workspace = true }
 tera = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+# WS test client (frames must be masked; this is the standard axum-ws test client)
+tokio-tungstenite = { workspace = true }
 uuid = { workspace = true }
 
 [[bench]]
@@ -140,6 +166,11 @@ harness = false
 [[bench]]
 name = "type_detection"
 harness = false
+
+[[bench]]
+name = "script_performance"
+harness = false
+required-features = ["scripting"]
 
 # Uses the `graphql` module — only build under the `graphql` feature so default
 # `cargo test`/`nextest` runs don't fail to compile it.

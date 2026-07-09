@@ -31,6 +31,7 @@
 //! | `server` | no | HTTP server with hot reload and graceful shutdown |
 //! | `api` | no | Mock management HTTP API (axum router) |
 //! | `schema` | no | JSON schema generation for config validation |
+//! | `scripting` | no | JS-scripted mock handlers on an embedded QuickJS engine |
 //! | `full` | no | Enable everything |
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,11 @@ pub mod engine;
 #[cfg(feature = "engine")]
 pub mod handler;
 
+/// Streaming connection runtime: the shared WebSocket connection driver,
+/// SSE upstream passthrough, and per-mock live-connection tracking
+#[cfg(feature = "engine")]
+pub mod streaming;
+
 /// Service layer — pure execution logic with no CLI/UI coupling.
 /// Used by NAPI bindings, TS CLI, and Rust consumers.
 #[cfg(feature = "engine")]
@@ -106,6 +112,10 @@ pub mod server;
 #[cfg(feature = "api")]
 pub mod api;
 
+/// JS-scripted mock handlers on an embedded QuickJS engine
+#[cfg(feature = "scripting")]
+pub mod scripting;
+
 // ---------------------------------------------------------------------------
 // Prelude - the most commonly used types for quick imports
 // ---------------------------------------------------------------------------
@@ -136,6 +146,6 @@ pub mod prelude {
     pub use crate::core::PersistenceStore;
 
     // Handler API
-    pub use crate::handler::{DynamicResponseExt, IntoHandlerFn, MockResponse};
+    pub use crate::handler::{DynamicResponseExt, HttpResponse, IntoHandlerFn};
     pub use crate::types::{DynamicResponse, HandlerFn};
 }
