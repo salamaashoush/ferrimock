@@ -10,22 +10,22 @@
     },
     "crates/mockpit-napi": {
       "name": "@mockpit/node",
-      "version": "0.1.0",
+      "version": "0.1.6",
       "devDependencies": {
         "@napi-rs/cli": "^3.5.1",
       },
       "optionalDependencies": {
-        "@mockpit/node-darwin-arm64": "0.1.0",
-        "@mockpit/node-darwin-x64": "0.1.0",
-        "@mockpit/node-linux-arm64-gnu": "0.1.0",
-        "@mockpit/node-linux-x64-gnu": "0.1.0",
-        "@mockpit/node-win32-arm64-msvc": "0.1.0",
-        "@mockpit/node-win32-x64-msvc": "0.1.0",
+        "@mockpit/node-darwin-arm64": "0.1.6",
+        "@mockpit/node-darwin-x64": "0.1.6",
+        "@mockpit/node-linux-arm64-gnu": "0.1.6",
+        "@mockpit/node-linux-x64-gnu": "0.1.6",
+        "@mockpit/node-win32-arm64-msvc": "0.1.6",
+        "@mockpit/node-win32-x64-msvc": "0.1.6",
       },
     },
     "packages/core": {
       "name": "@mockpit/core",
-      "version": "0.1.0",
+      "version": "0.1.6",
       "dependencies": {
         "@mockpit/node": "workspace:*",
         "@mswjs/interceptors": "^0.41.9",
@@ -39,14 +39,14 @@
     },
     "packages/mockpit": {
       "name": "mockpit",
-      "version": "0.1.0",
+      "version": "0.1.6",
       "dependencies": {
         "@mockpit/core": "workspace:*",
       },
     },
     "packages/playwright": {
       "name": "@mockpit/playwright",
-      "version": "0.1.0",
+      "version": "0.1.6",
       "peerDependencies": {
         "@mockpit/core": "workspace:*",
         "@playwright/test": ">=1.40.0",

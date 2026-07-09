@@ -1,6 +1,6 @@
 {
   "name": "@mockpit/node",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "High-performance HTTP mocking engine with MSW-style handler API for Node.js",
   "main": "index.js",
   "module": "index.mjs",
@@ -53,11 +53,11 @@
     "@napi-rs/cli": "^3.5.1"
   },
   "optionalDependencies": {
-    "@mockpit/node-linux-x64-gnu": "0.1.0",
-    "@mockpit/node-linux-arm64-gnu": "0.1.0",
-    "@mockpit/node-darwin-arm64": "0.1.0",
-    "@mockpit/node-darwin-x64": "0.1.0",
-    "@mockpit/node-win32-x64-msvc": "0.1.0",
-    "@mockpit/node-win32-arm64-msvc": "0.1.0"
+    "@mockpit/node-linux-x64-gnu": "0.1.6",
+    "@mockpit/node-linux-arm64-gnu": "0.1.6",
+    "@mockpit/node-darwin-arm64": "0.1.6",
+    "@mockpit/node-darwin-x64": "0.1.6",
+    "@mockpit/node-win32-x64-msvc": "0.1.6",
+    "@mockpit/node-win32-arm64-msvc": "0.1.6"
   }
 }

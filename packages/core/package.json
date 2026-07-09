@@ -1,6 +1,6 @@
 {
   "name": "@mockpit/core",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "High-performance HTTP mocking engine -- core library",
   "type": "module",
   "main": "./dist/index.mjs",
@@ -20,7 +20,10 @@
       "default": "./dist/node.mjs"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsdown",
     "verify:node-http": "node verify-node-http.mjs",
