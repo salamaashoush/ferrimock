@@ -318,6 +318,9 @@ See [Mock Engine](docs/MOCK_ENGINE.md), [Fake Data](docs/FAKE_DATA.md), [GraphQL
 ## CLI
 
 ```bash
+npm install -g @mockpit/cli              # Prebuilt binary via npm
+cargo install mockpit-cli --locked       # Or build from source
+
 mockpit mock serve mocks/                # Serve mocks with hot reload
 mockpit mock create "/api/users/:id"     # Create a mock
 mockpit mock test -m GET /api/users/123  # Test matching

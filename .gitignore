@@ -7,3 +7,5 @@ node_modules/
 *.node
 bun.lock
 dist/
+# CLI platform packages assembled at release time (npm-shim/scripts/prepare.mjs)
+crates/mockpit-cli/npm-shim/npm/

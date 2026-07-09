@@ -116,6 +116,15 @@ jobs:
         run: gh release upload "$GITHUB_REF_NAME" ${{ env.ARCHIVE }} ${{ env.ARCHIVE }}.sha256 --clobber
         shell: bash
 
+      # Raw binary for the npm platform packages (@mockpit/cli-*),
+      # assembled by npm-shim/scripts/prepare.mjs in publish-npm.
+      - name: Upload npm binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-npm-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/mockpit${{ runner.os == 'Windows' && '.exe' || '' }}
+          if-no-files-found: error
+
   # ---------------------------------------------------------------------------
   # Build NAPI native modules for all platforms
   # ---------------------------------------------------------------------------
@@ -233,7 +242,7 @@ jobs:
   # ---------------------------------------------------------------------------
   publish-npm:
     name: Publish to npm
-    needs: [build-napi, test-napi]
+    needs: [create-release, build-cli, build-napi, test-napi]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -288,6 +297,34 @@ jobs:
 
       - name: Publish @mockpit/playwright
         working-directory: packages/playwright
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Download CLI binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: cli-artifacts
+          pattern: cli-npm-*
+          merge-multiple: false
+
+      - name: Prepare CLI platform packages
+        working-directory: crates/mockpit-cli/npm-shim
+        run: node scripts/prepare.mjs "${{ needs.create-release.outputs.version }}" "${{ github.workspace }}/cli-artifacts"
+
+      # Platform packages first so the shim's optionalDependencies
+      # resolve as soon as it lands.
+      - name: Publish CLI platform packages
+        working-directory: crates/mockpit-cli/npm-shim
+        run: |
+          for pkg in npm/*/; do
+            npm publish "$pkg" --access public
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @mockpit/cli
+        working-directory: crates/mockpit-cli/npm-shim
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
