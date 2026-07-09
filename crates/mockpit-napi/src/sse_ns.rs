@@ -136,16 +136,17 @@ pub fn sse(
         })
     });
 
-    let mut mock = if let Some((source, flags)) = as_regexp(env, &path)? {
+    let (mut mock, pattern) = if let Some((source, flags)) = as_regexp(env, &path)? {
         let regex = compile_js_regex(&source, &flags)?;
         let mut mock = mockpit::handler::http::get("*", bridge.handler_fn.clone());
         mock.request.url_patterns = smallvec::SmallVec::from_elem(UrlPattern::Regex(regex), 1);
-        mock
+        (mock, format!("/{source}/{flags}"))
     } else {
         // SAFETY: not a RegExp, so the value must be the path string.
         #[allow(unsafe_code)]
         let path_str: String = unsafe { FromNapiValue::from_napi_value(env.raw(), path.raw())? };
-        mockpit::handler::http::get(&path_str, bridge.handler_fn.clone())
+        let mock = mockpit::handler::http::get(&path_str, bridge.handler_fn.clone());
+        (mock, path_str)
     };
     mock.streaming = Some(mockpit::types::StreamingResponse::SseHandler(streaming_fn));
     mock.once = options.and_then(|o| o.once).unwrap_or(false);
@@ -153,5 +154,6 @@ pub fn sse(
     Ok(RequestHandler {
         inner: Some(mock),
         fn_ref: Some(bridge.fn_ref),
+        pattern: Some(pattern),
     })
 }

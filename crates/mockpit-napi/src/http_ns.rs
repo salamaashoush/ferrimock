@@ -27,6 +27,10 @@ pub struct RequestHandler {
     /// FunctionRef for direct same-thread handler calls (interceptor fast path).
     /// Stored separately from the MockDefinition because FunctionRef is napi-specific.
     pub(crate) fn_ref: Option<Arc<HandlerFnRef>>,
+    /// The predicate as the user wrote it (`/users/:id`, a full URL, or a
+    /// RegExp display form) — surfaced through `listHandlers()` since the
+    /// engine only keeps the compiled pattern.
+    pub(crate) pattern: Option<String>,
 }
 
 #[napi]
@@ -35,6 +39,12 @@ impl RequestHandler {
     #[napi(getter)]
     pub fn id(&self) -> Option<String> {
         self.inner.as_ref().map(|m| m.id.to_string())
+    }
+
+    /// The predicate as the user wrote it (path string or RegExp display).
+    #[napi(getter)]
+    pub fn pattern(&self) -> Option<String> {
+        self.pattern.clone()
     }
 }
 
@@ -56,11 +66,13 @@ pub(crate) fn finish_handler(
     bridge: HandlerBridge,
     mut mock_def: MockDefinition,
     options: Option<RequestHandlerOptions>,
+    pattern: Option<String>,
 ) -> RequestHandler {
     mock_def.once = options.and_then(|o| o.once).unwrap_or(false);
     RequestHandler {
         inner: Some(mock_def),
         fn_ref: Some(bridge.fn_ref),
+        pattern,
     }
 }
 
@@ -108,18 +120,19 @@ fn build_handler(
 
     let bridge = js_to_handler_bridge(handler_fn, HandlerKind::Http)?;
 
-    let mock_def = if let Some((source, flags)) = as_regexp(env, &path)? {
+    let (mock_def, pattern) = if let Some((source, flags)) = as_regexp(env, &path)? {
         let regex = compile_js_regex(&source, &flags)?;
         let mut mock = builder("*", bridge.handler_fn.clone());
         mock.request.url_patterns = SmallVec::from_elem(UrlPattern::Regex(regex), 1);
-        mock
+        (mock, format!("/{source}/{flags}"))
     } else {
         #[allow(unsafe_code)]
         let path_str: String = unsafe { FromNapiValue::from_napi_value(env.raw(), path.raw())? };
-        builder(&path_str, bridge.handler_fn.clone())
+        let mock = builder(&path_str, bridge.handler_fn.clone());
+        (mock, path_str)
     };
 
-    Ok(finish_handler(bridge, mock_def, options))
+    Ok(finish_handler(bridge, mock_def, options, Some(pattern)))
 }
 
 macro_rules! http_method {

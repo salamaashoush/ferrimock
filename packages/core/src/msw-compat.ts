@@ -105,25 +105,41 @@ export function cleanUrl(path: string): string {
 }
 
 /**
- * Compile an MSW-style path (`:param` segments, full-segment `*`
- * wildcards) to a RegExp — same semantics as the native engine's
- * path patterns. Wildcards capture into numeric params keys.
+ * Compile an MSW-style path (`:param` segments, `:param+`/`:param*`
+ * repeatable modifiers, full-segment `*` wildcards) to a RegExp — same
+ * semantics as the native engine's path patterns. Wildcards capture into
+ * numeric params keys; repeatable params come back as `string[]`.
  */
 function pathToRegex(path: string): RegExp {
   let wildcardIndex = 0;
-  const pattern = path
-    .split("/")
-    .map((segment) => {
-      if (segment.startsWith(":") && segment.length > 1) {
-        return `(?<${segment.slice(1)}>[^/]+)`;
+  let pattern = "";
+  path.split("/").forEach((segment, index) => {
+    const sep = index === 0 ? "" : "/";
+    if (segment.startsWith(":") && segment.length > 1) {
+      const param = segment.slice(1);
+      if (param.length > 1 && param.endsWith("+")) {
+        pattern += `${sep}(?<__rp${param.slice(0, -1)}>.+)`;
+      } else if (param.length > 1 && param.endsWith("*")) {
+        // Zero segments must also match without the separator.
+        pattern += `(?:${sep}(?<__rp${param.slice(0, -1)}>.*))?`;
+      } else {
+        pattern += `${sep}(?<${param}>[^/]+)`;
       }
-      if (segment === "*") {
-        return `(?<__wc${wildcardIndex++}>.*)`;
-      }
-      return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    })
-    .join("/");
+    } else if (segment === "*") {
+      pattern += `${sep}(?<__wc${wildcardIndex++}>.*)`;
+    } else {
+      pattern += sep + segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+  });
   return new RegExp(`^${pattern}$`);
+}
+
+function decodeParam(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function groupsToParams(
@@ -132,12 +148,14 @@ function groupsToParams(
   const params: PathParams = {};
   for (const [name, value] of Object.entries(groups ?? {})) {
     if (value === undefined) continue;
-    const key = /^__wc\d+$/.test(name) ? name.slice(4) : name;
-    try {
-      params[key] = decodeURIComponent(value);
-    } catch {
-      params[key] = value;
+    if (name.startsWith("__rp") && name.length > 4) {
+      // Zero-segment `:name*` matches empty — MSW omits the param.
+      if (value === "") continue;
+      params[name.slice(4)] = value.split("/").map(decodeParam);
+      continue;
     }
+    const key = /^__wc\d+$/.test(name) ? name.slice(4) : name;
+    params[key] = decodeParam(value);
   }
   return params;
 }

@@ -270,6 +270,22 @@ describe("matchRequestUrl / cleanUrl", () => {
     expect(result.params).toEqual({ "0": "a/b.png" });
   });
 
+  it("matches repeatable params into string arrays", () => {
+    const plus = matchRequestUrl(
+      new URL("http://localhost/files/a%20b/c"),
+      "/files/:path+"
+    );
+    expect(plus.matches).toBe(true);
+    expect(plus.params).toEqual({ path: ["a b", "c"] });
+
+    const zero = matchRequestUrl(new URL("http://localhost/tree"), "/tree/:path*");
+    expect(zero.matches).toBe(true);
+    expect(zero.params).toEqual({});
+
+    const miss = matchRequestUrl(new URL("http://localhost/files"), "/files/:path+");
+    expect(miss.matches).toBe(false);
+  });
+
   it("honors absolute-URL hosts", () => {
     const hit = matchRequestUrl(
       new URL("https://api.example.com/users/1"),

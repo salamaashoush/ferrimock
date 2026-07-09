@@ -317,7 +317,8 @@ impl FormData {
 }
 
 /// Parse a request body into form entries based on its Content-Type.
-pub fn parse_body(content_type: &str, body: &str) -> Result<Vec<(String, FormValue)>, String> {
+/// Byte-based so binary multipart file parts round-trip losslessly.
+pub fn parse_body(content_type: &str, body: &[u8]) -> Result<Vec<(String, FormValue)>, String> {
     let ct = content_type
         .split(';')
         .next()
@@ -325,7 +326,7 @@ pub fn parse_body(content_type: &str, body: &str) -> Result<Vec<(String, FormVal
         .trim()
         .to_ascii_lowercase();
     match ct.as_str() {
-        "application/x-www-form-urlencoded" => Ok(parse_urlencoded(body)),
+        "application/x-www-form-urlencoded" => Ok(parse_urlencoded(&String::from_utf8_lossy(body))),
         "multipart/form-data" => {
             let boundary = content_type
                 .split(';')
@@ -359,54 +360,89 @@ fn decode_component(raw: &str) -> String {
         .unwrap_or(plus_decoded)
 }
 
-fn parse_multipart(body: &str, boundary: &str) -> Vec<(String, FormValue)> {
-    let delimiter = format!("--{boundary}");
+/// First occurrence of `needle` in `haystack` at or after `from`.
+fn find_subslice(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    haystack
+        .get(from..)?
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|pos| pos + from)
+}
+
+fn strip_bytes_prefix<'a>(bytes: &'a [u8], prefix: &[u8]) -> &'a [u8] {
+    bytes.strip_prefix(prefix).unwrap_or(bytes)
+}
+
+fn parse_multipart(body: &[u8], boundary: &str) -> Vec<(String, FormValue)> {
+    let delimiter = format!("--{boundary}").into_bytes();
     let mut entries = Vec::new();
 
-    for raw_part in body.split(delimiter.as_str()).skip(1) {
-        let part = raw_part.strip_prefix("\r\n").unwrap_or(raw_part);
-        if part.starts_with("--") {
+    let Some(first) = find_subslice(body, &delimiter, 0) else {
+        return entries;
+    };
+    let mut cursor = first + delimiter.len();
+
+    loop {
+        let part_end = find_subslice(body, &delimiter, cursor);
+        let raw_part = match part_end {
+            Some(end) => body.get(cursor..end),
+            None => body.get(cursor..),
+        };
+        let Some(raw_part) = raw_part else { break };
+        let part = strip_bytes_prefix(raw_part, b"\r\n");
+        if part.starts_with(b"--") {
             break; // closing delimiter
         }
-        let Some((raw_headers, raw_body)) = part.split_once("\r\n\r\n") else {
-            continue;
-        };
-        // The part body runs up to the CRLF preceding the next delimiter.
-        let content = raw_body.strip_suffix("\r\n").unwrap_or(raw_body);
 
-        let mut name = None;
-        let mut filename = None;
-        let mut content_type = String::new();
-        for header in raw_headers.split("\r\n") {
-            let Some((header_name, header_value)) = header.split_once(':') else {
-                continue;
-            };
-            match header_name.trim().to_ascii_lowercase().as_str() {
-                "content-disposition" => {
-                    for param in header_value.split(';') {
-                        let param = param.trim();
-                        if let Some(v) = param.strip_prefix("name=") {
-                            name = Some(v.trim_matches('"').to_string());
-                        } else if let Some(v) = param.strip_prefix("filename=") {
-                            filename = Some(v.trim_matches('"').to_string());
+        if let Some(split) = find_subslice(part, b"\r\n\r\n", 0) {
+            let raw_headers = part.get(..split).unwrap_or_default();
+            let raw_body = part.get(split + 4..).unwrap_or_default();
+            // The part body runs up to the CRLF preceding the next delimiter.
+            let content = raw_body.strip_suffix(b"\r\n").unwrap_or(raw_body);
+
+            let mut name = None;
+            let mut filename = None;
+            let mut content_type = String::new();
+            for header in String::from_utf8_lossy(raw_headers).split("\r\n") {
+                let Some((header_name, header_value)) = header.split_once(':') else {
+                    continue;
+                };
+                match header_name.trim().to_ascii_lowercase().as_str() {
+                    "content-disposition" => {
+                        for param in header_value.split(';') {
+                            let param = param.trim();
+                            if let Some(v) = param.strip_prefix("name=") {
+                                name = Some(v.trim_matches('"').to_string());
+                            } else if let Some(v) = param.strip_prefix("filename=") {
+                                filename = Some(v.trim_matches('"').to_string());
+                            }
                         }
                     }
+                    "content-type" => content_type = header_value.trim().to_string(),
+                    _ => {}
                 }
-                "content-type" => content_type = header_value.trim().to_string(),
-                _ => {}
+            }
+
+            if let Some(name) = name {
+                let value = match filename {
+                    Some(filename) => FormValue::File {
+                        name: filename,
+                        content_type,
+                        data: Bytes::copy_from_slice(content),
+                    },
+                    None => FormValue::Text(String::from_utf8_lossy(content).into_owned()),
+                };
+                entries.push((name, value));
             }
         }
 
-        let Some(name) = name else { continue };
-        let value = match filename {
-            Some(filename) => FormValue::File {
-                name: filename,
-                content_type,
-                data: Bytes::copy_from_slice(content.as_bytes()),
-            },
-            None => FormValue::Text(content.to_string()),
-        };
-        entries.push((name, value));
+        match part_end {
+            Some(end) => cursor = end + delimiter.len(),
+            None => break,
+        }
     }
 
     entries

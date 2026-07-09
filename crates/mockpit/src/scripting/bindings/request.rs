@@ -151,12 +151,16 @@ impl RequestInfo {
         fetch_request_view(&ctx, &self.inner, &self.request_cache)
     }
 
-    /// Path parameters captured from the URL pattern.
+    /// Path parameters captured from the URL pattern. Repeatable params
+    /// (`:name+` / `:name*`) surface as arrays (MSW semantics).
     #[qjs(get)]
     pub fn params<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let obj = Object::new(ctx.clone())?;
-        for (k, v) in &self.inner.captures {
-            obj.set(k.as_str(), v.as_str())?;
+        for (k, v) in crate::types::msw_params(&self.inner.captures) {
+            match v {
+                crate::types::MswParamValue::Single(s) => obj.set(k, s)?,
+                crate::types::MswParamValue::List(l) => obj.set(k, l)?,
+            }
         }
         Ok(obj.into_value())
     }
@@ -353,7 +357,8 @@ impl Request {
             .get("content-type")
             .map(String::as_str)
             .unwrap_or_default();
-        let body = self.inner.body.as_deref().unwrap_or_default();
+        // body_as_bytes: binary multipart bodies only exist as body_bytes.
+        let body = self.inner.body_as_bytes().unwrap_or_default();
         let entries = super::form_data::parse_body(content_type, body)
             .map_err(|e| Exception::throw_type(&ctx, &format!("Failed to parse form data: {e}")))?;
         Ok(

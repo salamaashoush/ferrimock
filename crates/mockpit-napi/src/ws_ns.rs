@@ -116,7 +116,7 @@ pub enum WsBridgeEvent {
     Connection {
         connection_id: String,
         url: String,
-        params: HashMap<String, String>,
+        params: HashMap<String, Either<String, Vec<String>>>,
         protocols: Vec<String>,
         client: WebSocketClientHandle,
         server: WebSocketServerHandle,
@@ -260,12 +260,7 @@ fn build_dispatch(
                     WsBridgeEvent::Connection {
                         connection_id: connection_id.clone(),
                         url: url.clone(),
-                        params: seed
-                            .request
-                            .captures
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect(),
+                        params: crate::request_context::msw_params_map(&seed.request.captures),
                         protocols: seed.protocols.clone(),
                         client: WebSocketClientHandle {
                             outbound: seed.outbound.clone(),
@@ -337,7 +332,7 @@ pub fn handler(
         .build()?;
     let tsfn = Arc::new(tsfn);
 
-    let (mut mock, upstream_url) = build_ws_mock(env, &url)?;
+    let (mut mock, upstream_url, pattern) = build_ws_mock(env, &url)?;
 
     let handler_upstream = upstream_url.clone();
     let handler_fn: WsHandlerFn = Arc::new(move |connection: WsConnection| {
@@ -358,23 +353,24 @@ pub fn handler(
     Ok(RequestHandler {
         inner: Some(mock),
         fn_ref: None,
+        pattern: Some(pattern),
     })
 }
 
 /// Build the WS mock skeleton: GET + upgrade header matcher + URL
 /// predicate, with a static 426 body for non-upgrade hits.
-fn build_ws_mock(env: &Env, url: &Unknown) -> Result<(MockDefinition, Option<String>)> {
+fn build_ws_mock(env: &Env, url: &Unknown) -> Result<(MockDefinition, Option<String>, String)> {
     use smallvec::SmallVec;
 
     let placeholder: mockpit::types::HandlerFn = Arc::new(|_ctx| {
         Box::pin(async { Err(mockpit::MockpitError::msg("ws mock invoked as plain HTTP")) })
     });
 
-    let (mut mock, upstream_url) = if let Some((source, flags)) = as_regexp(env, url)? {
+    let (mut mock, upstream_url, display) = if let Some((source, flags)) = as_regexp(env, url)? {
         let regex = compile_js_regex(&source, &flags)?;
         let mut mock = mockpit::handler::http::get("*", placeholder);
         mock.request.url_patterns = SmallVec::from_elem(UrlPattern::HrefRegex(regex), 1);
-        (mock, None)
+        (mock, None, format!("/{source}/{flags}"))
     } else {
         // SAFETY: not a RegExp, so the value must be the URL string.
         #[allow(unsafe_code)]
@@ -384,7 +380,8 @@ fn build_ws_mock(env: &Env, url: &Unknown) -> Result<(MockDefinition, Option<Str
             .replacen("ws://", "http://", 1)
             .replacen("wss://", "https://", 1);
         let mock = mockpit::handler::http::get(&pattern, placeholder);
-        (mock, absolute.then_some(url_str))
+        let display = url_str.clone();
+        (mock, absolute.then_some(url_str), display)
     };
 
     // WS mock hit by a non-upgrade request: the streaming serve path
@@ -403,5 +400,5 @@ fn build_ws_mock(env: &Env, url: &Unknown) -> Result<(MockDefinition, Option<Str
         .map_err(|e| Error::from_reason(format!("upgrade matcher: {e}")))?;
     mock.request.header_matchers.push(upgrade);
 
-    Ok((mock, upstream_url))
+    Ok((mock, upstream_url, display))
 }

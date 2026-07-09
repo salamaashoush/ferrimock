@@ -178,9 +178,12 @@ export declare class MockpitServer {
   /**
    * List all registered handlers.
    *
-   * Returns an array of handler info objects with id and method/path info.
-   * Equivalent to MSW's `server.listHandlers()`. WebSocket mocks carry
-   * `kind: "websocket"` (MSW's WebSocketHandler tag).
+   * Returns an array of handler info objects with id, method/path info,
+   * and MSW's display strings: `pattern` is the predicate as the user
+   * wrote it and `header` is MSW's `info.header` ("GET /users/:id",
+   * "query GetUser (origin: *)"). Equivalent to MSW's
+   * `server.listHandlers()`. WebSocket mocks carry `kind: "websocket"`
+   * (MSW's WebSocketHandler tag).
    */
   listHandlers(): Array<HandlerInfo>
   /**
@@ -235,6 +238,8 @@ export declare class MockpitServer {
 export declare class RequestHandler {
   /** Get the mock ID for this handler. */
   get id(): string | null
+  /** The predicate as the user wrote it (path string or RegExp display). */
+  get pattern(): string | null
 }
 
 /**
@@ -250,8 +255,11 @@ export declare class RequestInfo {
    * Built on access; destructure it once per handler call.
    */
   get request(): Request
-  /** Path parameters captured from the URL pattern. */
-  get params(): Record<string, string>
+  /**
+   * Path parameters captured from the URL pattern. Repeatable params
+   * (`:name+` / `:name*`) surface as arrays (MSW semantics).
+   */
+  get params(): Record<string, string | Array<string>>
   /** Parsed cookies from the Cookie request header. */
   get cookies(): Record<string, string>
 }
@@ -306,6 +314,16 @@ export interface HandlerInfo {
   enabled: boolean
   /** `"websocket"` for WebSocket mocks (MSW's handler tag), absent otherwise. */
   kind?: string
+  /**
+   * The predicate as the user wrote it (`/users/:id`, a full URL, a
+   * RegExp display form, or a single exact URL for declarative mocks).
+   */
+  pattern?: string
+  /**
+   * MSW's `info.header` display ("GET /users/:id",
+   * "query GetUser (origin: *)").
+   */
+  header?: string
 }
 
 /**
@@ -400,7 +418,7 @@ export interface SseMessagePayload {
 /** One WebSocket mock matched by `matchWsConnections`. */
 export interface WsConnectionMatch {
   mockId: string
-  params: Record<string, string>
+  params: Record<string, string | Array<string>>
 }
 
 export declare namespace fake {

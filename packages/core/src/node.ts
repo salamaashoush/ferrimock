@@ -16,6 +16,7 @@ import {
   MockpitInterceptor,
   type AnyHandler,
   type ApplyOptions,
+  type ListedHandler,
   type UnhandledRequestStrategy,
 } from "./interceptor.js";
 import type { LifecycleEvents } from "./events.js";
@@ -30,12 +31,7 @@ export interface SetupServerApi {
   use(...handlers: AnyHandler[]): void;
   resetHandlers(...nextHandlers: AnyHandler[]): void;
   restoreHandlers(): void;
-  listHandlers(): Array<{
-    id: string;
-    methods: string[];
-    enabled: boolean;
-    kind?: "websocket";
-  }>;
+  listHandlers(): ListedHandler[];
   boundary<Args extends unknown[], R>(
     callback: (...args: Args) => R
   ): (...args: Args) => R;

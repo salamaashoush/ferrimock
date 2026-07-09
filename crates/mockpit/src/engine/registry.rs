@@ -573,6 +573,25 @@ impl MockRegistry {
         self.mocks.iter().map(|r| Arc::clone(r.value())).collect()
     }
 
+    /// All mock definitions in registration order (`listHandlers()` shows
+    /// handlers as the user wrote them; the DashMap iterates arbitrarily).
+    pub fn get_all_mocks_in_registration_order(&self) -> Vec<Arc<MockDefinition>> {
+        let mut mocks: Vec<(u64, Arc<MockDefinition>)> = self
+            .mocks
+            .iter()
+            .map(|r| {
+                let seq = self
+                    .insertion_seq
+                    .get(r.key())
+                    .map(|s| *s.value())
+                    .unwrap_or(u64::MAX);
+                (seq, Arc::clone(r.value()))
+            })
+            .collect();
+        mocks.sort_by_key(|(seq, _)| *seq);
+        mocks.into_iter().map(|(_, mock)| mock).collect()
+    }
+
     /// Get all enabled mock definitions sorted by priority (highest first)
     /// Uses an internal cache to avoid re-sorting on every request.
     /// Cache is invalidated when mocks are added, removed, enabled, or disabled.

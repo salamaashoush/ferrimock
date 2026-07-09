@@ -1083,6 +1083,76 @@ http.get('/api/form-response', () => {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn msw_request_form_data_binary_multipart() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write_mock(
+        dir.path(),
+        "binary-forms.mjs",
+        r"
+http.post('/api/upload', async ({ request }) => {
+    const form = await request.formData();
+    const file = form.get('payload');
+    return new HttpResponse(await file.arrayBuffer(), {
+        headers: {
+            'content-type': 'application/octet-stream',
+            'x-file-name': file.name,
+            'x-file-type': file.type,
+            'x-field': form.get('field'),
+        },
+    });
+});
+",
+    );
+
+    let host = ScriptHost::new();
+    let mocks = host.load_file(&path, None).await.expect("load");
+    assert_eq!(mocks.len(), 1);
+
+    // Non-UTF-8 payload: PNG-style magic followed by every byte value.
+    let mut payload: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0x00];
+    payload.extend(0u8..=255);
+
+    let boundary = "----binboundary7";
+    let mut multipart: Vec<u8> = Vec::new();
+    multipart.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\nplain\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"payload\"; filename=\"blob.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    multipart.extend_from_slice(&payload);
+    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    assert!(
+        String::from_utf8(multipart.clone()).is_err(),
+        "test body must not be valid UTF-8"
+    );
+
+    let mut ctx = request("POST", "/api/upload");
+    ctx.headers.insert(
+        "content-type".to_string(),
+        format!("multipart/form-data; boundary={boundary}"),
+    );
+    ctx.body_bytes = Some(bytes::Bytes::from(multipart));
+
+    let resp = call_handler(&mocks[0], ctx).await.expect("handler");
+    let headers = resp.headers.as_ref().expect("headers");
+    assert_eq!(
+        headers.get("x-file-name").map(String::as_str),
+        Some("blob.bin")
+    );
+    assert_eq!(
+        headers.get("x-file-type").map(String::as_str),
+        Some("application/octet-stream")
+    );
+    assert_eq!(headers.get("x-field").map(String::as_str), Some("plain"));
+    assert_eq!(
+        resp.body.as_ref(),
+        payload.as_slice(),
+        "binary file part must round-trip byte-for-byte"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn all_http_verbs_register_handlers() {
     use http::Method;
 

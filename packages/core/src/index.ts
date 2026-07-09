@@ -1,6 +1,14 @@
 // Core interceptor
 export { MockpitInterceptor } from "./interceptor.js";
-export type { ApplyOptions, UnhandledRequestStrategy } from "./interceptor.js";
+export type {
+  ApplyOptions,
+  ListedHandler,
+  UnhandledRequestStrategy,
+} from "./interceptor.js";
+
+// Standalone request resolution (MSW's getResponse/handleRequest)
+export { getResponse, handleRequest, HttpMethods } from "./get-response.js";
+export type { HandleRequestOptions } from "./get-response.js";
 
 // MSW-compatible server (also exported from the ./node entry point)
 export { setupServer } from "./node.js";
