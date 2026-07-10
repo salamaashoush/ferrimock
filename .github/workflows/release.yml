@@ -326,6 +326,23 @@ jobs:
         run: bunx @napi-rs/cli create-npm-dirs
         shell: bash
 
+      # create-npm-dirs leaves repository.url empty in the generated
+      # manifests and npm rejects provenance bundles whose repository
+      # does not match the workflow's repo.
+      - name: Add repository metadata to platform packages
+        working-directory: crates/ferrimock-napi
+        run: |
+          node -e '
+            const fs = require("fs"), path = require("path");
+            const repository = { type: "git", url: "git+https://github.com/salamaashoush/ferrimock.git" };
+            for (const dir of fs.readdirSync("npm")) {
+              const p = path.join("npm", dir, "package.json");
+              const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+              pkg.repository = repository;
+              fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+            }
+          '
+
       - name: Move artifacts
         working-directory: crates/ferrimock-napi
         run: |
