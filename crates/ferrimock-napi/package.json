@@ -46,7 +46,7 @@
     "build:debug": "napi build --platform && napi artifacts -o . --npm-dir npm",
     "test": "bun test",
     "artifacts": "napi artifacts",
-    "prepublishOnly": "napi prepublish -t npm",
+    "prepublishOnly": "napi prepublish -t npm --no-gh-release",
     "version": "napi version"
   },
   "devDependencies": {
