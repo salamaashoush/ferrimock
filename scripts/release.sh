@@ -81,9 +81,12 @@ for path in (
 ):
     pkg = json.load(open(path))
     pkg["version"] = new
-    for name, pinned in pkg.get("optionalDependencies", {}).items():
-        if pinned == current:
-            pkg["optionalDependencies"][name] = new
+    # Workspace-internal pins must be real versions - npm publishes
+    # manifests verbatim, so workspace:* would break consumers.
+    for section in ("dependencies", "peerDependencies", "optionalDependencies"):
+        for name, pinned in pkg.get(section, {}).items():
+            if pinned == current:
+                pkg[section][name] = new
     with open(path, "w") as f:
         json.dump(pkg, f, indent=2)
         f.write("\n")
