@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mockpit is a high-performance HTTP mocking engine for Node.js, powered by Rust via NAPI. It provides an MSW-compatible API that is 3-4x faster than MSW, plus declarative YAML/JSON mocks with Tera template rendering and 115+ fake data generators.
+Ferrimock is a high-performance HTTP mocking engine for Node.js, powered by Rust via NAPI. It provides an MSW-compatible API that is 3-4x faster than MSW, plus declarative YAML/JSON mocks with Tera template rendering and 115+ fake data generators.
 
 ## Workspace Structure
 
@@ -12,7 +12,7 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 
 ### Rust Crates
 
-**mockpit** (library) -- Core mock engine:
+**ferrimock** (library) -- Core mock engine:
 - `types` - Core types: RequestContext, URL patterns, matchers, body sources, HandlerFn
 - `config` - Mock configuration parsing (YAML/JSON), HAR file loading
 - `engine` - MockRegistry, MockMatcher, validation, scopes, call tracking
@@ -26,50 +26,50 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 - `recorder` - HTTP request/response recording
 - `scripting` - JS-scripted mock handlers on embedded QuickJS (feature `scripting`)
 
-**mockpit-napi** (cdylib) -- Node.js NAPI bindings:
+**ferrimock-napi** (cdylib) -- Node.js NAPI bindings:
 - `http_ns.rs` - `http.get/post/put/delete/patch/head/options/all` with RegExp, absolute URLs, `{ once }`
 - `graphql_ns.rs` - `graphql.query/mutation/operation` (string or RegExp names, endpoint scoping)
 - `response_ns.rs` - `HttpResponse.json/text/html/xml/arrayBuffer/redirect/error` builders
 - `handler_bridge.rs` - HandlerFn (TSFN for server) + FunctionRef (direct call for interceptor)
 - `request_context.rs` - RequestInfo / GraphQLRequestInfo resolver info (MSW shapes; `request` is a real Fetch Request)
-- `server.rs` - MockpitServer with FunctionRef-optimized matchRequest (fall-through/exclude support), use/resetHandlers/resetRuntimeHandlers/listHandlers
+- `server.rs` - FerrimockServer with FunctionRef-optimized matchRequest (fall-through/exclude support), use/resetHandlers/resetRuntimeHandlers/listHandlers
 - `fake_ns.rs` - 115+ fake data generators exposed to JS
 
-**mockpit-cli** (binary) -- CLI for mock management and fake data generation.
+**ferrimock-cli** (binary) -- CLI for mock management and fake data generation.
 
 ### JavaScript Packages
 
-**@mockpit/core** -- Main user-facing package:
-- `node.ts` - setupServer (the MSW drop-in entry point, exported as `mockpit/node`)
-- `interceptor.ts` - MockpitInterceptor (patches fetch/XHR/ClientRequest), fall-through loop, lifecycle events, boundary, onUnhandledRequest
+**ferrimock** -- Main user-facing package:
+- `node.ts` - setupServer (the MSW drop-in entry point, exported as `ferrimock/node`)
+- `interceptor.ts` - FerrimockInterceptor (patches fetch/XHR/ClientRequest), fall-through loop, lifecycle events, boundary, onUnhandledRequest
 - `http-response.ts` - HttpResponse class extending the native Response
 - `registration.ts` - http/graphql factories (Response normalization, generators, graphql.link, collection window)
 - `msw-compat.ts` - delay(), passthrough(), bypass() utilities
 - `events.ts` - LifecycleEvents emitter (request:start/match/unhandled/end, response:mocked/bypass, unhandledException)
 - `config.ts` / `loader.ts` - Config loading
 
-**mockpit** (npm) -- bare-specifier alias re-exporting @mockpit/core, so mock files
-`import { http } from 'mockpit'` in both Node and the embedded QuickJS runtime.
-The only CLI is the Rust binary (mockpit-cli).
+**ferrimock** (npm) -- bare-specifier alias re-exporting ferrimock, so mock files
+`import { http } from 'ferrimock'` in both Node and the embedded QuickJS runtime.
+The only CLI is the Rust binary (ferrimock-cli).
 
-**@mockpit/playwright** -- Playwright fixture adapter.
+**ferrimock-playwright** -- Playwright fixture adapter.
 
 ## Essential Commands
 
 ```bash
 # Rust
 cargo check --workspace                          # Fast compile check
-cargo test -p mockpit --lib                       # Run Rust tests (607 tests)
-cargo check -p mockpit-napi                       # Check NAPI bindings
+cargo test -p ferrimock --lib                       # Run Rust tests (607 tests)
+cargo check -p ferrimock-napi                       # Check NAPI bindings
 
 # Build native module
-cd crates/mockpit-napi && bunx @napi-rs/cli build --platform --release
+cd crates/ferrimock-napi && bunx @napi-rs/cli build --platform --release
 
 # JavaScript tests
 bun test ./packages/core/test/                    # All JS tests
 bun test ./packages/core/test/msw-compat.test.ts  # MSW compatibility tests
 bun test ./packages/core/test/interceptor.test.ts # Interceptor + benchmarks
-bun test ./crates/mockpit-napi/test/              # NAPI binding tests
+bun test ./crates/ferrimock-napi/test/              # NAPI binding tests
 ```
 
 ## Architecture
@@ -105,13 +105,13 @@ Key files:
 `parallel` feature) — no Node needed. Architecture:
 
 - rolldown bundler front-end (`scripting/bundle.rs`): TS transpile, node_modules +
-  relative import resolution, tree-shaking, single ESM output; only the `mockpit`
+  relative import resolution, tree-shaking, single ESM output; only the `ferrimock`
   specifier stays external (re-links against the runtime ModuleDef). Source maps
   remap error positions back to original files (`remap_error`).
 - Bytecode disk cache (`scripting/bytecode_cache.rs`): `Module::write` output cached
   under an ABI-tagged dir (QuickJS version, crate version, arch, endianness, pointer
   width), validated by content hashes of every transitive input from the source map.
-  `MOCKPIT_CACHE_DIR` overrides location; `MOCKPIT_NO_BYTECODE_CACHE` disables.
+  `FERRIMOCK_CACHE_DIR` overrides location; `FERRIMOCK_NO_BYTECODE_CACHE` disables.
 - GOTCHA: rolldown_common force-enables `serde_json/arbitrary_precision`
   workspace-wide, which breaks serde untagged-enum buffering on floats. HAR parsing
   goes through `config::parse_har` (AP-safe); never `serde_json::from_str::<Har>`.
@@ -138,7 +138,7 @@ Key files:
 ### MSW API Compatibility
 
 Implemented (MSW and web-standard naming only; no aliases):
-- `setupServer(...handlers)` from `mockpit/node`: listen/close/use/resetHandlers(...next)/restoreHandlers/listHandlers/boundary/events
+- `setupServer(...handlers)` from `ferrimock/node`: listen/close/use/resetHandlers(...next)/restoreHandlers/listHandlers/boundary/events
 - `http.get/post/put/delete/patch/head/options/all` with string, RegExp, and absolute-URL predicates; `{ once: true }`
 - `graphql.query/mutation/operation` (string or RegExp operation names) + `graphql.link(url)`
 - `HttpResponse` (extends Response in Node; native class in QuickJS): json/text/html/xml/arrayBuffer/formData/redirect/error + constructor
@@ -160,7 +160,7 @@ native addon).
 
 - Idiomatic Rust with zero-cost abstractions
 - `anyhow::Result` for application code
-- `unsafe` denied in mockpit-napi (except marked `#[allow(unsafe_code)]` for NAPI FFI)
+- `unsafe` denied in ferrimock-napi (except marked `#[allow(unsafe_code)]` for NAPI FFI)
 - FxHashMap for performance-critical paths (not std HashMap)
 - All new code must include tests
-- Run `cargo test -p mockpit --lib` and `bun test` before committing
+- Run `cargo test -p ferrimock --lib` and `bun test` before committing

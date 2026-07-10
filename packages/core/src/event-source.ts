@@ -112,7 +112,7 @@ function parseFrame(block: string): ParsedFrame | null {
   return { id, event, data: data.join("\n"), retry };
 }
 
-export interface MockpitEventSourceOptions {
+export interface FerrimockEventSourceOptions {
   /**
    * Called for every frame whose MessageEvent was not
    * `preventDefault()`-ed by a listener — the forwarding hook
@@ -125,20 +125,20 @@ export interface MockpitEventSourceOptions {
   }) => void;
 }
 
-export class MockpitEventSource extends EventTarget implements EventSourceLike {
+export class FerrimockEventSource extends EventTarget implements EventSourceLike {
   readonly url: string;
   #readyState: number = CONNECTING;
   #abort = new AbortController();
   #lastEventId = "";
   #retryMs = DEFAULT_RETRY_MS;
   #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  #onFrameForward: MockpitEventSourceOptions["onFrameForward"];
+  #onFrameForward: FerrimockEventSourceOptions["onFrameForward"];
 
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
 
-  constructor(url: string, options?: MockpitEventSourceOptions) {
+  constructor(url: string, options?: FerrimockEventSourceOptions) {
     super();
     this.url = url;
     this.#onFrameForward = options?.onFrameForward;

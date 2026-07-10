@@ -1,8 +1,8 @@
-# Mockpit performance
+# Ferrimock performance
 
 Release build, bun 1.4, linux-x64. req/s (higher better) / µs/req (lower better).
 Reproduce:
-- `cd crates/mockpit-napi && bun test test/profile.test.ts` (Rust server path)
+- `cd crates/ferrimock-napi && bun test test/profile.test.ts` (Rust server path)
 - `cd packages/core && bun test test/profile-interceptor.test.ts` (interceptor path vs MSW)
 - `cargo bench --bench mock_performance` (in-process matcher microbenchmarks)
 
@@ -20,22 +20,22 @@ The interceptor numbers are run-to-run noisy (±25%); the matcher microbenchmark
 
 ## Fair benchmark vs MSW (Node)
 
-`packages/core/bench/vs-msw.mjs` — run `bun run --filter @mockpit/core bench:msw` (or
+`packages/core/bench/vs-msw.mjs` — run `bun run --filter ferrimock bench:msw` (or
 `node packages/core/bench/vs-msw.mjs`). Runs under **Node** (MSW's target), one interceptor active
 at a time, identical routes/payloads, both verified to return the correct mocked data before timing.
 Warmup + median-of-25 batches.
 
-| scenario                              | mockpit     | MSW        | speedup |
+| scenario                              | ferrimock     | MSW        | speedup |
 |---------------------------------------|-------------|------------|---------|
-| static JSON (mockpit declarative)     | ~69k ops/s  | ~6.6k ops/s| ~10×    |
+| static JSON (ferrimock declarative)     | ~69k ops/s  | ~6.6k ops/s| ~10×    |
 | GET handler + path param (JS both)    | ~44k        | ~2.6k      | ~16×    |
 | POST + JSON body (JS both)            | ~26k        | ~1.5k      | ~17×    |
-| dynamic fake (mockpit tpl vs MSW+faker)| ~63k       | ~1k        | ~60×    |
+| dynamic fake (ferrimock tpl vs MSW+faker)| ~63k       | ~1k        | ~60×    |
 
 **Why the gap, and caveats (read these):**
-- mockpit's `fetch` path patches `globalThis.fetch` and matches in Rust — it short-circuits *before*
+- ferrimock's `fetch` path patches `globalThis.fetch` and matches in Rust — it short-circuits *before*
   the request descends into undici. MSW intercepts at the undici/request layer for universal coverage
-  (also catches `http`/axios). So the gap is largest on the `fetch` path; for `http.request` mockpit
+  (also catches `http`/axios). So the gap is largest on the `fetch` path; for `http.request` ferrimock
   uses the same `@mswjs/interceptors` and the advantage narrows to Rust matching.
 - Micro-benchmark: sequential, body not consumed (equal for both). A real test suite's network/render/
   assertion time dwarfs interception, so end-to-end suite speedup is far smaller than these ratios.
@@ -46,7 +46,7 @@ Warmup + median-of-25 batches.
 
 ### Reuse one matcher per server (interceptor hot path)
 `MockMatcher` was rebuilt per request (`MockMatcher::new(registry.clone())`), allocating a fresh
-1000-entry LRU and never warming it. Now one matcher is stored on `MockpitServer` and reused via a
+1000-entry LRU and never warming it. Now one matcher is stored on `FerrimockServer` and reused via a
 cheap Arc clone; its cache is cleared on every mock mutation. **+41% declarative, +50% JS handler.**
 
 ### Share the enabled-mocks cache by Arc, not by Vec clone
@@ -85,10 +85,10 @@ don't compile the HTTP stack.
   through the same Rust matcher; global `fetch` and XHR keep the hand-rolled fast paths.
 - **AbortSignal / redirects / XHR** handled on the fetch path; XHR honors `responseType`.
 - **Typed errors.** The library no longer depends on `anyhow` or returns `Result<_, String>`; all
-  fallible APIs return a `thiserror`-based `MockpitError` (with a `Context` extension and `mp_err!`/
+  fallible APIs return a `thiserror`-based `FerrimockError` (with a `Context` extension and `mp_err!`/
   `mp_bail!` macros). Consumers can match on failure modes; the CLI keeps `anyhow` and `?`-coerces.
 - **CLI `--quiet` + config.** `--quiet` suppresses decorative output (banners/progress/status) via a
-  `say!` macro while preserving data output (fake values, JSON, results) and errors. `mockpit.toml`
+  `say!` macro while preserving data output (fake values, JSON, results) and errors. `ferrimock.toml`
   is honored: `collections_dir`/`port`/`host` resolve through `config::*` helpers (env > config file
   > default) instead of being parsed and discarded.
 - **No duplicate implementations.** Four behaviors that the CLI had reimplemented are now

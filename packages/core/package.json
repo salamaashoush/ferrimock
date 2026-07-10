@@ -1,5 +1,5 @@
 {
-  "name": "@mockpit/core",
+  "name": "ferrimock",
   "version": "0.1.6",
   "description": "High-performance HTTP mocking engine -- core library",
   "type": "module",
@@ -30,7 +30,7 @@
     "bench:msw": "node bench/vs-msw.mjs"
   },
   "dependencies": {
-    "@mockpit/node": "workspace:*",
+    "ferrimock-node": "workspace:*",
     "@mswjs/interceptors": "^0.41.9",
     "jiti": "^2.6.1"
   },
@@ -39,7 +39,6 @@
     "node": ">= 20.0.0"
   },
   "devDependencies": {
-    "mockpit": "workspace:*",
     "@faker-js/faker": "^10.4.0",
     "msw": "^2.13.2"
   }

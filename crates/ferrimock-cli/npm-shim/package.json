@@ -1,0 +1,28 @@
+{
+  "name": "ferrimock-cli",
+  "version": "0.1.6",
+  "description": "Ferrimock CLI - HTTP mocking tool with templates, recording, consolidation, and GraphQL support (native binary distribution)",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salamaashoush/ferrimock.git"
+  },
+  "homepage": "https://github.com/salamaashoush/ferrimock",
+  "type": "module",
+  "bin": {
+    "ferrimock": "bin/ferrimock.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">= 18"
+  },
+  "optionalDependencies": {
+    "ferrimock-cli-darwin-arm64": "0.1.6",
+    "ferrimock-cli-darwin-x64": "0.1.6",
+    "ferrimock-cli-linux-x64-musl": "0.1.6",
+    "ferrimock-cli-linux-arm64-musl": "0.1.6",
+    "ferrimock-cli-win32-x64": "0.1.6"
+  }
+}

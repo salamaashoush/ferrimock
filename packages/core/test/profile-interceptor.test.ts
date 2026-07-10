@@ -1,6 +1,6 @@
 import { describe, it } from "bun:test";
-import { MockpitInterceptor } from "../src/interceptor.js";
-import { http, HttpResponse, fake } from "@mockpit/node";
+import { FerrimockInterceptor } from "../src/interceptor.js";
+import { http, HttpResponse, fake } from "ferrimock-node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
@@ -45,7 +45,7 @@ describe("profile: where is the JS handler overhead", () => {
 
   // 4. Just the matchRequest NAPI call (declarative mock, no handler)
   it("matchRequest() NAPI call only (declarative)", async () => {
-    const interceptor = new MockpitInterceptor();
+    const interceptor = new FerrimockInterceptor();
     await interceptor.addMock({
       id: "bench",
       match: { method: "GET", url: "/api/bench" },
@@ -61,7 +61,7 @@ describe("profile: where is the JS handler overhead", () => {
 
   // 5. matchRequest with JS handler
   it("matchRequest() NAPI call (JS handler)", async () => {
-    const interceptor = new MockpitInterceptor();
+    const interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/api/bench", async () => HttpResponse.json({ ok: true })),
     ]);
@@ -75,7 +75,7 @@ describe("profile: where is the JS handler overhead", () => {
 
   // 6. Full interceptor flow (declarative)
   it("full interceptor: declarative mock", async () => {
-    const interceptor = new MockpitInterceptor();
+    const interceptor = new FerrimockInterceptor();
     await interceptor.addMock({
       id: "bench",
       match: { method: "GET", url: "/api/bench" },
@@ -93,7 +93,7 @@ describe("profile: where is the JS handler overhead", () => {
 
   // 7. Full interceptor flow (JS handler)
   it("full interceptor: JS handler", async () => {
-    const interceptor = new MockpitInterceptor();
+    const interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/api/bench", async () => HttpResponse.json({ ok: true })),
     ]);

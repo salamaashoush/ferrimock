@@ -12,13 +12,13 @@ HTTP mocking engine for testing, development, and CI/CD workflows.
 
 ```bash
 # Interactive wizard (recommended for new users)
-mockpit mock create --interactive
+ferrimock mock create --interactive
 
 # Quick mode with flags
-mockpit mock create "/api/users/:id" -m GET -s 200 --template
+ferrimock mock create "/api/users/:id" -m GET -s 200 --template
 
 # Start standalone mock server with hot reload
-mockpit mock serve --watch     # Hot reload on port 3006
+ferrimock mock serve --watch     # Hot reload on port 3006
 
 # Or integrate with your proxy (see Proxy Integration below)
 ```
@@ -632,16 +632,16 @@ mocks:
   frames) with the last seen `id:` sent as `Last-Event-ID`. An HTTP error status or a non-`text/event-stream`
   content type is terminal (no reconnect), and the pump stops as soon as the client disconnects. The same
   policy backs `server.connect()` in QuickJS script mocks (each drop surfaces as an `error` event before the
-  redial); the Node lane's `server.connect()` uses `MockpitEventSource` with identical behavior.
+  redial); the Node lane's `server.connect()` uses `FerrimockEventSource` with identical behavior.
 - Script mocks get the MSW-compatible `sse(path, resolver)` API: the resolver receives
   `{ request, params, cookies, client, server }`; `client.send({ id?, event?, data?, retry? })` emits frames,
   `client.close()` ends the stream, `client.error()` aborts the connection mid-stream. When the handler path
   is an absolute `http(s)://` URL, `server.connect()` dials that real endpoint and forwards its frames to the
   client; listeners on the returned source (`open`, `error`, `message`, or a named event) run first and can
   `event.preventDefault()` to swallow a frame.
-- The declarative lane matches on path alone (curl-friendly); the Node `mockpit` package's `sse()` additionally
+- The declarative lane matches on path alone (curl-friendly); the Node `ferrimock` package's `sse()` additionally
   requires `accept: text/event-stream` for strict MSW parity (the accept check applies on the interceptor lane
-  only — `MockpitServer.listen()` serves the same handler curl-style).
+  only — `FerrimockServer.listen()` serves the same handler curl-style).
 - Removing or hot-reloading a mock ends its live streams.
 
 ## Request Transforms (Passthrough Mode)
@@ -659,7 +659,7 @@ request:
   headers:
     add:
       x-trace-id: "{{ fake_uuid() }}"
-      x-forwarded-by: "mockpit"
+      x-forwarded-by: "ferrimock"
     remove: ["x-real-ip", "x-debug-mode"]
 ```
 
@@ -746,10 +746,10 @@ See `mocks/examples/` for complete examples.
 ## Recording & Playback
 
 ```bash
-mockpit mock record --port 3006                          # Start recording proxy
-mockpit mock record --format har                         # HAR format
-mockpit mock convert recording.har mocks.yaml --matching pattern  # Convert
-mockpit mock consolidate large.json optimized.yaml       # Reduce 70-90%
+ferrimock mock record --port 3006                          # Start recording proxy
+ferrimock mock record --format har                         # HAR format
+ferrimock mock convert recording.har mocks.yaml --matching pattern  # Convert
+ferrimock mock consolidate large.json optimized.yaml       # Reduce 70-90%
 ```
 
 ### Recording Config
@@ -789,23 +789,23 @@ separate files in a `bodies/` directory rather than inlined in the YAML/JSON. Ad
 
 ```bash
 # Basic: import HAR to clean mock collection
-mockpit mock convert traffic.har mocks.yaml
+ferrimock mock convert traffic.har mocks.yaml
 
 # Include all domains
-mockpit mock convert traffic.har mocks.yaml --all-domains
+ferrimock mock convert traffic.har mocks.yaml --all-domains
 
 # Keep absolute URLs, extract large bodies
-mockpit mock convert traffic.har mocks.yaml --absolute-urls --extract-bodies
+ferrimock mock convert traffic.har mocks.yaml --absolute-urls --extract-bodies
 
 # Full raw import (no filtering or normalization)
-mockpit mock convert traffic.har mocks.yaml \
+ferrimock mock convert traffic.har mocks.yaml \
   --absolute-urls --all-domains --static-assets \
   --keep-sensitive-headers --keep-infra-headers --browser-headers
 ```
 
 ## Mock Management API
 
-REST API for runtime control (prefix: `/__mockpit/`).
+REST API for runtime control (prefix: `/__ferrimock/`).
 
 | Endpoint              | Method               | Description                                    |
 | --------------------- | -------------------- | ---------------------------------------------- |
@@ -823,7 +823,7 @@ REST API for runtime control (prefix: `/__mockpit/`).
 ### Test Integration (Playwright)
 
 ```typescript
-const mockApi = 'http://localhost:3006/__mockpit';
+const mockApi = 'http://localhost:3006/__ferrimock';
 
 test.beforeEach(async ({ request }) => {
   await request.post(`${mockApi}/mocks`, {
@@ -836,13 +836,13 @@ test.afterEach(async ({ request }) => {
 });
 ```
 
-### Programmatic SDK (`mockpit-mock-api`)
+### Programmatic SDK (`ferrimock-mock-api`)
 
 A high-level TypeScript package providing a fluent mock builder and test isolation helpers. Wraps the REST API so you
 never need to construct raw HTTP requests.
 
 ```bash
-npm install mockpit-mock-api
+npm install ferrimock-mock-api
 ```
 
 #### MockBuilder
@@ -852,7 +852,7 @@ options, and auto-generated deterministic IDs. Covers the full mock config surfa
 request transforms, response patches, and template variables.
 
 ```typescript
-import { MockBuilder } from "mockpit-mock-api";
+import { MockBuilder } from "ferrimock-mock-api";
 
 // Simple -- auto-generates ID "get-api-users-id"
 MockBuilder.get("/api/users/:id")
@@ -927,7 +927,7 @@ Orchestrates mock lifecycle -- create, bulk setup, teardown, health checks. Acce
 `MockBuilder` instances directly (calls `.build()` automatically).
 
 ```typescript
-import { MockManager, MockBuilder } from "mockpit-mock-api";
+import { MockManager, MockBuilder } from "ferrimock-mock-api";
 
 const manager = new MockManager({
   baseUrl: "http://localhost:3006",  // default
@@ -973,7 +973,7 @@ Test isolation via scoped mocks. Each scope tags its mocks with a unique name an
 call.
 
 ```typescript
-import { MockManager, MockScope, MockBuilder, withMockScope } from "mockpit-mock-api";
+import { MockManager, MockScope, MockBuilder, withMockScope } from "ferrimock-mock-api";
 
 const manager = new MockManager();
 
@@ -1001,7 +1001,7 @@ await withMockScope(manager, "test-file-upload", async (scope) => {
 Reusable mock sets that can be installed/uninstalled across tests without rebuilding configs each time.
 
 ```typescript
-import { MockManager, MockBuilder, mockFixture } from "mockpit-mock-api";
+import { MockManager, MockBuilder, mockFixture } from "ferrimock-mock-api";
 
 // Define once, reuse everywhere
 const userServiceMocks = mockFixture("user-service", [
@@ -1023,7 +1023,7 @@ await userServiceMocks.uninstall();
 
 ```typescript
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { MockManager, MockBuilder, withMockScope, mockFixture } from "mockpit-mock-api";
+import { MockManager, MockBuilder, withMockScope, mockFixture } from "ferrimock-mock-api";
 
 const manager = new MockManager({ defaultScope: "integration-tests" });
 
@@ -1056,8 +1056,8 @@ test("creates a user", async () => {
 
 ## Proxy Integration
 
-To use mockpit with an existing reverse proxy, configure the proxy to forward requests to the mockpit mock server
-(default port 3006). Mockpit can operate in several modes when integrated with a proxy:
+To use ferrimock with an existing reverse proxy, configure the proxy to forward requests to the ferrimock mock server
+(default port 3006). Ferrimock can operate in several modes when integrated with a proxy:
 
 | Mode               | Behavior                                      | Use Case                         |
 | ------------------ | --------------------------------------------- | -------------------------------- |
@@ -1066,10 +1066,10 @@ To use mockpit with an existing reverse proxy, configure the proxy to forward re
 | `full`             | Mock only, 501 if no match                    | Offline development              |
 
 ```bash
-mockpit mock serve --mock-mode hybrid
-mockpit mock serve --mock-mode selective --mock-patterns "^/api/files,^/api/folders"
-mockpit mock serve --mock-mode full
-mockpit mock serve --no-passthrough  # Strict, no fallback
+ferrimock mock serve --mock-mode hybrid
+ferrimock mock serve --mock-mode selective --mock-patterns "^/api/files,^/api/folders"
+ferrimock mock serve --mock-mode full
+ferrimock mock serve --no-passthrough  # Strict, no fallback
 ```
 
 ## File Organization
@@ -1088,7 +1088,7 @@ are scanned recursively.
 ## Configuration
 
 ```bash
-mockpit mock serve --watch --log-matches
+ferrimock mock serve --watch --log-matches
 ```
 
 ```yaml
@@ -1177,9 +1177,9 @@ mocks:
 Launch the wizard with `--interactive` or `-I`:
 
 ```bash
-mockpit mock create --interactive
-mockpit mock create -I
-mockpit mock create  # No URL triggers interactive mode
+ferrimock mock create --interactive
+ferrimock mock create -I
+ferrimock mock create  # No URL triggers interactive mode
 ```
 
 **Wizard steps:**
@@ -1210,19 +1210,19 @@ Run a lightweight mock server without any proxy overhead. Perfect for frontend d
 
 ```bash
 # Start mock server on default port (3006)
-mockpit mock serve
+ferrimock mock serve
 
 # With custom port and hot reload
-mockpit mock serve --port 3006 --watch
+ferrimock mock serve --port 3006 --watch
 
 # With CORS for frontend development
-mockpit mock serve --cors --verbose
+ferrimock mock serve --cors --verbose
 
 # From specific mock directory
-mockpit mock serve --mocks ./mocks/api/
+ferrimock mock serve --mocks ./mocks/api/
 
 # Enable template rendering endpoint
-mockpit mock serve --enable-render-endpoint
+ferrimock mock serve --enable-render-endpoint
 ```
 
 ### Server Options
@@ -1258,19 +1258,19 @@ curl -X POST http://localhost:3006/__mock/render \
 ## CLI Commands
 
 ```bash
-mockpit mock create --interactive           # Step-by-step wizard
-mockpit mock create "/api/users/:id" -t    # Quick with template
-mockpit mock list -v
-mockpit mock test -m GET /api/users/123
-mockpit mock test -m GET /api/users/123 --render  # With response preview
-mockpit mock test -m GET /api/users/123 --debug   # Debug matching
-mockpit mock serve --watch                  # Standalone server
-mockpit mock validate
-mockpit mock format                          # Format all mocks
-mockpit mock format --check                  # Check without modifying
-mockpit mock reload
-mockpit mock convert traffic.har mocks.yaml
-mockpit mock consolidate large.json small.yaml
+ferrimock mock create --interactive           # Step-by-step wizard
+ferrimock mock create "/api/users/:id" -t    # Quick with template
+ferrimock mock list -v
+ferrimock mock test -m GET /api/users/123
+ferrimock mock test -m GET /api/users/123 --render  # With response preview
+ferrimock mock test -m GET /api/users/123 --debug   # Debug matching
+ferrimock mock serve --watch                  # Standalone server
+ferrimock mock validate
+ferrimock mock format                          # Format all mocks
+ferrimock mock format --check                  # Check without modifying
+ferrimock mock reload
+ferrimock mock convert traffic.har mocks.yaml
+ferrimock mock consolidate large.json small.yaml
 ```
 
 ## Enhanced Mock Testing
@@ -1279,24 +1279,24 @@ Test mock matching with full request simulation:
 
 ```bash
 # Basic matching test
-mockpit mock test -m GET /api/users/123
+ferrimock mock test -m GET /api/users/123
 
 # With rendered response preview
-mockpit mock test -m GET /api/users/123 --render
+ferrimock mock test -m GET /api/users/123 --render
 
 # With headers
-mockpit mock test -m POST /api/users \
+ferrimock mock test -m POST /api/users \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer token"
 
 # With request body
-mockpit mock test -m POST /api/users --body '{"name": "John"}'
+ferrimock mock test -m POST /api/users --body '{"name": "John"}'
 
 # Load body from file
-mockpit mock test -m POST /api/users --body @request.json
+ferrimock mock test -m POST /api/users --body @request.json
 
 # Debug mode - shows why each mock matched or didn't match
-mockpit mock test -m GET /api/users/123 --debug
+ferrimock mock test -m GET /api/users/123 --debug
 ```
 
 ### Test Options
@@ -1317,16 +1317,16 @@ mockpit mock test -m GET /api/users/123 --debug
 Format mock files with consistent key ordering (id, match, response) and structure:
 
 ```bash
-mockpit mock format mocks/collections/          # Format all files
-mockpit mock format mocks/api.yaml              # Format single file
-mockpit mock format --check mocks/              # Check without modifying (CI)
+ferrimock mock format mocks/collections/          # Format all files
+ferrimock mock format mocks/api.yaml              # Format single file
+ferrimock mock format --check mocks/              # Check without modifying (CI)
 ```
 
 Stdin mode for editor integrations (reads from stdin, writes formatted output to stdout):
 
 ```bash
-cat mock.yaml | mockpit mock format --stdin --file-format yaml
-cat mock.json | mockpit mock format --stdin --file-format json
+cat mock.yaml | ferrimock mock format --stdin --file-format yaml
+cat mock.json | ferrimock mock format --stdin --file-format json
 ```
 
 ### Validation
@@ -1334,23 +1334,23 @@ cat mock.json | mockpit mock format --stdin --file-format json
 Validate mock configuration files for errors (invalid patterns, missing fields, template syntax):
 
 ```bash
-mockpit mock validate mocks/collections/        # Validate all files
-mockpit mock validate mocks/api.yaml            # Validate single file
-mockpit mock validate mocks/ --format json      # Machine-readable output
+ferrimock mock validate mocks/collections/        # Validate all files
+ferrimock mock validate mocks/api.yaml            # Validate single file
+ferrimock mock validate mocks/ --format json      # Machine-readable output
 ```
 
 Stdin mode for editor integrations (validates buffer content without requiring a file on disk):
 
 ```bash
-cat mock.yaml | mockpit mock validate --stdin --file-format yaml --format json
+cat mock.yaml | ferrimock mock validate --stdin --file-format yaml --format json
 ```
 
 ## Debugging
 
 ```bash
-RUST_LOG=debug mockpit mock serve --log-matches
-curl http://localhost:3006/__mockpit/status
-mockpit mock test -m GET /api/users/123 --debug
+RUST_LOG=debug ferrimock mock serve --log-matches
+curl http://localhost:3006/__ferrimock/status
+ferrimock mock test -m GET /api/users/123 --debug
 ```
 
 ### Common Issues

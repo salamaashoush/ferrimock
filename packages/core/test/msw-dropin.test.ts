@@ -10,7 +10,7 @@ import {
   http,
   graphql,
   HttpResponse,
-  MockpitInterceptor,
+  FerrimockInterceptor,
   passthrough,
   setupServer,
 } from "../src/index.js";
@@ -365,7 +365,7 @@ describe("setupServer lifecycle", () => {
 
 describe("interceptor boundary with async callbacks", () => {
   it("keeps boundary handlers alive until the async callback settles", async () => {
-    const interceptor = new MockpitInterceptor();
+    const interceptor = new FerrimockInterceptor();
     interceptor.apply();
     try {
       const run = interceptor.boundary(async () => {

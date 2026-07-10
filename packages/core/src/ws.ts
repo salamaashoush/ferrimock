@@ -10,7 +10,7 @@
  *   and owns the sockets; the interceptor resolves WHICH handlers match
  *   via `matchWsConnections` and this module dispatches the `connection`
  *   listeners with the interceptor's `{ client, server }` objects.
- * - TCP lane (`MockpitServer.listen()`): the Rust connection driver owns
+ * - TCP lane (`FerrimockServer.listen()`): the Rust connection driver owns
  *   the socket and upstream forwarding; events arrive through the
  *   registered dispatch callback and sends go back over native handles.
  */
@@ -20,7 +20,7 @@ import {
   type RequestHandler,
   type WebSocketClientHandle,
   type WebSocketServerHandle,
-} from "@mockpit/node";
+} from "ferrimock-node";
 import type {
   WebSocketConnectionData,
   WebSocketData,

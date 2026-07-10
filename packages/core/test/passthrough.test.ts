@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { MockpitInterceptor } from "../src/interceptor.js";
-import { http, HttpResponse } from "@mockpit/node";
+import { FerrimockInterceptor } from "../src/interceptor.js";
+import { http, HttpResponse } from "ferrimock-node";
 
 describe("passthrough", () => {
-  let interceptor: MockpitInterceptor | null = null;
+  let interceptor: FerrimockInterceptor | null = null;
   let server: ReturnType<typeof Bun.serve> | null = null;
   afterEach(() => {
     interceptor?.dispose();
@@ -23,7 +23,7 @@ describe("passthrough", () => {
     });
     const base = `http://127.0.0.1:${server.port}`;
 
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     // A mock for a DIFFERENT path, so /echo passes through.
     interceptor.useHandlers([
       http.get("/mocked", async () => HttpResponse.json({ ok: true })),
@@ -49,7 +49,7 @@ describe("passthrough", () => {
     });
     const base = `http://127.0.0.1:${server.port}`;
 
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.apply(); // no mocks registered
 
     const res = await fetch(`${base}/anything`);

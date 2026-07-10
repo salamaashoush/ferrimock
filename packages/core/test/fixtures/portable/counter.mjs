@@ -1,4 +1,4 @@
-import { http, HttpResponse, fake } from "mockpit";
+import { http, HttpResponse, fake } from "ferrimock";
 
 let count = 0;
 

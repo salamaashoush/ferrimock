@@ -1,12 +1,12 @@
 /**
- * MockpitEventSource: spec-subset behavior incl. auto-reconnect — the
+ * FerrimockEventSource: spec-subset behavior incl. auto-reconnect — the
  * `retry:` field sets the redial delay, `Last-Event-ID` rides the
  * reconnect request, and readyState transitions CONNECTING -> OPEN ->
  * (drop) -> CONNECTING -> OPEN -> CLOSED.
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import { MockpitEventSource } from "../src/event-source.js";
+import { FerrimockEventSource } from "../src/event-source.js";
 
 let realServer: ReturnType<typeof Bun.serve> | null = null;
 
@@ -22,7 +22,7 @@ function sseResponse(body: string): Response {
   });
 }
 
-describe("MockpitEventSource", () => {
+describe("FerrimockEventSource", () => {
   it("reconnects with Last-Event-ID after the retry delay", async () => {
     const lastEventIds: Array<string | null> = [];
     let requestCount = 0;
@@ -40,7 +40,7 @@ describe("MockpitEventSource", () => {
       },
     });
 
-    const source = new MockpitEventSource(
+    const source = new FerrimockEventSource(
       `http://127.0.0.1:${realServer.port}/stream`
     );
 
@@ -78,7 +78,7 @@ describe("MockpitEventSource", () => {
       },
     });
 
-    const source = new MockpitEventSource(
+    const source = new FerrimockEventSource(
       `http://127.0.0.1:${realServer.port}/stream`
     );
     const events: string[] = [];
@@ -102,7 +102,7 @@ describe("MockpitEventSource", () => {
       },
     });
 
-    const source = new MockpitEventSource(
+    const source = new FerrimockEventSource(
       `http://127.0.0.1:${realServer.port}/stream`
     );
     await new Promise<void>((resolve) => {
@@ -123,7 +123,7 @@ describe("MockpitEventSource", () => {
       },
     });
 
-    const source = new MockpitEventSource(
+    const source = new FerrimockEventSource(
       `http://127.0.0.1:${realServer.port}/stream`
     );
     // Wait for the drop -> error (reconnect scheduled), then close.

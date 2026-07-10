@@ -6,11 +6,11 @@ order: 1
 
 # CLI Reference
 
-Complete command-line interface reference for Mockpit. This document covers all available commands for HTTP mocking, fake
+Complete command-line interface reference for Ferrimock. This document covers all available commands for HTTP mocking, fake
 data generation, and related utilities.
 
 ```bash
-mockpit [OPTIONS] [COMMAND]
+ferrimock [OPTIONS] [COMMAND]
 ```
 
 ## Global Options
@@ -42,9 +42,9 @@ mockpit [OPTIONS] [COMMAND]
 Create mock definition with quick flags or interactive wizard.
 
 ```bash
-mockpit mock create [URL] [OPTIONS]
-mockpit mock create --interactive  # Step-by-step wizard
-mockpit mock create                # No URL triggers wizard
+ferrimock mock create [URL] [OPTIONS]
+ferrimock mock create --interactive  # Step-by-step wizard
+ferrimock mock create                # No URL triggers wizard
 ```
 
 ```
@@ -67,7 +67,7 @@ and preview.
 List loaded mocks.
 
 ```bash
-mockpit mock list [OPTIONS]
+ferrimock mock list [OPTIONS]
 ```
 
 Alias: `mock ls`
@@ -82,7 +82,7 @@ Alias: `mock ls`
 Show mock details.
 
 ```bash
-mockpit mock show <MOCK_ID>
+ferrimock mock show <MOCK_ID>
 ```
 
 Alias: `mock s`
@@ -92,7 +92,7 @@ Alias: `mock s`
 Test request matching with full request simulation.
 
 ```bash
-mockpit mock test <PATH> [OPTIONS]
+ferrimock mock test <PATH> [OPTIONS]
 ```
 
 Alias: `mock t`
@@ -110,21 +110,21 @@ Alias: `mock t`
 
 ```bash
 # Basic matching test
-mockpit mock test -m GET /api/users/123
+ferrimock mock test -m GET /api/users/123
 
 # With rendered response preview
-mockpit mock test -m GET /api/users/123 --render
+ferrimock mock test -m GET /api/users/123 --render
 
 # With headers
-mockpit mock test -m POST /api/users \
+ferrimock mock test -m POST /api/users \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer token"
 
 # With request body
-mockpit mock test -m POST /api/users --body '{"name": "John"}'
+ferrimock mock test -m POST /api/users --body '{"name": "John"}'
 
 # Debug mode showing why mocks matched/didn't match
-mockpit mock test -m GET /api/users/123 --debug
+ferrimock mock test -m GET /api/users/123 --debug
 ```
 
 ### mock serve
@@ -132,7 +132,7 @@ mockpit mock test -m GET /api/users/123 --debug
 Start a standalone mock server (no proxy overhead).
 
 ```bash
-mockpit mock serve [OPTIONS]
+ferrimock mock serve [OPTIONS]
 ```
 
 Alias: `mock sv`
@@ -152,16 +152,16 @@ Alias: `mock sv`
 
 ```bash
 # Start mock server on default port
-mockpit mock serve
+ferrimock mock serve
 
 # With custom port and hot reload
-mockpit mock serve --port 3006 --watch
+ferrimock mock serve --port 3006 --watch
 
 # With CORS for frontend development
-mockpit mock serve --cors --verbose
+ferrimock mock serve --cors --verbose
 
 # From specific mock directory
-mockpit mock serve --mocks ./mocks/api/
+ferrimock mock serve --mocks ./mocks/api/
 ```
 
 **Endpoints:**
@@ -178,7 +178,7 @@ mockpit mock serve --mocks ./mocks/api/
 Reload mocks from disk.
 
 ```bash
-mockpit mock reload [OPTIONS]
+ferrimock mock reload [OPTIONS]
 ```
 
 Alias: `mock r`
@@ -192,7 +192,7 @@ Alias: `mock r`
 Validate mock configuration files.
 
 ```bash
-mockpit mock validate [PATH] [OPTIONS]
+ferrimock mock validate [PATH] [OPTIONS]
 ```
 
 Alias: `mock v`
@@ -206,7 +206,7 @@ Alias: `mock v`
 Stdin mode reads content from stdin and outputs validation results, useful for editor integrations:
 
 ```bash
-cat mocks/api.yaml | mockpit mock validate --stdin --file-format yaml --format json
+cat mocks/api.yaml | ferrimock mock validate --stdin --file-format yaml --format json
 ```
 
 ### mock format
@@ -214,7 +214,7 @@ cat mocks/api.yaml | mockpit mock validate --stdin --file-format yaml --format j
 Format mock configuration files with consistent key ordering and structure.
 
 ```bash
-mockpit mock format [PATH] [OPTIONS]
+ferrimock mock format [PATH] [OPTIONS]
 ```
 
 Alias: `mock fmt`
@@ -228,7 +228,7 @@ Alias: `mock fmt`
 Stdin mode reads content from stdin and prints formatted output to stdout, useful for editor integrations:
 
 ```bash
-cat mocks/api.yaml | mockpit mock format --stdin --file-format yaml
+cat mocks/api.yaml | ferrimock mock format --stdin --file-format yaml
 ```
 
 ### mock convert
@@ -237,7 +237,7 @@ Convert HAR to mocks. By default, produces clean replay-ready collections: norma
 filters static assets, strips sensitive and infrastructure headers, and removes access tokens from query strings.
 
 ```bash
-mockpit mock convert <INPUT> <OUTPUT> [OPTIONS]
+ferrimock mock convert <INPUT> <OUTPUT> [OPTIONS]
 ```
 
 Alias: `mock conv`
@@ -264,7 +264,7 @@ Alias: `mock conv`
 Optimize mock recordings.
 
 ```bash
-mockpit mock consolidate <INPUT> <OUTPUT> [OPTIONS]
+ferrimock mock consolidate <INPUT> <OUTPUT> [OPTIONS]
 ```
 
 Alias: `mock opt`
@@ -281,7 +281,7 @@ Alias: `mock opt`
 Export mocks to HAR.
 
 ```bash
-mockpit mock export [OPTIONS]
+ferrimock mock export [OPTIONS]
 ```
 
 Alias: `mock exp`
@@ -297,7 +297,7 @@ Alias: `mock exp`
 List recordings.
 
 ```bash
-mockpit mock recordings [OPTIONS]
+ferrimock mock recordings [OPTIONS]
 ```
 
 Alias: `mock rec`
@@ -317,22 +317,22 @@ generation.
 
 ```bash
 # Generate random data
-mockpit fake data name
-mockpit fake data email -n 5
-mockpit fake data uuid -f json
+ferrimock fake data name
+ferrimock fake data email -n 5
+ferrimock fake data uuid -f json
 
 # Generate images
-mockpit fake image placeholder -W 800 -H 600
-mockpit fake image avatar -i "JS" -s 128
+ferrimock fake image placeholder -W 800 -H 600
+ferrimock fake image avatar -i "JS" -s 128
 
 # Generate PDFs
-mockpit fake pdf -p 3 -o report.pdf
+ferrimock fake pdf -p 3 -o report.pdf
 
 # Preview templates
-mockpit fake preview '{"user": "{{ fake_name() }}", "id": "{{ fake_uuid() }}"}'
+ferrimock fake preview '{"user": "{{ fake_name() }}", "id": "{{ fake_uuid() }}"}'
 
 # Start HTTP server
-mockpit fake serve -p 8080
+ferrimock fake serve -p 8080
 ```
 
 ### fake data
@@ -340,25 +340,25 @@ mockpit fake serve -p 8080
 Generate fake data for testing and development.
 
 ```bash
-mockpit fake data <GENERATOR> [OPTIONS]
+ferrimock fake data <GENERATOR> [OPTIONS]
 ```
 
 **Basic Usage:**
 
 ```bash
 # Single value
-mockpit fake data name
+ferrimock fake data name
 # Output: John Smith
 
 # Multiple values
-mockpit fake data email -n 5
+ferrimock fake data email -n 5
 
 # JSON output
-mockpit fake data uuid -f json
+ferrimock fake data uuid -f json
 # Output: {"uuid": "550e8400-e29b-41d4-a716-446655440000"}
 
 # Copy to clipboard
-mockpit fake data password -c
+ferrimock fake data password -c
 ```
 
 **Generator Options:**
@@ -377,15 +377,15 @@ mockpit fake data password -c
 
 ```bash
 # Plain text (default)
-mockpit fake data name
+ferrimock fake data name
 # John Smith
 
 # JSON
-mockpit fake data name -f json
+ferrimock fake data name -f json
 # {"name": "John Smith"}
 
 # CSV (for multiple values)
-mockpit fake data name -n 3 -f csv
+ferrimock fake data name -n 3 -f csv
 # name
 # John Smith
 # Jane Doe
@@ -533,7 +533,7 @@ mockpit fake data name -n 3 -f csv
 List available generators.
 
 ```bash
-mockpit fake list [OPTIONS]
+ferrimock fake list [OPTIONS]
 ```
 
 ```
@@ -547,20 +547,20 @@ mockpit fake list [OPTIONS]
 
 ```bash
 # List all generators
-mockpit fake list
+ferrimock fake list
 
 # List by category
-mockpit fake list --category identity
-mockpit fake list --category finance
+ferrimock fake list --category identity
+ferrimock fake list --category finance
 
 # Search generators
-mockpit fake list --search email
+ferrimock fake list --search email
 
 # Verbose output with examples
-mockpit fake list --verbose
+ferrimock fake list --verbose
 
 # JSON output
-mockpit fake list --format json
+ferrimock fake list --format json
 ```
 
 **Available Categories:**
@@ -582,7 +582,7 @@ mockpit fake list --format json
 Generate various types of placeholder images.
 
 ```bash
-mockpit fake image <TYPE> [OPTIONS]
+ferrimock fake image <TYPE> [OPTIONS]
 ```
 
 **Image Types:**
@@ -602,28 +602,28 @@ mockpit fake image <TYPE> [OPTIONS]
 
 ```bash
 # Placeholder image
-mockpit fake image placeholder -W 800 -H 600
+ferrimock fake image placeholder -W 800 -H 600
 
 # Avatar with initials
-mockpit fake image avatar -i "JS" -s 128
+ferrimock fake image avatar -i "JS" -s 128
 
 # Gradient
-mockpit fake image gradient --start "#FF0000" --end "#0000FF" -d horizontal
+ferrimock fake image gradient --start "#FF0000" --end "#0000FF" -d horizontal
 
 # Checkerboard
-mockpit fake image checkerboard -W 200 -H 200
+ferrimock fake image checkerboard -W 200 -H 200
 
 # Noise (monochrome or colored)
-mockpit fake image noise -W 256 -H 256 --colored
+ferrimock fake image noise -W 256 -H 256 --colored
 
 # Stripes
-mockpit fake image stripes -d vertical -b "#FFFFFF" -t "#000000"
+ferrimock fake image stripes -d vertical -b "#FFFFFF" -t "#000000"
 
 # Text on image
-mockpit fake image text --text "Hello World" -W 400 -H 100
+ferrimock fake image text --text "Hello World" -W 400 -H 100
 
 # Solid color
-mockpit fake image solid -b "#FF5722" -W 100 -H 100
+ferrimock fake image solid -b "#FF5722" -W 100 -H 100
 ```
 
 **Image Options:**
@@ -652,19 +652,19 @@ mockpit fake image solid -b "#FF5722" -W 100 -H 100
 
 ```bash
 # Save to file
-mockpit fake image gradient -o gradient.png
+ferrimock fake image gradient -o gradient.png
 
 # Output as base64
-mockpit fake image avatar -i "AB" --base64
+ferrimock fake image avatar -i "AB" --base64
 
 # Output as data URI (for HTML/CSS)
-mockpit fake image placeholder --data-uri
+ferrimock fake image placeholder --data-uri
 
 # Generate JPEG
-mockpit fake image noise -F jpeg -q 90
+ferrimock fake image noise -F jpeg -q 90
 
 # Open in default viewer
-mockpit fake image checkerboard --open
+ferrimock fake image checkerboard --open
 ```
 
 ### fake pdf
@@ -672,32 +672,32 @@ mockpit fake image checkerboard --open
 Generate fake PDF documents.
 
 ```bash
-mockpit fake pdf [OPTIONS]
+ferrimock fake pdf [OPTIONS]
 ```
 
 **Examples:**
 
 ```bash
 # Single page PDF
-mockpit fake pdf
+ferrimock fake pdf
 
 # Multi-page PDF
-mockpit fake pdf -p 5
+ferrimock fake pdf -p 5
 
 # With custom text
-mockpit fake pdf -t "Invoice #12345"
+ferrimock fake pdf -t "Invoice #12345"
 
 # Save to file
-mockpit fake pdf -p 3 -o report.pdf
+ferrimock fake pdf -p 3 -o report.pdf
 
 # Output as base64
-mockpit fake pdf --base64
+ferrimock fake pdf --base64
 
 # Output as data URI
-mockpit fake pdf --data-uri
+ferrimock fake pdf --data-uri
 
 # Open after generation
-mockpit fake pdf -p 2 --open
+ferrimock fake pdf -p 2 --open
 ```
 
 **PDF Options:**
@@ -716,29 +716,29 @@ mockpit fake pdf -p 2 --open
 Preview and render templates with fake data using Tera template syntax.
 
 ```bash
-mockpit fake preview [TEMPLATE] [OPTIONS]
+ferrimock fake preview [TEMPLATE] [OPTIONS]
 ```
 
 **Examples:**
 
 ```bash
 # Inline template
-mockpit fake preview '{"name": "{{ fake_name() }}", "email": "{{ fake_email() }}"}'
+ferrimock fake preview '{"name": "{{ fake_name() }}", "email": "{{ fake_email() }}"}'
 
 # From file
-mockpit fake preview -f template.json
+ferrimock fake preview -f template.json
 
 # With custom context
-mockpit fake preview '{"greeting": "Hello {{ name }}"}' -c '{"name": "World"}'
+ferrimock fake preview '{"greeting": "Hello {{ name }}"}' -c '{"name": "World"}'
 
 # Multiple renders
-mockpit fake preview '{"id": "{{ fake_uuid() }}"}' -n 5
+ferrimock fake preview '{"id": "{{ fake_uuid() }}"}' -n 5
 
 # JSON output
-mockpit fake preview '{"user": "{{ fake_name() }}"}' -F json
+ferrimock fake preview '{"user": "{{ fake_name() }}"}' -F json
 
 # CSV output (for multiple)
-mockpit fake preview '{{ fake_email() }}' -n 10 -F csv
+ferrimock fake preview '{{ fake_email() }}' -n 10 -F csv
 ```
 
 **Template Functions:**
@@ -774,11 +774,11 @@ Pass custom variables to templates:
 
 ```bash
 # Pass context as JSON
-mockpit fake preview '{"msg": "Hello {{ name }}, your code is {{ code }}"}' \
+ferrimock fake preview '{"msg": "Hello {{ name }}, your code is {{ code }}"}' \
   -c '{"name": "Alice", "code": "ABC123"}'
 
 # Mix with fake data
-mockpit fake preview '{"user": "{{ name }}", "id": "{{ fake_uuid() }}"}' \
+ferrimock fake preview '{"user": "{{ name }}", "id": "{{ fake_uuid() }}"}' \
   -c '{"name": "Custom Name"}'
 ```
 
@@ -787,29 +787,29 @@ mockpit fake preview '{"user": "{{ name }}", "id": "{{ fake_uuid() }}"}' \
 Run a local HTTP server that provides fake data via REST endpoints.
 
 ```bash
-mockpit fake serve [OPTIONS]
+ferrimock fake serve [OPTIONS]
 ```
 
 **Starting the Server:**
 
 ```bash
 # Default (port 3005)
-mockpit fake serve
+ferrimock fake serve
 
 # Custom port
-mockpit fake serve --port 8080
+ferrimock fake serve --port 8080
 
 # Custom host
-mockpit fake serve --host 0.0.0.0 --port 8080
+ferrimock fake serve --host 0.0.0.0 --port 8080
 
 # Enable CORS
-mockpit fake serve --cors
+ferrimock fake serve --cors
 
 # Verbose logging
-mockpit fake serve --verbose
+ferrimock fake serve --verbose
 
 # Open browser
-mockpit fake serve --open
+ferrimock fake serve --open
 ```
 
 **Server Options:**
@@ -919,7 +919,7 @@ curl -X POST http://localhost:3005/render \
 
 ```bash
 # Start fake server
-mockpit fake serve --port 8080 &
+ferrimock fake serve --port 8080 &
 
 # Test your client
 curl http://localhost:8080/fake/user
@@ -929,17 +929,17 @@ curl http://localhost:8080/fake/user
 
 ```bash
 # Generate user data for tests
-mockpit fake data user -n 100 -f json > users.json
+ferrimock fake data user -n 100 -f json > users.json
 
 # Generate UUIDs
-mockpit fake data uuid -n 50 > ids.txt
+ferrimock fake data uuid -n 50 > ids.txt
 ```
 
 ### Creating Mock Responses
 
 ```bash
 # Template for API response
-mockpit fake preview '{
+ferrimock fake preview '{
   "status": "success",
   "data": {
     "users": [
@@ -954,13 +954,13 @@ mockpit fake preview '{
 
 ```bash
 # Generate placeholder images
-mockpit fake image placeholder -W 1200 -H 630 -o og-image.png
-mockpit fake image avatar -i "AB" -s 64 -o avatar.png
+ferrimock fake image placeholder -W 1200 -H 630 -o og-image.png
+ferrimock fake image avatar -i "AB" -s 64 -o avatar.png
 ```
 
 ### Test Documents
 
 ```bash
 # Generate test PDF
-mockpit fake pdf -p 10 -o test-document.pdf
+ferrimock fake pdf -p 10 -o test-document.pdf
 ```

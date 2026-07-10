@@ -2,7 +2,7 @@
  * MSW-compatible utility functions.
  *
  * These mirror MSW's `delay()`, `passthrough()`, and `bypass()` APIs
- * so mockpit can be a drop-in replacement.
+ * so ferrimock can be a drop-in replacement.
  */
 
 /**
@@ -37,7 +37,7 @@ export function delay(durationOrMode?: number | "real" | "infinite"): Promise<vo
 }
 
 /** Sentinel value returned by `passthrough()`. */
-const PASSTHROUGH_SYMBOL = Symbol.for("mockpit.passthrough");
+const PASSTHROUGH_SYMBOL = Symbol.for("ferrimock.passthrough");
 
 /**
  * Signal that the request should pass through to the actual network.
@@ -69,7 +69,7 @@ export function isPassthrough(value: unknown): boolean {
 }
 
 /**
- * Create a request that bypasses mockpit interception.
+ * Create a request that bypasses ferrimock interception.
  *
  * Useful for making real network requests from inside handlers
  * without triggering the mock interceptor.
@@ -92,7 +92,7 @@ export function bypass(
   init?: RequestInit
 ): Request {
   const request = new Request(input, init);
-  request.headers.set("x-mockpit-bypass", "1");
+  request.headers.set("x-ferrimock-bypass", "1");
   return request;
 }
 
@@ -212,16 +212,16 @@ export function matchRequestUrl(
 }
 
 /** Header name used to mark bypassed requests. */
-export const BYPASS_HEADER = "x-mockpit-bypass";
+export const BYPASS_HEADER = "x-ferrimock-bypass";
 
 /** Header name used to signal network errors. */
-export const NETWORK_ERROR_HEADER = "x-mockpit-network-error";
+export const NETWORK_ERROR_HEADER = "x-ferrimock-network-error";
 
 /** Marker header: handler called passthrough() — perform the real request. */
-export const PASSTHROUGH_HEADER = "x-mockpit-passthrough";
+export const PASSTHROUGH_HEADER = "x-ferrimock-passthrough";
 
 /** Marker header: handler returned undefined — retry matching without this mock. */
-export const FALLTHROUGH_HEADER = "x-mockpit-fallthrough";
+export const FALLTHROUGH_HEADER = "x-ferrimock-fallthrough";
 
 /** Marker header: the original Response is stashed under this token. */
-export const STREAM_ID_HEADER = "x-mockpit-stream-id";
+export const STREAM_ID_HEADER = "x-ferrimock-stream-id";

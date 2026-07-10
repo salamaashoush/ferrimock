@@ -10,7 +10,7 @@ mocks:
   request:
     headers:
       add:
-        x-forwarded-by: mockpit
+        x-forwarded-by: ferrimock
         x-internal-auth: dev-proxy-token
         x-trace-id: "{{ fake_uuid() }}"
 - id: header-remove
@@ -131,7 +131,7 @@ mocks:
     headers:
       add:
         x-forwarded-proto: https
-        x-proxy-source: mockpit
+        x-proxy-source: ferrimock
         x-trace-id: "{{ fake_uuid() }}"
       remove:
       - x-debug-mode
@@ -164,7 +164,7 @@ mocks:
       - verbose
     body:
       jsonpath:
-        $.client: mockpit
+        $.client: ferrimock
   patch:
     jsonpath:
       $.metadata.proxied: true
@@ -172,7 +172,7 @@ mocks:
     headers:
       add:
         x-proxy-cache: miss
-        x-served-by: mockpit
+        x-served-by: ferrimock
       remove:
       - x-internal-debug
       - x-backend-server

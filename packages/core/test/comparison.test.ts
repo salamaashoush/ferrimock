@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { MockpitServer, http, HttpResponse, fake } from "@mockpit/node";
+import { FerrimockServer, http, HttpResponse, fake } from "ferrimock-node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
@@ -13,7 +13,7 @@ function bench(label: string, rps: number, usPerReq: number) {
 
 // ===== MSW Benchmarks =====
 
-describe("MSW vs Mockpit comparison", () => {
+describe("MSW vs Ferrimock comparison", () => {
   // -- MSW: static JSON --
   it("MSW - static JSON handler", async () => {
     const server = setupServer(
@@ -86,16 +86,16 @@ describe("MSW vs Mockpit comparison", () => {
     server.close();
   });
 
-  // -- Mockpit: static declarative --
-  it("Mockpit - static declarative mock", async () => {
-    const server = new MockpitServer();
+  // -- Ferrimock: static declarative --
+  it("Ferrimock - static declarative mock", async () => {
+    const server = new FerrimockServer();
     await server.addMock({
       id: "bench-static",
       match: { method: "GET", url: "/api/bench" },
       response: {
         status: 200,
         headers: { "content-type": "application/json" },
-        body: '{"id":"123","name":"John","source":"mockpit-static"}',
+        body: '{"id":"123","name":"John","source":"ferrimock-static"}',
       },
     });
     const url = await server.listen();
@@ -106,14 +106,14 @@ describe("MSW vs Mockpit comparison", () => {
     const elapsed = performance.now() - start;
     const rps = (N / elapsed) * 1000;
     const usPerReq = (elapsed / N) * 1000;
-    bench("Mockpit: static declarative", rps, usPerReq);
+    bench("Ferrimock: static declarative", rps, usPerReq);
 
     await server.close();
   });
 
-  // -- Mockpit: Tera template with fake data --
-  it("Mockpit - declarative template with fake data", async () => {
-    const server = new MockpitServer();
+  // -- Ferrimock: Tera template with fake data --
+  it("Ferrimock - declarative template with fake data", async () => {
+    const server = new FerrimockServer();
     await server.addMock({
       id: "bench-template",
       match: { method: "GET", url: "/api/bench" },
@@ -121,7 +121,7 @@ describe("MSW vs Mockpit comparison", () => {
         status: 200,
         headers: { "content-type": "application/json" },
         template:
-          '{"id":"{{ fake_uuid() }}","name":"{{ fake_name() }}","email":"{{ fake_email() }}","source":"mockpit-template"}',
+          '{"id":"{{ fake_uuid() }}","name":"{{ fake_name() }}","email":"{{ fake_email() }}","source":"ferrimock-template"}',
       },
     });
     const url = await server.listen();
@@ -132,17 +132,17 @@ describe("MSW vs Mockpit comparison", () => {
     const elapsed = performance.now() - start;
     const rps = (N / elapsed) * 1000;
     const usPerReq = (elapsed / N) * 1000;
-    bench("Mockpit: template + Rust fake data", rps, usPerReq);
+    bench("Ferrimock: template + Rust fake data", rps, usPerReq);
 
     await server.close();
   });
 
-  // -- Mockpit: JS handler static --
-  it("Mockpit - JS handler static response", async () => {
-    const server = new MockpitServer();
+  // -- Ferrimock: JS handler static --
+  it("Ferrimock - JS handler static response", async () => {
+    const server = new FerrimockServer();
     server.useHandlers([
       http.get("/api/bench", async () =>
-        HttpResponse.json({ id: "123", name: "John", source: "mockpit-handler" })
+        HttpResponse.json({ id: "123", name: "John", source: "ferrimock-handler" })
       ),
     ]);
     const url = await server.listen();
@@ -153,21 +153,21 @@ describe("MSW vs Mockpit comparison", () => {
     const elapsed = performance.now() - start;
     const rps = (N / elapsed) * 1000;
     const usPerReq = (elapsed / N) * 1000;
-    bench("Mockpit: JS handler (static)", rps, usPerReq);
+    bench("Ferrimock: JS handler (static)", rps, usPerReq);
 
     await server.close();
   });
 
-  // -- Mockpit: JS handler with fake namespace --
-  it("Mockpit - JS handler with fake.*", async () => {
-    const server = new MockpitServer();
+  // -- Ferrimock: JS handler with fake namespace --
+  it("Ferrimock - JS handler with fake.*", async () => {
+    const server = new FerrimockServer();
     server.useHandlers([
       http.get("/api/bench", async () =>
         HttpResponse.json({
           id: fake.uuid(),
           name: fake.name(),
           email: fake.email(),
-          source: "mockpit-handler+fake",
+          source: "ferrimock-handler+fake",
         })
       ),
     ]);
@@ -179,21 +179,21 @@ describe("MSW vs Mockpit comparison", () => {
     const elapsed = performance.now() - start;
     const rps = (N / elapsed) * 1000;
     const usPerReq = (elapsed / N) * 1000;
-    bench("Mockpit: JS handler + fake.* (NAPI)", rps, usPerReq);
+    bench("Ferrimock: JS handler + fake.* (NAPI)", rps, usPerReq);
 
     await server.close();
   });
 
-  // -- Mockpit: JS handler with faker.js (pure JS) --
-  it("Mockpit - JS handler with faker.js", async () => {
-    const server = new MockpitServer();
+  // -- Ferrimock: JS handler with faker.js (pure JS) --
+  it("Ferrimock - JS handler with faker.js", async () => {
+    const server = new FerrimockServer();
     server.useHandlers([
       http.get("/api/bench", async () =>
         HttpResponse.json({
           id: faker.string.uuid(),
           name: faker.person.fullName(),
           email: faker.internet.email(),
-          source: "mockpit-handler+fakerjs",
+          source: "ferrimock-handler+fakerjs",
         })
       ),
     ]);
@@ -205,14 +205,14 @@ describe("MSW vs Mockpit comparison", () => {
     const elapsed = performance.now() - start;
     const rps = (N / elapsed) * 1000;
     const usPerReq = (elapsed / N) * 1000;
-    bench("Mockpit: JS handler + faker.js (pure JS)", rps, usPerReq);
+    bench("Ferrimock: JS handler + faker.js (pure JS)", rps, usPerReq);
 
     await server.close();
   });
 
-  // -- Mockpit: JS handler with params --
-  it("Mockpit - JS handler with :params", async () => {
-    const server = new MockpitServer();
+  // -- Ferrimock: JS handler with params --
+  it("Ferrimock - JS handler with :params", async () => {
+    const server = new FerrimockServer();
     server.useHandlers([
       http.get("/api/users/:id", async (req) =>
         HttpResponse.json({ id: req.params.id, name: "John" })
@@ -226,7 +226,7 @@ describe("MSW vs Mockpit comparison", () => {
     const elapsed = performance.now() - start;
     const rps = (N / elapsed) * 1000;
     const usPerReq = (elapsed / N) * 1000;
-    bench("Mockpit: JS handler with :params", rps, usPerReq);
+    bench("Ferrimock: JS handler with :params", rps, usPerReq);
 
     await server.close();
   });
@@ -235,9 +235,9 @@ describe("MSW vs Mockpit comparison", () => {
   it("prints summary", () => {
     console.log("\n  === Summary ===");
     console.log("  MSW intercepts fetch at the network level (no real HTTP).");
-    console.log("  Mockpit runs a real HTTP server (axum) with actual TCP connections.");
-    console.log("  Mockpit declarative mocks are pure Rust (no JS overhead).");
-    console.log("  Mockpit templates use Tera engine in Rust (no JS overhead).");
+    console.log("  Ferrimock runs a real HTTP server (axum) with actual TCP connections.");
+    console.log("  Ferrimock declarative mocks are pure Rust (no JS overhead).");
+    console.log("  Ferrimock templates use Tera engine in Rust (no JS overhead).");
     console.log("  fake.* uses Rust generators via NAPI (~1us per call).");
     console.log("  faker.js is pure JavaScript.");
   });

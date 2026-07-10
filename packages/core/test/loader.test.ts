@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { MockpitServer } from "@mockpit/node";
+import { FerrimockServer } from "ferrimock-node";
 import { loadMocksDir } from "../src/index.js";
 import { resolve } from "node:path";
 
 const MOCKS_DIR = resolve(import.meta.dir, "fixtures/mocks");
 
 describe("loadMocksDir - mixed formats", () => {
-  let server: MockpitServer;
+  let server: FerrimockServer;
   let baseUrl: string;
 
   beforeAll(async () => {
-    server = new MockpitServer();
+    server = new FerrimockServer();
 
     // Load all mocks from directory (YAML + TS handler files)
     const { declarativeCount, handlerCount } = await loadMocksDir(

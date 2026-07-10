@@ -1,14 +1,14 @@
 /**
- * TCP-lane streaming: `MockpitServer.listen()` serves JS-defined
+ * TCP-lane streaming: `FerrimockServer.listen()` serves JS-defined
  * `ws.link` and `sse` handlers natively through the Rust engine — no
  * interceptor, real sockets.
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import { MockpitServer } from "@mockpit/node";
+import { FerrimockServer } from "ferrimock-node";
 import { ws, sse } from "../src/index.js";
 
-let server: MockpitServer | null = null;
+let server: FerrimockServer | null = null;
 
 async function listen(): Promise<string> {
   const url = await server!.listen();
@@ -51,7 +51,7 @@ function openSocket(url: string): Promise<{
 
 describe("TCP lane: ws.link", () => {
   it("serves connections natively with params and echo", async () => {
-    server = new MockpitServer();
+    server = new FerrimockServer();
     const rooms = ws.link("/ws/room/:roomId");
     const handler = rooms.addEventListener(
       "connection",
@@ -73,7 +73,7 @@ describe("TCP lane: ws.link", () => {
   });
 
   it("delivers binary frames and close code/reason", async () => {
-    server = new MockpitServer();
+    server = new FerrimockServer();
     const link = ws.link("/ws/bin");
     const handler = link.addEventListener("connection", ({ client }) => {
       client.addEventListener("message", (event) => {
@@ -107,7 +107,7 @@ describe("TCP lane: ws.link", () => {
   });
 
   it("removeMock closes live connections with 1001", async () => {
-    server = new MockpitServer();
+    server = new FerrimockServer();
     const link = ws.link("/ws/doomed");
     const handler = link.addEventListener("connection", ({ client }) => {
       client.send("hi");
@@ -133,7 +133,7 @@ describe("TCP lane: ws.link", () => {
 
 describe("TCP lane: sse", () => {
   it("streams frames in MSW wire shape without requiring an accept header", async () => {
-    server = new MockpitServer();
+    server = new FerrimockServer();
     const handler = sse("/stream", ({ client }) => {
       client.send({ data: "one" });
       client.send({ id: "5", event: "tick", data: { n: 2 } });
@@ -154,7 +154,7 @@ describe("TCP lane: sse", () => {
   });
 
   it("streams incrementally with live sends", async () => {
-    server = new MockpitServer();
+    server = new FerrimockServer();
     const handler = sse("/live", async ({ client }) => {
       client.send({ data: "first" });
       await new Promise((r) => setTimeout(r, 30));

@@ -1,15 +1,15 @@
 #!/bin/sh
-# Mockpit installer
-# Usage: curl -sSf https://raw.githubusercontent.com/salamaashoush/mockpit/main/scripts/install.sh | sh
+# Ferrimock installer
+# Usage: curl -sSf https://raw.githubusercontent.com/salamaashoush/ferrimock/main/scripts/install.sh | sh
 #
 # Environment variables:
-#   MOCKPIT_VERSION  - Version to install (default: latest)
+#   FERRIMOCK_VERSION  - Version to install (default: latest)
 #   INSTALL_DIR      - Installation directory (default: /usr/local/bin)
 
 set -eu
 
-REPO="salamaashoush/mockpit"
-BINARY="mockpit"
+REPO="salamaashoush/ferrimock"
+BINARY="ferrimock"
 
 # Colors (only if terminal supports it)
 if [ -t 1 ]; then
@@ -80,7 +80,7 @@ get_latest_version() {
 }
 
 main() {
-    printf "\n${BOLD}Mockpit Installer${NC}\n\n"
+    printf "\n${BOLD}Ferrimock Installer${NC}\n\n"
 
     # Detect platform
     OS="$(detect_os)"
@@ -89,14 +89,14 @@ main() {
     info "Detected platform: ${TARGET}"
 
     # Determine version
-    VERSION="${MOCKPIT_VERSION:-}"
+    VERSION="${FERRIMOCK_VERSION:-}"
     if [ -z "$VERSION" ]; then
         info "Fetching latest version..."
         VERSION="$(get_latest_version)"
     fi
 
     if [ -z "$VERSION" ]; then
-        error "Could not determine version. Set MOCKPIT_VERSION or check https://github.com/${REPO}/releases"
+        error "Could not determine version. Set FERRIMOCK_VERSION or check https://github.com/${REPO}/releases"
     fi
     info "Version: v${VERSION}"
 
@@ -154,7 +154,7 @@ main() {
 
     # Verify
     INSTALLED_VERSION="$("${INSTALL_DIR}/${BINARY}" --version 2>/dev/null || echo "unknown")"
-    ok "mockpit ${INSTALLED_VERSION} is ready"
+    ok "ferrimock ${INSTALLED_VERSION} is ready"
 
     # Check PATH
     case ":${PATH}:" in
@@ -162,7 +162,7 @@ main() {
         *) warn "${INSTALL_DIR} is not in your PATH. Add it with: export PATH=\"${INSTALL_DIR}:\$PATH\"" ;;
     esac
 
-    printf "\n${BOLD}Run 'mockpit --help' to get started.${NC}\n\n"
+    printf "\n${BOLD}Run 'ferrimock --help' to get started.${NC}\n\n"
 }
 
 main

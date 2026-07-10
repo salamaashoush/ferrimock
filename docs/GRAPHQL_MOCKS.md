@@ -12,10 +12,10 @@ Auto-generate mocks from GraphQL schema introspection with type-aware fake data.
 
 ```bash
 # Generate from schema
-mockpit graphql mock /graphql --no-auth -o mocks.yaml
+ferrimock graphql mock /graphql --no-auth -o mocks.yaml
 
 # Use with proxy
-mockpit proxy --mock --mock-file mocks.yaml
+ferrimock proxy --mock --mock-file mocks.yaml
 ```
 
 Generated mock example:
@@ -54,24 +54,24 @@ mocks:
 
 ```bash
 # Custom endpoint
-mockpit graphql mock /custom/graphql -o mocks.yaml
+ferrimock graphql mock /custom/graphql -o mocks.yaml
 
 # Different format
-mockpit graphql mock /graphql -o mocks.json  # JSON
-mockpit graphql mock /graphql -o mocks.yaml  # YAML
+ferrimock graphql mock /graphql -o mocks.json  # JSON
+ferrimock graphql mock /graphql -o mocks.yaml  # YAML
 ```
 
 ## Operation Filtering
 
 ```bash
 # Queries only
-mockpit graphql mock /graphql --no-mutations --no-subscriptions -o queries.yaml
+ferrimock graphql mock /graphql --no-mutations --no-subscriptions -o queries.yaml
 
 # Mutations only
-mockpit graphql mock /graphql --no-queries --mutations -o mutations.yaml
+ferrimock graphql mock /graphql --no-queries --mutations -o mutations.yaml
 
 # All operations (queries + mutations + subscriptions)
-mockpit graphql mock /graphql --subscriptions -o all.yaml
+ferrimock graphql mock /graphql --subscriptions -o all.yaml
 ```
 
 | Flag                 | Default | Description                     |
@@ -113,7 +113,7 @@ scalars:
 ### Use Mappings
 
 ```bash
-mockpit graphql mock /graphql \
+ferrimock graphql mock /graphql \
   --type-mappings custom-types.json \
   -o mocks.yaml
 ```
@@ -139,7 +139,7 @@ Custom mappings override built-in defaults.
 ## Generation Options
 
 ```bash
-mockpit graphql mock /graphql \
+ferrimock graphql mock /graphql \
   --priority 150 \                    # Mock priority (default: 100)
   --list-length 5 \                   # Array length (default: 3)
   --max-depth 4 \                     # Nesting depth (default: 5)
@@ -267,7 +267,7 @@ return:
 
 ```bash
 # With bearer token header
-mockpit graphql mock https://api.example.com/graphql \
+ferrimock graphql mock https://api.example.com/graphql \
   -H "Authorization: Bearer <token>" \
   -o mocks.yaml
 ```
@@ -275,17 +275,17 @@ mockpit graphql mock https://api.example.com/graphql \
 ### Public Endpoints
 
 ```bash
-mockpit graphql mock https://api.example.com/graphql --no-auth -o mocks.yaml
+ferrimock graphql mock https://api.example.com/graphql --no-auth -o mocks.yaml
 ```
 
 ### Via Proxy
 
 ```bash
 # Start proxy first
-mockpit proxy --mock
+ferrimock proxy --mock
 
 # Generate via proxy (proxy handles auth)
-mockpit graphql mock http://localhost:3003/graphql \
+ferrimock graphql mock http://localhost:3003/graphql \
   --proxied \
   -o mocks.yaml
 ```
@@ -296,11 +296,11 @@ mockpit graphql mock http://localhost:3003/graphql \
 
 ```bash
 # Direct file
-mockpit proxy --mock --mock-file graphql-mocks.yaml
+ferrimock proxy --mock --mock-file graphql-mocks.yaml
 
 # Auto-load from collections/
 mv graphql-mocks.yaml mocks/collections/
-mockpit proxy --mock
+ferrimock proxy --mock
 ```
 
 ### Combine with Other Mocks
@@ -324,7 +324,7 @@ mocks:
 
 ```bash
 # Start proxy
-mockpit proxy --mock --mock-file graphql-mocks.yaml
+ferrimock proxy --mock --mock-file graphql-mocks.yaml
 
 # Test query
 curl http://localhost:3003/graphql \
@@ -470,7 +470,7 @@ mocks:
 ## CLI Reference
 
 ```bash
-mockpit graphql mock [ENDPOINT] [OPTIONS]
+ferrimock graphql mock [ENDPOINT] [OPTIONS]
 ```
 
 | Option                   | Default    | Description                      |
@@ -490,7 +490,7 @@ mockpit graphql mock [ENDPOINT] [OPTIONS]
 | `--include-deprecated`   | false      | Include deprecated fields        |
 | `--generate-variants`    | false      | Generate multiple variants       |
 | `--no-auth`              | -          | Skip authentication              |
-| `--proxied`              | -          | Endpoint is a mockpit proxy      |
+| `--proxied`              | -          | Endpoint is a ferrimock proxy      |
 | `-H, --header <HEADER>`  | -          | Custom headers (repeatable)      |
 
 ## Common Issues
@@ -509,7 +509,7 @@ mockpit graphql mock [ENDPOINT] [OPTIONS]
 2. Use `--proxied` when proxy is already running
 3. Combine with HAR recordings for complete coverage
 4. Higher priority for custom mocks (200+) vs generated (100)
-5. Test mocks with `mockpit mock test`
+5. Test mocks with `ferrimock mock test`
 6. Use GraphQL REPL to verify schema before generating
 
 ## See Also

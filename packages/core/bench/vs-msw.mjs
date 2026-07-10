@@ -1,19 +1,19 @@
-// Fair mockpit-vs-MSW benchmark.
+// Fair ferrimock-vs-MSW benchmark.
 //
 // Methodology (transparent on purpose):
 //   - Runs under Node (MSW's target runtime), using Node's global fetch (undici).
-//   - One interceptor active at a time (mockpit applied + disposed, then MSW).
+//   - One interceptor active at a time (ferrimock applied + disposed, then MSW).
 //   - Identical routes + response payloads for both libraries.
 //   - WARMUP iterations (JIT), then SAMPLES batches of BATCH sequential awaits;
 //     report the MEDIAN per-op time (robust to GC/noise) plus min/max spread.
 //   - Handler scenarios run a JS callback in BOTH libs (apples-to-apples).
-//   - The "static (declarative)" row is mockpit's Rust fast path (no JS handler);
+//   - The "static (declarative)" row is ferrimock's Rust fast path (no JS handler);
 //     MSW always runs a JS handler, so that row is labeled as such.
 //
 // Run:  node packages/core/bench/vs-msw.mjs   (from repo root)
 
-import { MockpitInterceptor } from "@mockpit/core";
-import { http as mock, HttpResponse as mockHttpResponse } from "@mockpit/node";
+import { FerrimockInterceptor } from "ferrimock";
+import { http as mock, HttpResponse as mockHttpResponse } from "ferrimock-node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
@@ -45,8 +45,8 @@ const BASE = "http://localhost";
 
 // Scenarios: each registers the same behavior in both libs.
 const scenarios = {
-  "static JSON (mockpit: declarative fast path)": {
-    mockpit: (ic) => ic.addMock({
+  "static JSON (ferrimock: declarative fast path)": {
+    ferrimock: (ic) => ic.addMock({
       id: "s", match: { method: "GET", url: "/static" },
       response: { status: 200, headers: { "content-type": "application/json" }, body: '{"ok":true}' },
     }),
@@ -55,19 +55,19 @@ const scenarios = {
     check: (j) => j.ok === true,
   },
   "GET handler + path param (JS handler both)": {
-    mockpit: (ic) => ic.useHandlers([mock.get("/users/:id", async ({ params }) => mockHttpResponse.json({ id: params.id }))]),
+    ferrimock: (ic) => ic.useHandlers([mock.get("/users/:id", async ({ params }) => mockHttpResponse.json({ id: params.id }))]),
     msw: () => mswHttp.get(`${BASE}/users/:id`, ({ params }) => HttpResponse.json({ id: params.id })),
     call: () => fetch(`${BASE}/users/42`),
     check: (j) => j.id === "42",
   },
   "POST + JSON body echo (JS handler both)": {
-    mockpit: (ic) => ic.useHandlers([mock.post("/echo", async ({ request }) => mockHttpResponse.json({ got: (await request.json()).name }))]),
+    ferrimock: (ic) => ic.useHandlers([mock.post("/echo", async ({ request }) => mockHttpResponse.json({ got: (await request.json()).name }))]),
     msw: () => mswHttp.post(`${BASE}/echo`, async ({ request }) => HttpResponse.json({ got: (await request.json()).name })),
     call: () => fetch(`${BASE}/echo`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"name":"ada"}' }),
     check: (j) => j.got === "ada",
   },
-  "dynamic fake data (mockpit template vs MSW+faker)": {
-    mockpit: (ic) => ic.addMock({
+  "dynamic fake data (ferrimock template vs MSW+faker)": {
+    ferrimock: (ic) => ic.addMock({
       id: "d", match: { method: "GET", url: "/fake" },
       response: { status: 200, headers: { "content-type": "application/json" }, template: '{"id":"{{ fake_uuid() }}","name":"{{ fake_name() }}"}' },
     }),
@@ -85,21 +85,21 @@ console.log(`\nNode ${process.version} — WARMUP=${WARMUP}, SAMPLES=${SAMPLES},
 
 const results = {};
 
-// ---- mockpit ----
+// ---- ferrimock ----
 {
-  const ic = new MockpitInterceptor();
+  const ic = new FerrimockInterceptor();
   for (const sc of Object.values(scenarios)) {
-    await sc.mockpit(ic);
+    await sc.ferrimock(ic);
   }
   ic.apply({ onUnhandledRequest: "bypass" });
   for (const [name, sc] of Object.entries(scenarios)) {
     const j = await (await sc.call()).json();
-    if (!sc.check(j)) throw new Error(`mockpit did not mock "${name}": ${JSON.stringify(j)}`);
+    if (!sc.check(j)) throw new Error(`ferrimock did not mock "${name}": ${JSON.stringify(j)}`);
   }
-  console.log("mockpit: all scenarios return correct mocked data ✓");
-  results.mockpit = {};
+  console.log("ferrimock: all scenarios return correct mocked data ✓");
+  results.ferrimock = {};
   for (const [name, sc] of Object.entries(scenarios)) {
-    results.mockpit[name] = await bench(sc.call);
+    results.ferrimock[name] = await bench(sc.call);
   }
   ic.dispose();
 }
@@ -123,13 +123,13 @@ const results = {};
   server.close();
 }
 
-console.log("scenario".padEnd(48) + " | mockpit / MSW (speedup)\n" + "-".repeat(110));
+console.log("scenario".padEnd(48) + " | ferrimock / MSW (speedup)\n" + "-".repeat(110));
 for (const name of Object.keys(scenarios)) {
-  const m = results.mockpit[name];
+  const m = results.ferrimock[name];
   const w = results.msw[name];
   const speed = (m.ops / w.ops).toFixed(2);
   console.log(name.padEnd(48));
-  console.log("  mockpit:  " + fmt(m));
+  console.log("  ferrimock:  " + fmt(m));
   console.log("  msw:      " + fmt(w));
-  console.log(`  => mockpit ${speed}x MSW\n`);
+  console.log(`  => ferrimock ${speed}x MSW\n`);
 }

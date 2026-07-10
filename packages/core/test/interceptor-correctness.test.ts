@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { MockpitInterceptor } from "../src/interceptor.js";
-import { http, HttpResponse } from "@mockpit/node";
+import { FerrimockInterceptor } from "../src/interceptor.js";
+import { http, HttpResponse } from "ferrimock-node";
 
 describe("interceptor correctness: abort, redirects, XHR", () => {
-  let interceptor: MockpitInterceptor | null = null;
+  let interceptor: FerrimockInterceptor | null = null;
   afterEach(() => {
     interceptor?.dispose();
     interceptor = null;
@@ -11,7 +11,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
 
   // ---- AbortSignal ----
   it("rejects with AbortError when the signal is already aborted", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/x", async () => HttpResponse.json({ ok: true })),
     ]);
@@ -30,7 +30,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
   });
 
   it("aborts a delayed mock mid-flight", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     await interceptor.addMock({
       id: "slow",
       match: { method: "GET", url: "/slow" },
@@ -52,7 +52,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
 
   // ---- Redirect following ----
   it("follows a mocked 302 redirect to its Location target", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/old", async () =>
         HttpResponse.text("", { status: 302, headers: { location: "/new" } })
@@ -67,7 +67,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
   });
 
   it("returns the 3xx as-is with redirect: 'manual'", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/old", async () =>
         HttpResponse.text("", { status: 302, headers: { location: "/new" } })
@@ -83,7 +83,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
   // ---- XHR (only in environments that provide XMLHttpRequest, e.g. jsdom) ----
   const hasXHR = typeof XMLHttpRequest !== "undefined";
   it.skipIf(!hasXHR)("XHR: fires load once, sets status/statusText/responseText", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/xhr", async () => HttpResponse.text("hello", { status: 201 })),
     ]);
@@ -115,7 +115,7 @@ describe("interceptor correctness: abort, redirects, XHR", () => {
   });
 
   it.skipIf(!hasXHR)("XHR: responseType 'json' yields a parsed object", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/xhr-json", async () => HttpResponse.json({ a: 1, b: "two" })),
     ]);

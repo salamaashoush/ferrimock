@@ -1,11 +1,11 @@
 {
   "private": true,
   "workspaces": [
-    "crates/mockpit-napi",
+    "crates/ferrimock-napi",
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter '@mockpit/core' build && bun run --filter 'mockpit' build && bun run --filter '@mockpit/playwright' build"
+    "build": "bun run --filter 'ferrimock' build && bun run --filter 'ferrimock-playwright' build"
   },
   "devDependencies": {
     "tsdown": "^0.22.2",

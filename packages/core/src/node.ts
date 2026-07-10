@@ -2,8 +2,8 @@
  * MSW-compatible Node entry point: `setupServer` over the interceptor.
  *
  * ```ts
- * import { setupServer } from "mockpit/node";
- * import { http, HttpResponse } from "mockpit";
+ * import { setupServer } from "ferrimock/node";
+ * import { http, HttpResponse } from "ferrimock";
  *
  * const server = setupServer(
  *   http.get("/api/user", () => HttpResponse.json({ name: "John" }))
@@ -13,7 +13,7 @@
  */
 
 import {
-  MockpitInterceptor,
+  FerrimockInterceptor,
   type AnyHandler,
   type ApplyOptions,
   type ListedHandler,
@@ -46,7 +46,7 @@ export interface SetupServerApi {
  * (MSW's default); pass `"bypass"` to silence it.
  */
 export function setupServer(...handlers: AnyHandler[]): SetupServerApi {
-  const interceptor = new MockpitInterceptor();
+  const interceptor = new FerrimockInterceptor();
   if (handlers.length > 0) {
     interceptor.useHandlers(handlers);
   }
