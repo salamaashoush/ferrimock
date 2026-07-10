@@ -59,5 +59,10 @@
     "@ferrimock/node-darwin-x64": "0.1.6",
     "@ferrimock/node-win32-x64-msvc": "0.1.6",
     "@ferrimock/node-win32-arm64-msvc": "0.1.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salamaashoush/ferrimock.git",
+    "directory": "crates/ferrimock-napi"
   }
 }

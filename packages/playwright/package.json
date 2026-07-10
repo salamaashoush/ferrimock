@@ -33,5 +33,10 @@
   "license": "MIT",
   "engines": {
     "node": ">= 20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salamaashoush/ferrimock.git",
+    "directory": "packages/playwright"
   }
 }
