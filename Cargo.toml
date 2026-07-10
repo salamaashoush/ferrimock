@@ -8,7 +8,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
 edition = "2024"
 # Verified floor for the stable feature set; the `scripting` feature
