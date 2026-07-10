@@ -17,7 +17,7 @@ name = "ferrimock_cli"
 path = "src/lib.rs"
 
 [dependencies]
-ferrimock = { version = "0.1.6", path = "../ferrimock", features = ["full"] }
+ferrimock = { version = "0.1.7", path = "../ferrimock", features = ["full"] }
 
 # CLI utilities
 anyhow = { workspace = true }
