@@ -1,5 +1,5 @@
 /**
- * ferrimock-playwright -- Playwright adapter for ferrimock.
+ * @ferrimock/playwright -- Playwright adapter for ferrimock.
  *
  * Provides:
  * - routePage(page, interceptor) -- wire into page.route()
@@ -9,7 +9,7 @@
  * Usage:
  * ```ts
  * import { test as base } from '@playwright/test'
- * import { ferrimockFixtures } from 'ferrimock-playwright'
+ * import { ferrimockFixtures } from '@ferrimock/playwright'
  *
  * export const test = base.extend(ferrimockFixtures({ mocksDir: './mocks' }))
  *
@@ -249,7 +249,7 @@ export type FerrimockFixtures = {
  *
  * ```ts
  * import { test as base } from '@playwright/test'
- * import { ferrimockFixtures } from 'ferrimock-playwright'
+ * import { ferrimockFixtures } from '@ferrimock/playwright'
  *
  * export const test = base.extend(ferrimockFixtures({ mocksDir: './mocks' }))
  * ```

@@ -5,7 +5,7 @@
  *
  * The registration layer converts returned Response objects into the
  * plain shape the native engine consumes; the native `HttpResponse`
- * namespace in ferrimock-node builds that shape directly and skips the
+ * namespace in @ferrimock/node builds that shape directly and skips the
  * conversion (fastest path, same names and call signatures).
  */
 

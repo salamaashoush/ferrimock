@@ -18,7 +18,7 @@ import {
   graphql as nativeGraphql,
   type RequestHandler,
   type HandlerResponse,
-} from "ferrimock-node";
+} from "@ferrimock/node";
 import {
   isPassthrough,
   NETWORK_ERROR_HEADER,

@@ -20,7 +20,7 @@ import {
   type RequestHandler,
   type WebSocketClientHandle,
   type WebSocketServerHandle,
-} from "ferrimock-node";
+} from "@ferrimock/node";
 import type {
   WebSocketConnectionData,
   WebSocketData,

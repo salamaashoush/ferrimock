@@ -61,7 +61,7 @@ export type {
 export type { EventSourceLike } from "./event-source.js";
 
 // Ferrimock-native surface (fake data, embedded server, services)
-export { fake, FerrimockServer, services } from "ferrimock-node";
+export { fake, FerrimockServer, services } from "@ferrimock/node";
 
 export type {
   RequestHandler,
@@ -70,4 +70,4 @@ export type {
   GraphQLRequestInfo,
   HandlerResponse,
   HandlerResponseInit,
-} from "ferrimock-node";
+} from "@ferrimock/node";

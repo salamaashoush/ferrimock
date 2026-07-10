@@ -17,14 +17,14 @@ import { fileURLToPath } from "node:url";
 const TARGETS = {
   "aarch64-apple-darwin": {
     dir: "darwin-arm64",
-    name: "ferrimock-cli-darwin-arm64",
+    name: "@ferrimock/cli-darwin-arm64",
     os: "darwin",
     cpu: "arm64",
     binary: "ferrimock",
   },
   "x86_64-apple-darwin": {
     dir: "darwin-x64",
-    name: "ferrimock-cli-darwin-x64",
+    name: "@ferrimock/cli-darwin-x64",
     os: "darwin",
     cpu: "x64",
     binary: "ferrimock",
@@ -32,21 +32,21 @@ const TARGETS = {
   // Static musl builds: no "libc" field so glibc systems install them too.
   "x86_64-unknown-linux-musl": {
     dir: "linux-x64-musl",
-    name: "ferrimock-cli-linux-x64-musl",
+    name: "@ferrimock/cli-linux-x64-musl",
     os: "linux",
     cpu: "x64",
     binary: "ferrimock",
   },
   "aarch64-unknown-linux-musl": {
     dir: "linux-arm64-musl",
-    name: "ferrimock-cli-linux-arm64-musl",
+    name: "@ferrimock/cli-linux-arm64-musl",
     os: "linux",
     cpu: "arm64",
     binary: "ferrimock",
   },
   "x86_64-pc-windows-msvc": {
     dir: "win32-x64",
-    name: "ferrimock-cli-win32-x64",
+    name: "@ferrimock/cli-win32-x64",
     os: "win32",
     cpu: "x64",
     binary: "ferrimock.exe",

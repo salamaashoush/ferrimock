@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { FerrimockInterceptor } from "../src/index.js";
-import { http, HttpResponse, fake } from "ferrimock-node";
+import { http, HttpResponse, fake } from "@ferrimock/node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
 import { faker } from "@faker-js/faker";

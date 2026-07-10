@@ -3,7 +3,7 @@
  * `getResponse()` / `handleRequest()` without a running server.
  */
 
-import { FerrimockServer } from "ferrimock-node";
+import { FerrimockServer } from "@ferrimock/node";
 import {
   toEngineHandlers,
   toResponse,

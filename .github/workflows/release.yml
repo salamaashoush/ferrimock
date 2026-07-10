@@ -329,7 +329,7 @@ jobs:
           bunx @napi-rs/cli artifacts -o . --npm-dir npm
         shell: bash
 
-      - name: Publish ferrimock-node
+      - name: Publish @ferrimock/node
         working-directory: crates/ferrimock-napi
         run: npm publish --access public --provenance
         env:
@@ -341,7 +341,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish ferrimock-playwright
+      - name: Publish @ferrimock/playwright
         working-directory: packages/playwright
         run: npm publish --access public --provenance
         env:
@@ -369,7 +369,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish ferrimock-cli
+      - name: Publish @ferrimock/cli
         working-directory: crates/ferrimock-cli/npm-shim
         run: npm publish --access public --provenance
         env:

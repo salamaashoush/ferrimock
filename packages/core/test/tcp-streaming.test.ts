@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import { FerrimockServer } from "ferrimock-node";
+import { FerrimockServer } from "@ferrimock/node";
 import { ws, sse } from "../src/index.js";
 
 let server: FerrimockServer | null = null;

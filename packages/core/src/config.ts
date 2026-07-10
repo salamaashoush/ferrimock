@@ -55,7 +55,7 @@ export async function loadConfig(
   const {
     parseConfigFile,
     discoverConfigFile,
-  } = await import("ferrimock-node");
+  } = await import("@ferrimock/node");
   const { resolve, extname } = await import("node:path");
   const { existsSync } = await import("node:fs");
   const { pathToFileURL } = await import("node:url");

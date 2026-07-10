@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import http from "node:http";
 import { FerrimockInterceptor } from "../src/interceptor.js";
-import { http as mock, HttpResponse } from "ferrimock-node";
+import { http as mock, HttpResponse } from "@ferrimock/node";
 
 function nodeRequest(
   url: string,

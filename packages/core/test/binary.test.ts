@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { FerrimockInterceptor } from "../src/interceptor.js";
-import { http, HttpResponse } from "ferrimock-node";
+import { http, HttpResponse } from "@ferrimock/node";
 
 // Non-UTF8 bytes: 0xFF/0xFE/0x80 are invalid UTF-8 start/continuation bytes.
 // The old String-based transport corrupted these (from_utf8_lossy / unwrap_or_default).

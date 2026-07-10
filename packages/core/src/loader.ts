@@ -21,7 +21,7 @@
  * ```
  */
 
-import type { FerrimockServer, RequestHandler } from "ferrimock-node";
+import type { FerrimockServer, RequestHandler } from "@ferrimock/node";
 import { createJiti } from "jiti";
 import { readdirSync, statSync } from "node:fs";
 import { resolve, extname, join } from "node:path";

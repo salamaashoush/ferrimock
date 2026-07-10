@@ -13,7 +13,7 @@
 // Run:  node packages/core/bench/vs-msw.mjs   (from repo root)
 
 import { FerrimockInterceptor } from "ferrimock";
-import { http as mock, HttpResponse as mockHttpResponse } from "ferrimock-node";
+import { http as mock, HttpResponse as mockHttpResponse } from "@ferrimock/node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse } from "msw";
 import { faker } from "@faker-js/faker";

@@ -55,7 +55,7 @@ export declare namespace HttpResponse {
  *
  * @example
  * ```ts
- * import { http, HttpResponse, FerrimockServer } from 'ferrimock-node'
+ * import { http, HttpResponse, FerrimockServer } from '@ferrimock/node'
  *
  * const server = new FerrimockServer()
  *

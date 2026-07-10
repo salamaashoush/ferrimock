@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import { FerrimockInterceptor } from "../src/interceptor.js";
-import { http, HttpResponse } from "ferrimock-node";
+import { http, HttpResponse } from "@ferrimock/node";
 
 describe("passthrough", () => {
   let interceptor: FerrimockInterceptor | null = null;
