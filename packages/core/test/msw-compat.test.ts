@@ -13,7 +13,7 @@ import {
   passthrough,
   bypass,
 } from "../src/index.js";
-import { http, graphql, HttpResponse, fake } from "ferrimock-node";
+import { http, graphql, HttpResponse, fake } from "@ferrimock/node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse as mswHttpResponse, delay as mswDelay, passthrough as mswPassthrough } from "msw";
 

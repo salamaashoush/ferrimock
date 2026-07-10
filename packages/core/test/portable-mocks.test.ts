@@ -5,7 +5,7 @@
  * bare 'ferrimock' specifier.
  */
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { FerrimockServer } from "ferrimock-node";
+import { FerrimockServer } from "@ferrimock/node";
 import { loadMocksDir } from "../src/index.js";
 import { resolve } from "node:path";
 

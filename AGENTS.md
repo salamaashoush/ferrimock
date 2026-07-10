@@ -52,7 +52,7 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 `import { http } from 'ferrimock'` in both Node and the embedded QuickJS runtime.
 The only CLI is the Rust binary (ferrimock-cli).
 
-**ferrimock-playwright** -- Playwright fixture adapter.
+**@ferrimock/playwright** -- Playwright fixture adapter.
 
 ## Essential Commands
 

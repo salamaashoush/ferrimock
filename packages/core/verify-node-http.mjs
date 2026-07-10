@@ -2,7 +2,7 @@
 // Run: node packages/core/verify-node-http.mjs
 import http from "node:http";
 import { FerrimockInterceptor } from "ferrimock";
-import { http as mock, HttpResponse } from "ferrimock-node";
+import { http as mock, HttpResponse } from "@ferrimock/node";
 
 function nodeRequest(url, options = {}, body) {
   return new Promise((resolve, reject) => {

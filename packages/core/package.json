@@ -30,7 +30,7 @@
     "bench:msw": "node bench/vs-msw.mjs"
   },
   "dependencies": {
-    "ferrimock-node": "workspace:*",
+    "@ferrimock/node": "workspace:*",
     "@mswjs/interceptors": "^0.41.9",
     "jiti": "^2.6.1"
   },

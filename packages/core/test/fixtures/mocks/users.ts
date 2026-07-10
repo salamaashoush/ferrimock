@@ -1,4 +1,4 @@
-import { http, HttpResponse } from "ferrimock-node";
+import { http, HttpResponse } from "@ferrimock/node";
 
 export default [
   http.get("/api/users/:id", async ({ params }) => {

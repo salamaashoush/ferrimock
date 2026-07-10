@@ -11,11 +11,11 @@ import { spawnSync } from "node:child_process";
 const require = createRequire(import.meta.url);
 
 const PLATFORM_PACKAGES = {
-  "darwin-arm64": ["ferrimock-cli-darwin-arm64", "ferrimock"],
-  "darwin-x64": ["ferrimock-cli-darwin-x64", "ferrimock"],
-  "linux-x64": ["ferrimock-cli-linux-x64-musl", "ferrimock"],
-  "linux-arm64": ["ferrimock-cli-linux-arm64-musl", "ferrimock"],
-  "win32-x64": ["ferrimock-cli-win32-x64", "ferrimock.exe"],
+  "darwin-arm64": ["@ferrimock/cli-darwin-arm64", "ferrimock"],
+  "darwin-x64": ["@ferrimock/cli-darwin-x64", "ferrimock"],
+  "linux-x64": ["@ferrimock/cli-linux-x64-musl", "ferrimock"],
+  "linux-arm64": ["@ferrimock/cli-linux-arm64-musl", "ferrimock"],
+  "win32-x64": ["@ferrimock/cli-win32-x64", "ferrimock.exe"],
 };
 
 function resolveBinary() {
@@ -25,7 +25,7 @@ function resolveBinary() {
     console.error(
       `ferrimock: unsupported platform ${key}. ` +
         `Prebuilt binaries exist for: ${Object.keys(PLATFORM_PACKAGES).join(", ")}. ` +
-        "Install from source with: cargo install ferrimock-cli --locked"
+        "Install from source with: cargo install @ferrimock/cli --locked"
     );
     process.exit(1);
   }
@@ -36,9 +36,9 @@ function resolveBinary() {
   } catch {
     console.error(
       `ferrimock: platform package ${pkg} is not installed. ` +
-        "It ships as an optionalDependency of ferrimock-cli - reinstall without " +
+        "It ships as an optionalDependency of @ferrimock/cli - reinstall without " +
         "--omit=optional / --no-optional, or install from source with: " +
-        "cargo install ferrimock-cli --locked"
+        "cargo install @ferrimock/cli --locked"
     );
     process.exit(1);
   }

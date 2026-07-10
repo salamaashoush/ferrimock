@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run --filter 'ferrimock' build && bun run --filter 'ferrimock-playwright' build"
+    "build": "bun run --filter 'ferrimock' build && bun run --filter '@ferrimock/playwright' build"
   },
   "devDependencies": {
     "tsdown": "^0.22.2",

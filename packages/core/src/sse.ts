@@ -20,8 +20,8 @@ import type {
   RequestHandler,
   RequestInfo,
   SseClientHandle,
-} from "ferrimock-node";
-import { sse as nativeSse } from "ferrimock-node";
+} from "@ferrimock/node";
+import { sse as nativeSse } from "@ferrimock/node";
 import { normalizeResult, registerCollected } from "./registration.js";
 import { FerrimockEventSource, type EventSourceLike } from "./event-source.js";
 

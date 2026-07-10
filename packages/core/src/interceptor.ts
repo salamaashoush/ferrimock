@@ -8,8 +8,8 @@
  * or createHandler() to wire into their own interception systems.
  */
 
-import { FerrimockServer } from "ferrimock-node";
-import type { RequestHandler } from "ferrimock-node";
+import { FerrimockServer } from "@ferrimock/node";
+import type { RequestHandler } from "@ferrimock/node";
 import { ClientRequestInterceptor } from "@mswjs/interceptors/ClientRequest";
 import {
   WebSocketInterceptor,

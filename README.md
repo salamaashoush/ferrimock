@@ -301,8 +301,8 @@ fake.sentence()     // 'The quick brown fox...'
 |---------|-------------|
 | `ferrimock` (npm) | The MSW drop-in surface (`ferrimock` + `ferrimock/node`), alias of `ferrimock` |
 | `ferrimock` | setupServer, interceptor, HttpResponse, config loader |
-| `ferrimock-node` | Rust NAPI bindings (http, graphql, HttpResponse builders, fake, FerrimockServer) |
-| `ferrimock-playwright` | Playwright fixture adapter |
+| `@ferrimock/node` | Rust NAPI bindings (http, graphql, HttpResponse builders, fake, FerrimockServer) |
+| `@ferrimock/playwright` | Playwright fixture adapter |
 
 ## Rust Library
 
@@ -318,7 +318,7 @@ See [Mock Engine](docs/MOCK_ENGINE.md), [Fake Data](docs/FAKE_DATA.md), [GraphQL
 ## CLI
 
 ```bash
-npm install -g ferrimock-cli              # Prebuilt binary via npm
+npm install -g @ferrimock/cli              # Prebuilt binary via npm
 cargo install ferrimock-cli --locked       # Or build from source
 
 ferrimock mock serve mocks/                # Serve mocks with hot reload
