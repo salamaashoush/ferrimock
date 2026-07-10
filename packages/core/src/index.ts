@@ -1,5 +1,5 @@
 // Core interceptor
-export { MockpitInterceptor } from "./interceptor.js";
+export { FerrimockInterceptor } from "./interceptor.js";
 export type {
   ApplyOptions,
   ListedHandler,
@@ -34,7 +34,7 @@ export type { StrictResponse } from "./http-response.js";
 
 // Config
 export { defineConfig, loadConfig } from "./config.js";
-export type { MockpitConfig } from "./config.js";
+export type { FerrimockConfig } from "./config.js";
 
 // Loader
 export { loadMocksDir } from "./loader.js";
@@ -60,8 +60,8 @@ export type {
 } from "./sse.js";
 export type { EventSourceLike } from "./event-source.js";
 
-// Mockpit-native surface (fake data, embedded server, services)
-export { fake, MockpitServer, services } from "@mockpit/node";
+// Ferrimock-native surface (fake data, embedded server, services)
+export { fake, FerrimockServer, services } from "ferrimock-node";
 
 export type {
   RequestHandler,
@@ -70,4 +70,4 @@ export type {
   GraphQLRequestInfo,
   HandlerResponse,
   HandlerResponseInit,
-} from "@mockpit/node";
+} from "ferrimock-node";

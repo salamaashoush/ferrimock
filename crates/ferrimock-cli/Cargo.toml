@@ -1,0 +1,56 @@
+[package]
+name = "ferrimock-cli"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Ferrimock CLI - HTTP mocking tool with templates, recording, consolidation, and GraphQL support"
+readme = "../../README.md"
+
+[[bin]]
+name = "ferrimock"
+path = "src/main.rs"
+
+[lib]
+name = "ferrimock_cli"
+path = "src/lib.rs"
+
+[dependencies]
+ferrimock = { version = "0.1.6", path = "../ferrimock", features = ["full"] }
+
+# CLI utilities
+anyhow = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+clap_mangen = "0.2"
+colored = { workspace = true }
+comfy-table = { workspace = true }
+dialoguer = { workspace = true }
+dirs = { workspace = true }
+indicatif = { workspace = true }
+open = { workspace = true }
+
+# Async/serialization
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Other
+base64 = { workspace = true }
+chrono = { workspace = true }
+har = { workspace = true }
+lean_string = { workspace = true }
+rustc-hash = { workspace = true }
+toml = "0.8"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Server dependencies (used by serve command)
+axum = { workspace = true }
+tower-http = { workspace = true }
+
+[lints]
+workspace = true

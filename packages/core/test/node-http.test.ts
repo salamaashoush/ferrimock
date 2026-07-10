@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "bun:test";
 import http from "node:http";
-import { MockpitInterceptor } from "../src/interceptor.js";
-import { http as mock, HttpResponse } from "@mockpit/node";
+import { FerrimockInterceptor } from "../src/interceptor.js";
+import { http as mock, HttpResponse } from "ferrimock-node";
 
 function nodeRequest(
   url: string,
@@ -26,14 +26,14 @@ function nodeRequest(
 const isBun = typeof (globalThis as any).Bun !== "undefined";
 
 describe.skipIf(isBun)("node http interception", () => {
-  let interceptor: MockpitInterceptor | null = null;
+  let interceptor: FerrimockInterceptor | null = null;
   afterEach(() => {
     interceptor?.dispose();
     interceptor = null;
   });
 
   it("intercepts a GET via node:http and returns the mocked body", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       mock.get("/api/http", async () => HttpResponse.json({ ok: true, via: "node-http" })),
     ]);
@@ -45,7 +45,7 @@ describe.skipIf(isBun)("node http interception", () => {
   });
 
   it("forwards the request body to body-matching mocks over node:http", async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       mock.post("/echo", async ({ request }) => {
         const data = (await request.json()) as any;

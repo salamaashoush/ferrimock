@@ -1,6 +1,6 @@
 /**
  * Differential suite: the same handlers registered with real msw and
- * with mockpit, driven by identical requests, must produce equivalent
+ * with ferrimock, driven by identical requests, must produce equivalent
  * responses. Guards drop-in compatibility with observed MSW behavior
  * rather than our reading of its docs.
  *
@@ -295,7 +295,7 @@ async function run(
   }
 }
 
-describe("differential: mockpit output equals msw output", () => {
+describe("differential: ferrimock output equals msw output", () => {
   for (const scenario of scenarios) {
     it(scenario.name, async () => {
       const mswResult = await run(

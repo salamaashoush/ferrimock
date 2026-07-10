@@ -1,11 +1,11 @@
 /**
- * Mockpit configuration.
+ * Ferrimock configuration.
  *
  * Pure configuration -- no mocks, no handlers. Those go in the mocks directory.
  *
  * @example
  * ```yaml
- * # mockpit.config.yaml
+ * # ferrimock.config.yaml
  * port: 3006
  * mocksDir: ./mocks
  * cors: true
@@ -14,8 +14,8 @@
  *
  * @example
  * ```ts
- * // mockpit.config.ts
- * import { defineConfig } from 'mockpit'
+ * // ferrimock.config.ts
+ * import { defineConfig } from 'ferrimock'
  *
  * export default defineConfig({
  *   port: 3006,
@@ -24,7 +24,7 @@
  * })
  * ```
  */
-export interface MockpitConfig {
+export interface FerrimockConfig {
   port?: number;
   host?: string;
   mocksDir?: string;
@@ -36,26 +36,26 @@ export interface MockpitConfig {
 }
 
 /**
- * Define a mockpit configuration with full type safety.
+ * Define a ferrimock configuration with full type safety.
  */
-export function defineConfig(config: MockpitConfig): MockpitConfig {
+export function defineConfig(config: FerrimockConfig): FerrimockConfig {
   return config;
 }
 
 /**
- * Load a mockpit config file.
+ * Load a ferrimock config file.
  *
  * - YAML/JSON: parsed by Rust
  * - TS/JS: loaded via dynamic import
- * - Auto-discovers `mockpit.config.*` if no path given
+ * - Auto-discovers `ferrimock.config.*` if no path given
  */
 export async function loadConfig(
   configPath?: string
-): Promise<MockpitConfig | null> {
+): Promise<FerrimockConfig | null> {
   const {
     parseConfigFile,
     discoverConfigFile,
-  } = await import("@mockpit/node");
+  } = await import("ferrimock-node");
   const { resolve, extname } = await import("node:path");
   const { existsSync } = await import("node:fs");
   const { pathToFileURL } = await import("node:url");
@@ -76,12 +76,12 @@ export async function loadConfig(
   const ext = extname(resolvedPath).toLowerCase();
 
   if (ext === ".yaml" || ext === ".yml" || ext === ".json") {
-    return parseConfigFile(resolvedPath) as MockpitConfig;
+    return parseConfigFile(resolvedPath) as FerrimockConfig;
   }
 
   // TS/JS config -- load via jiti (works on plain Node.js, no --import tsx)
   const { createJiti } = await import("jiti");
   const jiti = createJiti(import.meta.url, { interopDefault: true });
   const mod = await jiti.import(resolvedPath) as any;
-  return (mod.default ?? mod.config ?? mod) as MockpitConfig;
+  return (mod.default ?? mod.config ?? mod) as FerrimockConfig;
 }

@@ -1,7 +1,7 @@
 {
-  "name": "@mockpit/playwright",
+  "name": "ferrimock-playwright",
   "version": "0.1.6",
-  "description": "Playwright adapter for mockpit -- fixtures that wire the mock engine into page.route()",
+  "description": "Playwright adapter for ferrimock -- fixtures that wire the mock engine into page.route()",
   "type": "module",
   "main": "./dist/index.mjs",
   "module": "./dist/index.mjs",
@@ -22,7 +22,7 @@
     "build": "tsdown"
   },
   "peerDependencies": {
-    "@mockpit/core": "workspace:*",
+    "ferrimock": "workspace:*",
     "@playwright/test": ">=1.40.0"
   },
   "peerDependenciesMeta": {

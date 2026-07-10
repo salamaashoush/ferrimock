@@ -145,14 +145,14 @@ jobs:
           bun-version: "1.3.14"
       - run: bun install
       - name: Build NAPI native module
-        working-directory: crates/mockpit-napi
+        working-directory: crates/ferrimock-napi
         run: bunx @napi-rs/cli build --platform --release
-      # Tests import the packages by name ('@mockpit/core', 'mockpit'),
+      # Tests import the packages by name ('ferrimock', 'ferrimock'),
       # which resolve through dist/ - they need the JS build.
       - name: Build JS packages
         run: bun run build
       - name: Run JS tests
-        run: bun test ./packages/core/test/ ./crates/mockpit-napi/test/
+        run: bun test ./packages/core/test/ ./crates/ferrimock-napi/test/
 
   # ---------------------------------------------------------------------------
   # Feature flag verification
@@ -172,9 +172,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@cargo-hack
       - name: Check each feature independently
-        run: cargo hack check -p mockpit --each-feature --no-dev-deps
+        run: cargo hack check -p ferrimock --each-feature --no-dev-deps
       - name: Check feature powerset (depth 2)
-        run: cargo hack check -p mockpit --feature-powerset --depth 2 --no-dev-deps
+        run: cargo hack check -p ferrimock --feature-powerset --depth 2 --no-dev-deps
 
   # ---------------------------------------------------------------------------
   # MSRV: the stable feature set must build on the declared rust-version
@@ -195,8 +195,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo check -p mockpit --features engine,server,api,graphql,schema
-      - run: cargo check -p mockpit-napi
+      - run: cargo check -p ferrimock --features engine,server,api,graphql,schema
+      - run: cargo check -p ferrimock-napi
 
   # ---------------------------------------------------------------------------
   # Packaging: catch publish rot before release day
@@ -214,9 +214,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # mockpit-cli cannot dry-run here: its verify build resolves the
-      # mockpit dep from crates.io, which lags the workspace version.
-      - run: cargo publish --dry-run -p mockpit
+      # ferrimock-cli cannot dry-run here: its verify build resolves the
+      # ferrimock dep from crates.io, which lags the workspace version.
+      - run: cargo publish --dry-run -p ferrimock
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -224,7 +224,7 @@ jobs:
       - run: bun run build
       - name: npm pack dry-run for every published package
         run: |
-          for pkg in packages/core packages/mockpit packages/playwright crates/mockpit-napi crates/mockpit-cli/npm-shim; do
+          for pkg in packages/core packages/playwright crates/ferrimock-napi crates/ferrimock-cli/npm-shim; do
             echo "--- $pkg"
             npm pack --dry-run "./$pkg"
           done
@@ -257,7 +257,7 @@ jobs:
           restore-keys: criterion-baseline-
       - name: Run matcher benches
         run: |
-          cargo bench --bench mock_performance -p mockpit -- \
+          cargo bench --bench mock_performance -p ferrimock -- \
             'simple_exact_match|complex_match|pattern_matching_scale|miss_at_scale' \
             2>&1 | tee bench.log
       - name: Fail on regressions
@@ -297,7 +297,7 @@ jobs:
           persist-credentials: false
       - uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
-          package: mockpit
+          package: ferrimock
 
   # ---------------------------------------------------------------------------
   # Security: audit dependencies for known vulnerabilities

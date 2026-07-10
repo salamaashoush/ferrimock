@@ -18,7 +18,7 @@ import {
   graphql as nativeGraphql,
   type RequestHandler,
   type HandlerResponse,
-} from "@mockpit/node";
+} from "ferrimock-node";
 import {
   isPassthrough,
   NETWORK_ERROR_HEADER,
@@ -29,7 +29,7 @@ import { isInterceptorActive, stashResponse } from "./stream-stash.js";
 
 // Keyed on globalThis: mock files may be loaded through a second module
 // graph (jiti), whose copy of this module must see the same window.
-const COLLECT_SLOT = Symbol.for("mockpit.collecting");
+const COLLECT_SLOT = Symbol.for("ferrimock.collecting");
 
 /** JS-only handlers (WebSocket) share the collection window with the
  * engine's RequestHandlers; the loader splits them by `kind` tag. */

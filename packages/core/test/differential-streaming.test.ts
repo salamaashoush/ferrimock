@@ -1,5 +1,5 @@
 /**
- * Differential ws/sse: identical handlers against real msw and mockpit,
+ * Differential ws/sse: identical handlers against real msw and ferrimock,
  * identical clients, equal observations. Sequential (both patch
  * globals).
  *

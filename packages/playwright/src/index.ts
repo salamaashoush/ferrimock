@@ -1,17 +1,17 @@
 /**
- * @mockpit/playwright -- Playwright adapter for mockpit.
+ * ferrimock-playwright -- Playwright adapter for ferrimock.
  *
  * Provides:
  * - routePage(page, interceptor) -- wire into page.route()
  * - routeContext(context, interceptor) -- wire into context.route()
- * - mockpitFixtures() -- Playwright test fixtures for automatic setup
+ * - ferrimockFixtures() -- Playwright test fixtures for automatic setup
  *
  * Usage:
  * ```ts
  * import { test as base } from '@playwright/test'
- * import { mockpitFixtures } from '@mockpit/playwright'
+ * import { ferrimockFixtures } from 'ferrimock-playwright'
  *
- * export const test = base.extend(mockpitFixtures({ mocksDir: './mocks' }))
+ * export const test = base.extend(ferrimockFixtures({ mocksDir: './mocks' }))
  *
  * test('user page', async ({ page, mocks }) => {
  *   await page.goto('http://localhost:3000')
@@ -19,19 +19,19 @@
  * ```
  */
 
-import { MockpitInterceptor } from "@mockpit/core";
+import { FerrimockInterceptor } from "ferrimock";
 
 let playwrightWsCounter = 0;
 
 // ===== Route helpers =====
 
 /**
- * Wire mockpit into a Playwright Page via page.route().
+ * Wire ferrimock into a Playwright Page via page.route().
  * All matching requests are mocked at the browser level.
  */
 export async function routePage(
   page: any,
-  interceptor: MockpitInterceptor
+  interceptor: FerrimockInterceptor
 ): Promise<void> {
   await page.route("**/*", async (route: any) => {
     const match = await matchPlaywrightRoute(route, interceptor);
@@ -48,12 +48,12 @@ export async function routePage(
 }
 
 /**
- * Wire mockpit into a Playwright BrowserContext via context.route().
+ * Wire ferrimock into a Playwright BrowserContext via context.route().
  * All matching requests for all pages in the context are mocked.
  */
 export async function routeContext(
   context: any,
-  interceptor: MockpitInterceptor
+  interceptor: FerrimockInterceptor
 ): Promise<void> {
   await context.route("**/*", async (route: any) => {
     const match = await matchPlaywrightRoute(route, interceptor);
@@ -70,7 +70,7 @@ export async function routeContext(
 }
 
 /**
- * Wire mockpit's `ws.link` handlers into Playwright via
+ * Wire ferrimock's `ws.link` handlers into Playwright via
  * page.routeWebSocket(). Matched connections get MSW-shaped
  * `{ client, server, params }` objects built over Playwright's
  * WebSocketRoute; unmatched connections pass through to the real
@@ -82,7 +82,7 @@ export async function routeContext(
  */
 export async function routeWebSocketPage(
   page: any,
-  interceptor: MockpitInterceptor
+  interceptor: FerrimockInterceptor
 ): Promise<void> {
   await page.routeWebSocket("**/*", (wsRoute: any) => {
     const url = new URL(wsRoute.url());
@@ -208,7 +208,7 @@ export async function routeWebSocketPage(
   });
 }
 
-async function matchPlaywrightRoute(route: any, interceptor: MockpitInterceptor) {
+async function matchPlaywrightRoute(route: any, interceptor: FerrimockInterceptor) {
   const request = route.request();
   const url = new URL(request.url());
   const method = request.method();
@@ -231,7 +231,7 @@ async function matchPlaywrightRoute(route: any, interceptor: MockpitInterceptor)
 
 // ===== Fixtures =====
 
-export type MockpitFixtureOptions = {
+export type FerrimockFixtureOptions = {
   /** Directory containing mock files (YAML/JSON/HAR/TS) */
   mocksDir?: string;
   /** Additional mock files to load */
@@ -240,27 +240,27 @@ export type MockpitFixtureOptions = {
   scope?: "page" | "context";
 };
 
-export type MockpitFixtures = {
-  mocks: MockpitInterceptor;
+export type FerrimockFixtures = {
+  mocks: FerrimockInterceptor;
 };
 
 /**
- * Create Playwright fixtures that wire mockpit into every test.
+ * Create Playwright fixtures that wire ferrimock into every test.
  *
  * ```ts
  * import { test as base } from '@playwright/test'
- * import { mockpitFixtures } from '@mockpit/playwright'
+ * import { ferrimockFixtures } from 'ferrimock-playwright'
  *
- * export const test = base.extend(mockpitFixtures({ mocksDir: './mocks' }))
+ * export const test = base.extend(ferrimockFixtures({ mocksDir: './mocks' }))
  * ```
  */
-export function mockpitFixtures(options: MockpitFixtureOptions = {}) {
+export function ferrimockFixtures(options: FerrimockFixtureOptions = {}) {
   const { mocksDir, mockFiles = [], scope = "page" } = options;
 
   return {
     mocks: [
       async ({}, use: any) => {
-        const interceptor = new MockpitInterceptor();
+        const interceptor = new FerrimockInterceptor();
 
         if (mocksDir) {
           await interceptor.loadMocks(mocksDir);
@@ -277,7 +277,7 @@ export function mockpitFixtures(options: MockpitFixtureOptions = {}) {
 
     page: [
       async (
-        { page, mocks }: { page: any; mocks: MockpitInterceptor },
+        { page, mocks }: { page: any; mocks: FerrimockInterceptor },
         use: any
       ) => {
         if (scope === "page") {
@@ -291,7 +291,7 @@ export function mockpitFixtures(options: MockpitFixtureOptions = {}) {
 
     context: [
       async (
-        { context, mocks }: { context: any; mocks: MockpitInterceptor },
+        { context, mocks }: { context: any; mocks: FerrimockInterceptor },
         use: any
       ) => {
         if (scope === "context") {

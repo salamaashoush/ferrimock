@@ -1,0 +1,63 @@
+{
+  "name": "ferrimock-node",
+  "version": "0.1.6",
+  "description": "High-performance HTTP mocking engine with MSW-style handler API for Node.js",
+  "main": "index.js",
+  "module": "index.mjs",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./index.mjs",
+      "require": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "license": "MIT",
+  "keywords": [
+    "napi-rs",
+    "mock",
+    "http",
+    "testing",
+    "msw",
+    "ferrimock",
+    "graphql"
+  ],
+  "files": [
+    "index.d.ts",
+    "index.js",
+    "index.mjs"
+  ],
+  "napi": {
+    "binaryName": "ferrimock-napi",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "aarch64-pc-windows-msvc"
+    ]
+  },
+  "engines": {
+    "node": ">= 18"
+  },
+  "scripts": {
+    "build": "napi build --platform --release && napi artifacts -o . --npm-dir npm",
+    "build:debug": "napi build --platform && napi artifacts -o . --npm-dir npm",
+    "test": "bun test",
+    "artifacts": "napi artifacts",
+    "prepublishOnly": "napi prepublish -t npm",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.5.1"
+  },
+  "optionalDependencies": {
+    "ferrimock-node-linux-x64-gnu": "0.1.6",
+    "ferrimock-node-linux-arm64-gnu": "0.1.6",
+    "ferrimock-node-darwin-arm64": "0.1.6",
+    "ferrimock-node-darwin-x64": "0.1.6",
+    "ferrimock-node-win32-x64-msvc": "0.1.6",
+    "ferrimock-node-win32-arm64-msvc": "0.1.6"
+  }
+}

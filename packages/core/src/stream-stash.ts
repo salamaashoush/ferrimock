@@ -9,8 +9,8 @@
  * module graph shares the same stash.
  */
 
-const STASH_SLOT = Symbol.for("mockpit.streamStash");
-const ACTIVE_SLOT = Symbol.for("mockpit.interceptorActive");
+const STASH_SLOT = Symbol.for("ferrimock.streamStash");
+const ACTIVE_SLOT = Symbol.for("ferrimock.interceptorActive");
 
 interface StashEntry {
   response: Response;

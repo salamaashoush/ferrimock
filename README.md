@@ -1,8 +1,8 @@
-# Mockpit
+# Ferrimock
 
 High-performance HTTP mocking engine for Node.js, powered by Rust. Drop-in replacement for MSW with 3-4x better performance.
 
-## Why Mockpit?
+## Why Ferrimock?
 
 - **3-4x faster than MSW** -- Rust mock matching engine + NAPI FunctionRef optimization
 - **MSW drop-in API** -- `setupServer`, `http.get()`, `HttpResponse.json()`, `graphql.link()`, `server.use()`, lifecycle events
@@ -11,7 +11,7 @@ High-performance HTTP mocking engine for Node.js, powered by Rust. Drop-in repla
 
 ## Performance
 
-| Mode | Mockpit | MSW | Speedup |
+| Mode | Ferrimock | MSW | Speedup |
 |------|---------|-----|---------|
 | Declarative (inline) | 9us | N/A | Rust-only, no JS crossing |
 | Template + fake data | 8us | N/A | Rust Tera engine + fake generators |
@@ -22,14 +22,14 @@ High-performance HTTP mocking engine for Node.js, powered by Rust. Drop-in repla
 ## Quick Start
 
 ```bash
-bun add @mockpit/core
+bun add ferrimock
 ```
 
 ### setupServer (MSW drop-in)
 
 ```ts
-import { setupServer } from 'mockpit/node'
-import { http, HttpResponse, delay } from 'mockpit'
+import { setupServer } from 'ferrimock/node'
+import { http, HttpResponse, delay } from 'ferrimock'
 
 const server = setupServer(
   http.get('/api/users/:id', async ({ params }) => {
@@ -48,7 +48,7 @@ server.close()
 ```
 
 Existing MSW test suites keep working: swap the `msw` / `msw/node` imports for
-`mockpit` / `mockpit/node`. Resolvers receive `{ request, params, cookies,
+`ferrimock` / `ferrimock/node`. Resolvers receive `{ request, params, cookies,
 requestId }` with a real Fetch `Request`; returning `undefined` falls through
 to the next handler; `{ once: true }`, generator resolvers, `passthrough()`,
 absolute-URL predicates, and `server.boundary()` all behave like MSW.
@@ -58,7 +58,7 @@ native addon.
 ### Declarative Mocks (YAML)
 
 ```ts
-const interceptor = new MockpitInterceptor()
+const interceptor = new FerrimockInterceptor()
 
 await interceptor.loadMocks('./mocks')
 interceptor.apply()
@@ -110,10 +110,10 @@ http.post('/api/login', async () => {
 ```
 
 ```bash
-mockpit mock serve mocks/   # picks up .js/.mjs next to YAML/JSON/HAR, hot reloads all
+ferrimock mock serve mocks/   # picks up .js/.mjs next to YAML/JSON/HAR, hot reloads all
 ```
 
-Portable with Node: `import { http, HttpResponse, fake, delay } from 'mockpit'` works
+Portable with Node: `import { http, HttpResponse, fake, delay } from 'ferrimock'` works
 in both runtimes — the same file loads under the CLI (QuickJS) and under Node via
 `loadMocksDir` (V8), whether it registers with bare calls or `export default [...]`.
 RegExp paths (`http.get(/^\/api\/\d+$/i, ...)`), `HttpResponse.error()`, and
@@ -125,9 +125,9 @@ matching never touches JS. Enabled via the `scripting` cargo feature (included i
 ### HTTP Server Mode
 
 ```ts
-import { MockpitServer, http, HttpResponse } from '@mockpit/core'
+import { FerrimockServer, http, HttpResponse } from 'ferrimock'
 
-const server = new MockpitServer()
+const server = new FerrimockServer()
 
 server.useHandlers([
   http.get('/api/users/:id', async ({ params }) =>
@@ -146,7 +146,7 @@ await server.close()
 ### HTTP Handlers
 
 ```ts
-import { http, HttpResponse } from 'mockpit'
+import { http, HttpResponse } from 'ferrimock'
 
 http.get('/path', resolver)      // GET
 http.post('/path', resolver)     // POST
@@ -170,7 +170,7 @@ http.get('https://api.example.com/users/:id', resolver)
 ### GraphQL Handlers
 
 ```ts
-import { graphql, HttpResponse } from 'mockpit'
+import { graphql, HttpResponse } from 'ferrimock'
 
 graphql.query('GetUser', ({ query, variables, operationName }) =>
   HttpResponse.json({ data: { id: variables.id } })
@@ -233,7 +233,7 @@ repeats after the generator is done.
 ### Utilities
 
 ```ts
-import { delay, passthrough, bypass } from 'mockpit'
+import { delay, passthrough, bypass } from 'ferrimock'
 
 // Delay response
 http.get('/api/slow', async () => {
@@ -280,7 +280,7 @@ server.events.on('unhandledException', ({ request, requestId, error }) => { ... 
 ### Fake Data (115+ generators)
 
 ```ts
-import { fake } from '@mockpit/core'
+import { fake } from 'ferrimock'
 
 fake.uuid()         // '550e8400-e29b-41d4-a716-446655440000'
 fake.name()         // 'John Smith'
@@ -299,18 +299,18 @@ fake.sentence()     // 'The quick brown fox...'
 
 | Package | Description |
 |---------|-------------|
-| `mockpit` (npm) | The MSW drop-in surface (`mockpit` + `mockpit/node`), alias of `@mockpit/core` |
-| `@mockpit/core` | setupServer, interceptor, HttpResponse, config loader |
-| `@mockpit/node` | Rust NAPI bindings (http, graphql, HttpResponse builders, fake, MockpitServer) |
-| `@mockpit/playwright` | Playwright fixture adapter |
+| `ferrimock` (npm) | The MSW drop-in surface (`ferrimock` + `ferrimock/node`), alias of `ferrimock` |
+| `ferrimock` | setupServer, interceptor, HttpResponse, config loader |
+| `ferrimock-node` | Rust NAPI bindings (http, graphql, HttpResponse builders, fake, FerrimockServer) |
+| `ferrimock-playwright` | Playwright fixture adapter |
 
 ## Rust Library
 
-Mockpit is also a standalone Rust library for mock matching, template rendering, and HTTP server.
+Ferrimock is also a standalone Rust library for mock matching, template rendering, and HTTP server.
 
 ```toml
 [dependencies]
-mockpit = { git = "https://github.com/salamaashoush/mockpit", features = ["full"] }
+ferrimock = { git = "https://github.com/salamaashoush/ferrimock", features = ["full"] }
 ```
 
 See [Mock Engine](docs/MOCK_ENGINE.md), [Fake Data](docs/FAKE_DATA.md), [GraphQL](docs/GRAPHQL_MOCKS.md), [CLI Reference](docs/CLI_REFERENCE.md).
@@ -318,13 +318,13 @@ See [Mock Engine](docs/MOCK_ENGINE.md), [Fake Data](docs/FAKE_DATA.md), [GraphQL
 ## CLI
 
 ```bash
-npm install -g @mockpit/cli              # Prebuilt binary via npm
-cargo install mockpit-cli --locked       # Or build from source
+npm install -g ferrimock-cli              # Prebuilt binary via npm
+cargo install ferrimock-cli --locked       # Or build from source
 
-mockpit mock serve mocks/                # Serve mocks with hot reload
-mockpit mock create "/api/users/:id"     # Create a mock
-mockpit mock test -m GET /api/users/123  # Test matching
-mockpit fake data email --count 10       # Generate fake data
+ferrimock mock serve mocks/                # Serve mocks with hot reload
+ferrimock mock create "/api/users/:id"     # Create a mock
+ferrimock mock test -m GET /api/users/123  # Test matching
+ferrimock fake data email --count 10       # Generate fake data
 ```
 
 ## License

@@ -3,7 +3,7 @@
  * `getResponse()` / `handleRequest()` without a running server.
  */
 
-import { MockpitServer } from "@mockpit/node";
+import { FerrimockServer } from "ferrimock-node";
 import {
   toEngineHandlers,
   toResponse,
@@ -34,7 +34,7 @@ export async function getResponse(
   handlers: AnyHandler[],
   request: Request
 ): Promise<Response | undefined> {
-  const server = new MockpitServer();
+  const server = new FerrimockServer();
   const engineHandlers = toEngineHandlers(handlers);
   if (engineHandlers.length > 0) {
     server.useHandlers(engineHandlers);
@@ -132,7 +132,7 @@ function reportUnhandled(
   request: Request,
   strategy: UnhandledRequestStrategy
 ): void {
-  const msg = `[mockpit] Unhandled ${request.method} ${request.url}`;
+  const msg = `[ferrimock] Unhandled ${request.method} ${request.url}`;
   if (strategy === "bypass") return;
   if (strategy === "warn") {
     console.warn(msg);

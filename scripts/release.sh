@@ -61,24 +61,23 @@ if n != 1:
 open(path, "w").write(updated)
 print(f"bumped {path}")
 
-# mockpit-cli's registry pin on the mockpit dependency.
-path = "crates/mockpit-cli/Cargo.toml"
+# ferrimock-cli's registry pin on the ferrimock dependency.
+path = "crates/ferrimock-cli/Cargo.toml"
 src = open(path).read()
 updated, n = re.subn(
-    rf'mockpit = \{{ version = "{re.escape(current)}"', f'mockpit = {{ version = "{new}"', src, count=1
+    rf'ferrimock = \{{ version = "{re.escape(current)}"', f'ferrimock = {{ version = "{new}"', src, count=1
 )
 if n != 1:
-    raise SystemExit(f"{path}: mockpit dep pin {current} not found")
+    raise SystemExit(f"{path}: ferrimock dep pin {current} not found")
 open(path, "w").write(updated)
 print(f"bumped {path}")
 
 # npm packages, including platform-package pins in optionalDependencies.
 for path in (
     "packages/core/package.json",
-    "packages/mockpit/package.json",
     "packages/playwright/package.json",
-    "crates/mockpit-napi/package.json",
-    "crates/mockpit-cli/npm-shim/package.json",
+    "crates/ferrimock-napi/package.json",
+    "crates/ferrimock-cli/npm-shim/package.json",
 ):
     pkg = json.load(open(path))
     pkg["version"] = new
@@ -113,11 +112,10 @@ else
 fi
 
 git add Cargo.toml Cargo.lock bun.lock CHANGELOG.md \
-    crates/mockpit-cli/Cargo.toml \
-    crates/mockpit-napi/package.json \
-    crates/mockpit-cli/npm-shim/package.json \
+    crates/ferrimock-cli/Cargo.toml \
+    crates/ferrimock-napi/package.json \
+    crates/ferrimock-cli/npm-shim/package.json \
     packages/core/package.json \
-    packages/mockpit/package.json \
     packages/playwright/package.json
 git commit -m "chore: release v${NEW_VERSION}"
 git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"

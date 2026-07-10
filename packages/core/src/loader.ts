@@ -2,16 +2,16 @@
  * Mock directory loader -- loads all mock formats from a directory.
  *
  * Supports:
- * - .yaml, .yml, .json, .har -- loaded by Rust (via MockpitServer.loadMocks)
+ * - .yaml, .yml, .json, .har -- loaded by Rust (via FerrimockServer.loadMocks)
  * - .ts, .js, .mts, .mjs -- imported natively (jiti only for TS on plain Node)
  *
- * Handler files import from 'mockpit' and either export a default array
+ * Handler files import from 'ferrimock' and either export a default array
  * or register by calling the factories at module scope -- the same two
  * shapes the embedded QuickJS runtime accepts, so files are portable:
  *
  * ```ts
  * // mocks/users.ts
- * import { http, HttpResponse } from 'mockpit'
+ * import { http, HttpResponse } from 'ferrimock'
  *
  * export default [
  *   http.get('/api/users/:id', ({ params }) =>
@@ -21,14 +21,14 @@
  * ```
  */
 
-import type { MockpitServer, RequestHandler } from "@mockpit/node";
+import type { FerrimockServer, RequestHandler } from "ferrimock-node";
 import { createJiti } from "jiti";
 import { readdirSync, statSync } from "node:fs";
 import { resolve, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectHandlers } from "./registration.js";
 import { isWsHandler, type WebSocketHandler } from "./ws.js";
-import type { MockpitInterceptor } from "./interceptor.js";
+import type { FerrimockInterceptor } from "./interceptor.js";
 
 const RUST_EXTENSIONS = new Set([".yaml", ".yml", ".json", ".har"]);
 const JS_EXTENSIONS = new Set([".ts", ".js", ".mts", ".mjs"]);
@@ -56,16 +56,16 @@ async function importMockFile(file: string): Promise<unknown> {
 }
 
 /**
- * Load all mocks from a directory into a MockpitServer or a
- * MockpitInterceptor.
+ * Load all mocks from a directory into a FerrimockServer or a
+ * FerrimockInterceptor.
  *
  * Declarative files (.yaml/.json/.har) are loaded by Rust.
  * Handler files (.ts/.js) run on this runtime's own module graph.
  * WebSocket handlers (`ws.link`) are real engine mocks and register on
- * both lanes; a TCP MockpitServer serves them natively.
+ * both lanes; a TCP FerrimockServer serves them natively.
  */
 export async function loadMocksDir(
-  server: MockpitServer | MockpitInterceptor,
+  server: FerrimockServer | FerrimockInterceptor,
   dir: string
 ): Promise<{
   declarativeCount: number;
@@ -74,7 +74,7 @@ export async function loadMocksDir(
 }> {
   const resolvedDir = resolve(dir);
   const interceptor =
-    "resolveRequest" in server ? (server as MockpitInterceptor) : null;
+    "resolveRequest" in server ? (server as FerrimockInterceptor) : null;
 
   let declarativeCount = 0;
   let handlerCount = 0;
@@ -143,7 +143,7 @@ export async function loadMocksDir(
         if (interceptor) {
           interceptor.useHandlers(wsHandlers);
         } else {
-          (server as MockpitServer).useHandlers(
+          (server as FerrimockServer).useHandlers(
             wsHandlers.map((handler) => handler.native)
           );
         }

@@ -1,8 +1,8 @@
 // Standalone Node (not bun) verification that http.request is intercepted.
 // Run: node packages/core/verify-node-http.mjs
 import http from "node:http";
-import { MockpitInterceptor } from "@mockpit/core";
-import { http as mock, HttpResponse } from "@mockpit/node";
+import { FerrimockInterceptor } from "ferrimock";
+import { http as mock, HttpResponse } from "ferrimock-node";
 
 function nodeRequest(url, options = {}, body) {
   return new Promise((resolve, reject) => {
@@ -18,7 +18,7 @@ function nodeRequest(url, options = {}, body) {
   });
 }
 
-const interceptor = new MockpitInterceptor();
+const interceptor = new FerrimockInterceptor();
 interceptor.useHandlers([
   mock.get("/api/http", async () => HttpResponse.json({ ok: true, via: "node-http" })),
   mock.post("/echo", async ({ request }) => HttpResponse.json({ received: (await request.json()).name ?? null })),

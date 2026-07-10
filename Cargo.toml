@@ -1,8 +1,8 @@
 [workspace]
 members = [
-  "crates/mockpit",
-  "crates/mockpit-cli",
-  "crates/mockpit-napi",
+  "crates/ferrimock",
+  "crates/ferrimock-cli",
+  "crates/ferrimock-napi",
 ]
 
 resolver = "2"
@@ -15,7 +15,7 @@ edition = "2024"
 # needs nightly regardless (rolldown's oxc tree uses if-let guards).
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/salamaashoush/mockpit"
+repository = "https://github.com/salamaashoush/ferrimock"
 description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"
 
 [workspace.lints.rust]

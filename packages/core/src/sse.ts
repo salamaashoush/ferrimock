@@ -7,7 +7,7 @@
  * - Interceptor lane: called with `(info)` — strict MSW predicate (only
  *   `accept: text/event-stream` requests match, others fall through),
  *   frames stream through a stash-kept ReadableStream Response.
- * - TCP lane (`MockpitServer.listen()`): called with `(info, client)`
+ * - TCP lane (`FerrimockServer.listen()`): called with `(info, client)`
  *   where `client` is the native connection sink — frames stream from
  *   Rust without the stash, and no accept header is required (curl
  *   ergonomics, matching the QuickJS/declarative lanes).
@@ -20,10 +20,10 @@ import type {
   RequestHandler,
   RequestInfo,
   SseClientHandle,
-} from "@mockpit/node";
-import { sse as nativeSse } from "@mockpit/node";
+} from "ferrimock-node";
+import { sse as nativeSse } from "ferrimock-node";
 import { normalizeResult, registerCollected } from "./registration.js";
-import { MockpitEventSource, type EventSourceLike } from "./event-source.js";
+import { FerrimockEventSource, type EventSourceLike } from "./event-source.js";
 
 export type ServerSentEventMessage =
   | { id?: string; event?: string; data?: unknown; retry?: never }
@@ -175,7 +175,7 @@ export class ServerSentEventServer {
       );
     }
     const client = this.#client;
-    return new MockpitEventSource(this.#url, {
+    return new FerrimockEventSource(this.#url, {
       onFrameForward(frame) {
         client.send({
           id: frame.id,

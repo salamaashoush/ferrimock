@@ -1,5 +1,5 @@
 /**
- * MockpitInterceptor -- core mock engine wired into fetch/XHR interception.
+ * FerrimockInterceptor -- core mock engine wired into fetch/XHR interception.
  *
  * Patches globalThis.fetch and XMLHttpRequest to route requests through
  * the Rust mock engine via matchRequest() NAPI call.
@@ -8,8 +8,8 @@
  * or createHandler() to wire into their own interception systems.
  */
 
-import { MockpitServer } from "@mockpit/node";
-import type { RequestHandler } from "@mockpit/node";
+import { FerrimockServer } from "ferrimock-node";
+import type { RequestHandler } from "ferrimock-node";
 import { ClientRequestInterceptor } from "@mswjs/interceptors/ClientRequest";
 import {
   WebSocketInterceptor,
@@ -34,7 +34,7 @@ interface MatchedResult {
   mockId: string;
 }
 
-/** One entry of `listHandlers()`: mockpit's registry fields plus MSW's
+/** One entry of `listHandlers()`: ferrimock's registry fields plus MSW's
  * `RequestHandler` surface (`info.header`, `isUsed`). */
 export interface ListedHandler {
   id: string;
@@ -92,7 +92,7 @@ export function toResponse(match: MatchedResult): Response {
 
 const originalFetch = globalThis.fetch;
 const OriginalXHR = typeof XMLHttpRequest !== "undefined" ? XMLHttpRequest : null;
-let activeInterceptor: MockpitInterceptor | null = null;
+let activeInterceptor: FerrimockInterceptor | null = null;
 
 let requestCounter = 0;
 function nextRequestId(): string {
@@ -149,8 +149,8 @@ export interface ApplyOptions {
   onUnhandledRequest?: UnhandledRequestStrategy;
 }
 
-export class MockpitInterceptor {
-  private server: MockpitServer;
+export class FerrimockInterceptor {
+  private server: FerrimockServer;
   private applied = false;
   private onUnhandledRequest: UnhandledRequestStrategy = "bypass";
   // Intercepts Node http/https ClientRequest (axios default adapter, got,
@@ -174,7 +174,7 @@ export class MockpitInterceptor {
   private usedMockIds = new Set<string>();
 
   constructor() {
-    this.server = new MockpitServer();
+    this.server = new FerrimockServer();
   }
 
   /** Refresh hot-path state after any mock mutation. */
@@ -358,7 +358,7 @@ export class MockpitInterceptor {
   apply(options?: ApplyOptions): void {
     if (this.applied) return;
     if (activeInterceptor) {
-      throw new Error("Another MockpitInterceptor is already active.");
+      throw new Error("Another FerrimockInterceptor is already active.");
     }
 
     if (options?.onUnhandledRequest) {
@@ -368,7 +368,7 @@ export class MockpitInterceptor {
     const self = this;
 
     // -- Patch fetch --
-    globalThis.fetch = async function mockpitFetch(
+    globalThis.fetch = async function ferrimockFetch(
       input: RequestInfo | URL,
       init?: RequestInit
     ): Promise<Response> {
@@ -827,7 +827,7 @@ export class MockpitInterceptor {
   /** @internal */
   handleUnhandled(request: Request): void {
     const strategy = this.onUnhandledRequest;
-    const msg = `[mockpit] Unhandled ${request.method} ${request.url}`;
+    const msg = `[ferrimock] Unhandled ${request.method} ${request.url}`;
 
     if (strategy === "bypass") return;
     if (strategy === "warn") {
@@ -890,7 +890,7 @@ export class MockpitInterceptor {
 
 // ===== XMLHttpRequest patching =====
 
-function patchXHR(interceptor: MockpitInterceptor): void {
+function patchXHR(interceptor: FerrimockInterceptor): void {
   if (!OriginalXHR) return;
 
   const MockXHR = function (this: any) {

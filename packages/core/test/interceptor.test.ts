@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { MockpitInterceptor } from "../src/index.js";
-import { http, HttpResponse, fake } from "@mockpit/node";
+import { FerrimockInterceptor } from "../src/index.js";
+import { http, HttpResponse, fake } from "ferrimock-node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
 import { faker } from "@faker-js/faker";
@@ -14,11 +14,11 @@ function bench(label: string, rps: number, usPerReq: number) {
   );
 }
 
-describe("MockpitInterceptor", () => {
-  let interceptor: MockpitInterceptor;
+describe("FerrimockInterceptor", () => {
+  let interceptor: FerrimockInterceptor;
 
   beforeAll(async () => {
-    interceptor = new MockpitInterceptor();
+    interceptor = new FerrimockInterceptor();
   });
 
   afterAll(() => {
@@ -147,16 +147,16 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
     server.close();
   });
 
-  // -- Mockpit Interceptor (no HTTP) --
-  it("Mockpit interceptor: static declarative", async () => {
-    const interceptor = new MockpitInterceptor();
+  // -- Ferrimock Interceptor (no HTTP) --
+  it("Ferrimock interceptor: static declarative", async () => {
+    const interceptor = new FerrimockInterceptor();
     await interceptor.addMock({
       id: "bench",
       match: { method: "GET", url: "/api/bench" },
       response: {
         status: 200,
         headers: { "content-type": "application/json" },
-        body: '{"id":"123","name":"John","source":"mockpit-intercept"}',
+        body: '{"id":"123","name":"John","source":"ferrimock-intercept"}',
       },
     });
     interceptor.apply();
@@ -166,15 +166,15 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
       await fetch("http://localhost/api/bench");
     const elapsed = performance.now() - start;
     bench(
-      "Mockpit interceptor: static declarative",
+      "Ferrimock interceptor: static declarative",
       (N / elapsed) * 1000,
       (elapsed / N) * 1000
     );
     interceptor.dispose();
   });
 
-  it("Mockpit interceptor: template + Rust fake data", async () => {
-    const interceptor = new MockpitInterceptor();
+  it("Ferrimock interceptor: template + Rust fake data", async () => {
+    const interceptor = new FerrimockInterceptor();
     await interceptor.addMock({
       id: "bench-tpl",
       match: { method: "GET", url: "/api/bench" },
@@ -192,15 +192,15 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
       await fetch("http://localhost/api/bench");
     const elapsed = performance.now() - start;
     bench(
-      "Mockpit interceptor: template + Rust fake",
+      "Ferrimock interceptor: template + Rust fake",
       (N / elapsed) * 1000,
       (elapsed / N) * 1000
     );
     interceptor.dispose();
   });
 
-  it("Mockpit interceptor: JS handler static", async () => {
-    const interceptor = new MockpitInterceptor();
+  it("Ferrimock interceptor: JS handler static", async () => {
+    const interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/api/bench", async () =>
         HttpResponse.json({ id: "123", name: "John", source: "handler" })
@@ -213,15 +213,15 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
       await fetch("http://localhost/api/bench");
     const elapsed = performance.now() - start;
     bench(
-      "Mockpit interceptor: JS handler (static)",
+      "Ferrimock interceptor: JS handler (static)",
       (N / elapsed) * 1000,
       (elapsed / N) * 1000
     );
     interceptor.dispose();
   });
 
-  it("Mockpit interceptor: JS handler + fake.*", async () => {
-    const interceptor = new MockpitInterceptor();
+  it("Ferrimock interceptor: JS handler + fake.*", async () => {
+    const interceptor = new FerrimockInterceptor();
     interceptor.useHandlers([
       http.get("/api/bench", async () =>
         HttpResponse.json({
@@ -238,7 +238,7 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
       await fetch("http://localhost/api/bench");
     const elapsed = performance.now() - start;
     bench(
-      "Mockpit interceptor: JS handler + fake.* (NAPI)",
+      "Ferrimock interceptor: JS handler + fake.* (NAPI)",
       (N / elapsed) * 1000,
       (elapsed / N) * 1000
     );
@@ -247,9 +247,9 @@ describe("Interceptor vs MSW vs Server benchmark", () => {
 
   it("prints summary", () => {
     console.log("\n  === Interceptor mode: no HTTP, same as MSW ===");
-    console.log("  Both MSW and Mockpit interceptor patch fetch().");
-    console.log("  Mockpit declarative mocks use Rust matching + response gen.");
-    console.log("  Mockpit templates render in Rust (Tera engine).");
+    console.log("  Both MSW and Ferrimock interceptor patch fetch().");
+    console.log("  Ferrimock declarative mocks use Rust matching + response gen.");
+    console.log("  Ferrimock templates render in Rust (Tera engine).");
     console.log("  JS handlers still need TSFN for the callback.");
   });
 });

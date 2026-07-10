@@ -1,28 +1,28 @@
 /**
  * MSW API compatibility test suite.
  *
- * Tests every MSW-compatible API that mockpit implements,
+ * Tests every MSW-compatible API that ferrimock implements,
  * side-by-side with MSW where applicable, verifying both
  * correctness and performance.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import {
-  MockpitInterceptor,
+  FerrimockInterceptor,
   delay,
   passthrough,
   bypass,
 } from "../src/index.js";
-import { http, graphql, HttpResponse, fake } from "@mockpit/node";
+import { http, graphql, HttpResponse, fake } from "ferrimock-node";
 import { setupServer } from "msw/node";
 import { http as mswHttp, HttpResponse as mswHttpResponse, delay as mswDelay, passthrough as mswPassthrough } from "msw";
 
 // ===== Setup =====
 
-let interceptor: MockpitInterceptor;
+let interceptor: FerrimockInterceptor;
 
 beforeEach(() => {
-  interceptor = new MockpitInterceptor();
+  interceptor = new FerrimockInterceptor();
 });
 
 afterEach(() => {
@@ -515,7 +515,7 @@ describe("declarative mocks", () => {
 
 // ===== 13. Performance comparison =====
 
-describe("performance: Mockpit vs MSW", () => {
+describe("performance: Ferrimock vs MSW", () => {
   const N = 2000;
 
   function bench(label: string, elapsed: number) {
@@ -555,8 +555,8 @@ describe("performance: Mockpit vs MSW", () => {
     server.close();
   });
 
-  it("Mockpit: declarative (inline)", async () => {
-    const m = new MockpitInterceptor();
+  it("Ferrimock: declarative (inline)", async () => {
+    const m = new FerrimockInterceptor();
     await m.addMock({
       id: "bench",
       match: { method: "GET", url: "/api/bench" },
@@ -565,12 +565,12 @@ describe("performance: Mockpit vs MSW", () => {
     m.apply();
     const start = performance.now();
     for (let i = 0; i < N; i++) await fetch("http://localhost/api/bench");
-    bench("Mockpit: declarative (inline)", performance.now() - start);
+    bench("Ferrimock: declarative (inline)", performance.now() - start);
     m.dispose();
   });
 
-  it("Mockpit: template + Rust fake", async () => {
-    const m = new MockpitInterceptor();
+  it("Ferrimock: template + Rust fake", async () => {
+    const m = new FerrimockInterceptor();
     await m.addMock({
       id: "bench-tpl",
       match: { method: "GET", url: "/api/bench" },
@@ -583,12 +583,12 @@ describe("performance: Mockpit vs MSW", () => {
     m.apply();
     const start = performance.now();
     for (let i = 0; i < N; i++) await fetch("http://localhost/api/bench");
-    bench("Mockpit: template + Rust fake", performance.now() - start);
+    bench("Ferrimock: template + Rust fake", performance.now() - start);
     m.dispose();
   });
 
-  it("Mockpit: JS handler (static)", async () => {
-    const m = new MockpitInterceptor();
+  it("Ferrimock: JS handler (static)", async () => {
+    const m = new FerrimockInterceptor();
     m.useHandlers([
       http.get("/api/bench", async () =>
         HttpResponse.json({ id: "123", name: "John" })
@@ -597,12 +597,12 @@ describe("performance: Mockpit vs MSW", () => {
     m.apply();
     const start = performance.now();
     for (let i = 0; i < N; i++) await fetch("http://localhost/api/bench");
-    bench("Mockpit: JS handler (static)", performance.now() - start);
+    bench("Ferrimock: JS handler (static)", performance.now() - start);
     m.dispose();
   });
 
-  it("Mockpit: JS handler + fake.* (NAPI)", async () => {
-    const m = new MockpitInterceptor();
+  it("Ferrimock: JS handler + fake.* (NAPI)", async () => {
+    const m = new FerrimockInterceptor();
     m.useHandlers([
       http.get("/api/bench", async () =>
         HttpResponse.json({
@@ -615,11 +615,11 @@ describe("performance: Mockpit vs MSW", () => {
     m.apply();
     const start = performance.now();
     for (let i = 0; i < N; i++) await fetch("http://localhost/api/bench");
-    bench("Mockpit: JS handler + fake.* (NAPI)", performance.now() - start);
+    bench("Ferrimock: JS handler + fake.* (NAPI)", performance.now() - start);
     m.dispose();
   });
 
   it("prints summary", () => {
-    console.log("\n  === Mockpit vs MSW: Full API Parity, 3-4x Faster ===");
+    console.log("\n  === Ferrimock vs MSW: Full API Parity, 3-4x Faster ===");
   });
 });
