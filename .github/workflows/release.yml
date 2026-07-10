@@ -312,6 +312,12 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - run: bun install
 
+      # ferrimock and @ferrimock/playwright ship dist/ - publishing
+      # without the build would produce tarballs whose entry points do
+      # not exist.
+      - name: Build JS packages
+        run: bun run build
+
       - name: Download all native modules
         uses: actions/download-artifact@v4
         with:
@@ -349,21 +355,30 @@ jobs:
           bunx @napi-rs/cli artifacts -o . --npm-dir npm
         shell: bash
 
-      - name: Publish @ferrimock/node
-        working-directory: crates/ferrimock-napi
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish ferrimock
-        working-directory: packages/core
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @ferrimock/playwright
-        working-directory: packages/playwright
-        run: npm publish --access public --provenance
+      # publish_dir skips already-published versions so a partially
+      # failed release can rerun without version conflicts (mirrors the
+      # crates.io "already exists" tolerance). --ignore-scripts keeps
+      # napi's prepublishOnly hook out of CI - this job owns the
+      # platform-package flow.
+      - name: Publish npm packages
+        run: |
+          publish_dir() {
+            local dir="$1"
+            local name version
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already published, skipping"
+            else
+              npm publish "./$dir" --access public --provenance --ignore-scripts
+            fi
+          }
+          for pkg in crates/ferrimock-napi/npm/*/; do
+            publish_dir "$pkg"
+          done
+          publish_dir crates/ferrimock-napi
+          publish_dir packages/core
+          publish_dir packages/playwright
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -380,18 +395,23 @@ jobs:
 
       # Platform packages first so the shim's optionalDependencies
       # resolve as soon as it lands.
-      - name: Publish CLI platform packages
-        working-directory: crates/ferrimock-cli/npm-shim
+      - name: Publish CLI packages
         run: |
-          for pkg in npm/*/; do
-            npm publish "$pkg" --access public --provenance
+          publish_dir() {
+            local dir="$1"
+            local name version
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already published, skipping"
+            else
+              npm publish "./$dir" --access public --provenance --ignore-scripts
+            fi
+          }
+          for pkg in crates/ferrimock-cli/npm-shim/npm/*/; do
+            publish_dir "$pkg"
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish @ferrimock/cli
-        working-directory: crates/ferrimock-cli/npm-shim
-        run: npm publish --access public --provenance
+          publish_dir crates/ferrimock-cli/npm-shim
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

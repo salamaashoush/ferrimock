@@ -41,5 +41,10 @@
   "devDependencies": {
     "@faker-js/faker": "^10.4.0",
     "msw": "^2.13.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salamaashoush/ferrimock.git",
+    "directory": "packages/core"
   }
 }
