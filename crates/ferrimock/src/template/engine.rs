@@ -23,56 +23,61 @@ const CACHE_CAPACITY_NZ: NonZeroUsize = match NonZeroUsize::new(CACHE_CAPACITY) 
     None => panic!("CACHE_CAPACITY must be non-zero"),
 };
 
-/// When total compiled templates exceed this multiple of the cache capacity,
-/// reset the Tera instance to reclaim memory from orphaned (evicted) templates.
-/// With a cache of 256, this triggers a reset after 512 unique templates.
-const RESET_THRESHOLD_MULTIPLIER: usize = 2;
+/// Every cached instance holds exactly one template, so they can all share a name.
+const TEMPLATE_NAME: &str = "tpl";
 
 thread_local! {
   /// Thread-local template engine instance (one per thread, reused across requests)
   /// Tera is not Sync, so we use thread_local! instead of static
   pub(super) static TEMPLATE_ENGINE: RefCell<TemplateEngine> = RefCell::new(TemplateEngine::new());
 
-  /// Separate thread-local Tera for template validation only.
+  /// Separate thread-local engine for template validation only.
   /// Kept separate from the render engine so validated templates don't pollute
-  /// the render cache. Periodically reset to prevent unbounded memory growth.
+  /// the render cache.
   pub(super) static VALIDATION_ENGINE: RefCell<ValidationEngine> = RefCell::new(ValidationEngine::new());
 }
 
-/// Template engine with LRU cache for compiled templates
+/// Build a Tera instance with every custom function registered and no templates.
+///
+/// Cloning one of these is ~45x cheaper than building it (0.6us vs 29us): the
+/// registered closures are behind `Arc`, so a clone only duplicates the lookup
+/// maps.
+fn new_prototype() -> Tera {
+    let mut tera = Tera::default();
+    register_custom_functions(&mut tera);
+    tera
+}
+
+/// Compile a template into its own instance, cloned from `prototype`.
+fn compile(prototype: &Tera, template: &str) -> Result<Tera, tera::Error> {
+    let mut tera = prototype.clone();
+    tera.add_raw_template(TEMPLATE_NAME, template)?;
+    Ok(tera)
+}
+
+/// Template engine with an LRU cache of compiled templates.
+///
+/// Each cache entry owns a Tera instance holding exactly one template, rather
+/// than all templates sharing one instance. `Tera::add_raw_template` finalizes
+/// the whole instance on every call - re-validating every template already in
+/// it - so a shared instance makes compilation O(templates cached): 153us to
+/// add the 256th template versus 6us into a fresh clone. Per-instance also
+/// means eviction actually frees the compiled template, so there is no orphaned
+/// template growth to periodically reset.
 pub struct TemplateEngine {
-    pub(super) tera: Tera,
-    /// LRU cache mapping template hash to template ID (nohash for pre-hashed u64 keys)
-    template_cache: LruCache<u64, String, BuildNoHashHasher<u64>>,
-    /// Total number of templates ever compiled into this Tera instance.
-    /// When this exceeds CACHE_CAPACITY * RESET_THRESHOLD_MULTIPLIER, we reset
-    /// the Tera instance to free memory from orphaned (evicted) templates.
-    total_compiled: usize,
+    /// Registered functions, no templates. Cloned per compile.
+    prototype: Tera,
+    /// Compiled templates keyed by template hash (nohash for pre-hashed u64 keys)
+    template_cache: LruCache<u64, Tera, BuildNoHashHasher<u64>>,
 }
 
 impl TemplateEngine {
     /// Create a new template engine with registered functions
     pub(super) fn new() -> Self {
         Self {
-            tera: Self::new_tera(),
+            prototype: new_prototype(),
             template_cache: LruCache::with_hasher(CACHE_CAPACITY_NZ, BuildNoHashHasher::default()),
-            total_compiled: 0,
         }
-    }
-
-    /// Create a fresh Tera instance with all custom functions registered
-    fn new_tera() -> Tera {
-        let mut tera = Tera::default();
-        register_custom_functions(&mut tera);
-        tera
-    }
-
-    /// Reset the Tera instance to reclaim memory from orphaned templates.
-    /// Clears the LRU cache so all templates get recompiled on next access.
-    fn reset(&mut self) {
-        self.tera = Self::new_tera();
-        self.template_cache.clear();
-        self.total_compiled = 0;
     }
 
     /// Render a template with caching (computes hash at call time)
@@ -92,37 +97,22 @@ impl TemplateEngine {
         template_hash: u64,
         tera_context: &Context,
     ) -> crate::Result<String> {
-        // Check cache and compile if needed (get() updates LRU recency)
+        // get() rather than contains(), so a hit also updates LRU recency.
         if self.template_cache.get(&template_hash).is_none() {
-            // Check if Tera has accumulated too many orphaned templates
-            if self.total_compiled >= CACHE_CAPACITY * RESET_THRESHOLD_MULTIPLIER {
-                self.reset();
-            }
-
-            // Cache miss - compile and cache the template
-            let new_id = format!("tpl_{template_hash}");
-
-            // Add the template to Tera
-            self.tera.add_raw_template(&new_id, template).map_err(|e| {
+            let compiled = compile(&self.prototype, template).map_err(|e| {
                 let error = super::error::TemplateError::from_tera_error(&e, template);
                 crate::FerrimockError::Template(format!("{error}"))
             })?;
-
-            // Store in cache and track total compiled
-            self.template_cache.put(template_hash, new_id);
-            self.total_compiled += 1;
+            self.template_cache.put(template_hash, compiled);
         }
 
-        // Use peek() to get a shared reference - avoids cloning the template ID.
-        // The template was just inserted or confirmed present via get() above.
-        let Some(template_id) = self.template_cache.peek(&template_hash) else {
+        let Some(tera) = self.template_cache.peek(&template_hash) else {
             return Err(crate::mp_err!(
                 "internal error: template cache inconsistency"
             ));
         };
 
-        // Render the template
-        self.tera.render(template_id, tera_context).map_err(|e| {
+        tera.render(TEMPLATE_NAME, tera_context).map_err(|e| {
             let error = super::error::TemplateError::from_tera_error(&e, template);
             crate::FerrimockError::Template(error.to_string())
         })
@@ -136,50 +126,27 @@ impl TemplateEngine {
     }
 }
 
-/// Maximum validations before resetting the validation Tera instance.
-/// Keeps memory bounded during bulk validation (e.g., MockValidator scanning files).
-const VALIDATION_RESET_THRESHOLD: usize = 500;
-
 /// Separate engine for template validation only.
-/// Unlike the render engine, this doesn't need caching (validation is not a hot path).
-/// Periodically resets to prevent memory growth from accumulated validated templates.
+///
+/// Validation compiles into a throwaway clone of the prototype, so nothing
+/// accumulates: bulk validation (e.g. MockValidator scanning files) costs the
+/// same per template on the first file as on the thousandth.
 pub struct ValidationEngine {
-    tera: Tera,
-    validation_count: usize,
+    prototype: Tera,
 }
 
 impl ValidationEngine {
     pub(super) fn new() -> Self {
         Self {
-            tera: TemplateEngine::new_tera(),
-            validation_count: 0,
+            prototype: new_prototype(),
         }
     }
 
-    /// Reset the Tera instance to reclaim memory from accumulated validated templates
-    fn reset(&mut self) {
-        self.tera = TemplateEngine::new_tera();
-        self.validation_count = 0;
-    }
-
-    /// Validate a template by attempting to parse it
+    /// Validate a template by attempting to compile it
     #[allow(clippy::result_large_err)]
-    pub(super) fn validate(&mut self, template: &str) -> Result<(), super::error::TemplateError> {
-        let template_hash = TemplateEngine::hash_template(template);
-        let template_id = format!("val_{template_hash}");
-
-        match self.tera.add_raw_template(&template_id, template) {
-            Ok(()) => {
-                self.validation_count += 1;
-
-                // Reset after threshold to prevent unbounded memory growth
-                if self.validation_count >= VALIDATION_RESET_THRESHOLD {
-                    self.reset();
-                }
-
-                Ok(())
-            }
-            Err(e) => Err(super::error::TemplateError::from_tera_error(&e, template)),
-        }
+    pub(super) fn validate(&self, template: &str) -> Result<(), super::error::TemplateError> {
+        compile(&self.prototype, template)
+            .map(|_| ())
+            .map_err(|e| super::error::TemplateError::from_tera_error(&e, template))
     }
 }

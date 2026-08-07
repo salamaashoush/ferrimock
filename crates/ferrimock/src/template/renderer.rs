@@ -152,8 +152,5 @@ pub fn render_patch_template(
 /// This checks for syntax errors and returns detailed error information.
 #[allow(clippy::result_large_err)]
 pub fn validate_template(template: &str) -> Result<(), TemplateError> {
-    VALIDATION_ENGINE.with(|engine| {
-        let mut engine = engine.borrow_mut();
-        engine.validate(template)
-    })
+    VALIDATION_ENGINE.with(|engine| engine.borrow().validate(template))
 }
