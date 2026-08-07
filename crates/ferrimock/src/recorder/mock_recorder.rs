@@ -729,7 +729,7 @@ impl MockRecorder {
                 }
                 RecordingFormat::Yaml => {
                     // Write as YAML list item
-                    let yaml_str = serde_yaml::to_string(&mock_config)?;
+                    let yaml_str = serde_yaml_ng::to_string(&mock_config)?;
                     let indented = yaml_str
                         .lines()
                         .enumerate()
@@ -841,7 +841,7 @@ impl MockRecorder {
                 let collection = self.create_mock_collection();
                 // Write body files for file-based bodies
                 self.write_body_files(&collection).await?;
-                let content = serde_yaml::to_string(&collection)?;
+                let content = serde_yaml_ng::to_string(&collection)?;
                 tokio::fs::write(&file_path, content).await?;
             }
             RecordingFormat::Har => {
@@ -1264,7 +1264,7 @@ mod tests {
         // Load as mock collection
         let content = tokio::fs::read_to_string(&file_path).await.unwrap();
         let collection: crate::config::MockCollectionConfig =
-            serde_yaml::from_str(&content).unwrap();
+            serde_yaml_ng::from_str(&content).unwrap();
 
         assert!(collection.name.is_some());
         assert_eq!(collection.mocks.len(), 1);
@@ -1323,7 +1323,7 @@ mod tests {
 
         // Verify it can be parsed back
         let parsed: crate::config::MockCollectionConfig =
-            serde_yaml::from_str(&content).expect("YAML should be valid and parseable");
+            serde_yaml_ng::from_str(&content).expect("YAML should be valid and parseable");
         assert_eq!(parsed.mocks.len(), 2);
     }
 
@@ -2102,7 +2102,7 @@ mod tests {
         let content = tokio::fs::read_to_string(&file_path).await.unwrap();
 
         // Must parse as valid YAML MockCollectionConfig
-        let collection: crate::config::MockCollectionConfig = serde_yaml::from_str(&content)
+        let collection: crate::config::MockCollectionConfig = serde_yaml_ng::from_str(&content)
             .unwrap_or_else(|e| panic!("Streaming YAML should be valid: {e}\nContent:\n{content}"));
 
         assert_eq!(collection.mocks.len(), 3);

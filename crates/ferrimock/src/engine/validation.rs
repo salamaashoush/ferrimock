@@ -72,7 +72,7 @@ impl MockValidator {
         let config_result = match extension {
             Some("json") => serde_json::from_str::<MockCollectionConfig>(&content)
                 .map_err(|e| crate::mp_err!("JSON parse error: {e}")),
-            Some("yaml" | "yml") => serde_yaml::from_str::<MockCollectionConfig>(&content)
+            Some("yaml" | "yml") => serde_yaml_ng::from_str::<MockCollectionConfig>(&content)
                 .map_err(|e| crate::mp_err!("YAML parse error: {e}")),
             Some("js" | "mjs" | "ts" | "mts") => {
                 return self.validate_script_file(path).await;
@@ -207,7 +207,7 @@ impl MockValidator {
         let config_result = match extension {
             "json" => serde_json::from_str::<MockCollectionConfig>(content)
                 .map_err(|e| crate::mp_err!("JSON parse error: {e}")),
-            "yaml" | "yml" => serde_yaml::from_str::<MockCollectionConfig>(content)
+            "yaml" | "yml" => serde_yaml_ng::from_str::<MockCollectionConfig>(content)
                 .map_err(|e| crate::mp_err!("YAML parse error: {e}")),
             _ => {
                 return ValidationResult {

@@ -64,7 +64,7 @@ pub async fn consolidate_mocks(
     let content = match format.to_lowercase().as_str() {
         "json" => serde_json::to_string_pretty(&consolidated)?,
         "yaml" | "yml" => {
-            serde_yaml::to_string(&consolidated).context("YAML serialization error")?
+            serde_yaml_ng::to_string(&consolidated).context("YAML serialization error")?
         }
         _ => {
             anyhow::bail!("Invalid format: {format}. Use 'json' or 'yaml'");

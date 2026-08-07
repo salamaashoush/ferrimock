@@ -51,7 +51,7 @@ pub fn parse_config_string(
 ) -> Result<FerrimockConfig, crate::FerrimockError> {
     match format {
         "json" => Ok(serde_json::from_str(content)?),
-        "yaml" | "yml" => Ok(serde_yaml::from_str(content)?),
+        "yaml" | "yml" => Ok(serde_yaml_ng::from_str(content)?),
         other => crate::mp_bail!("Unsupported config format: .{other} (use .yaml, .yml, or .json)"),
     }
 }

@@ -187,14 +187,14 @@ fn format_external_references(
     mock_dir: &Path,
     check: bool,
 ) -> anyhow::Result<()> {
-    let config: MockCollectionConfig =
-        match extension {
-            Some("json") => serde_json::from_str(content)
-                .map_err(|e| anyhow::anyhow!("JSON parse error: {e}"))?,
-            Some("yaml" | "yml") => serde_yaml::from_str(content)
-                .map_err(|e| anyhow::anyhow!("YAML parse error: {e}"))?,
-            _ => return Ok(()),
-        };
+    let config: MockCollectionConfig = match extension {
+        Some("json") => {
+            serde_json::from_str(content).map_err(|e| anyhow::anyhow!("JSON parse error: {e}"))?
+        }
+        Some("yaml" | "yml") => serde_yaml_ng::from_str(content)
+            .map_err(|e| anyhow::anyhow!("YAML parse error: {e}"))?,
+        _ => return Ok(()),
+    };
 
     for mock in &config.mocks {
         if let Some(ref response_config) = mock.response_config {

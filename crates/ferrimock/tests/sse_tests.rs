@@ -12,7 +12,7 @@ use ferrimock::engine::{MockMatcher, MockRegistry};
 
 async fn matcher_for(yaml: &str) -> MockMatcher {
     let collection: ferrimock::config::MockCollectionConfig =
-        serde_yaml::from_str(yaml).expect("parse yaml");
+        serde_yaml_ng::from_str(yaml).expect("parse yaml");
     let registry = MockRegistry::new();
     for mock in collection.mocks {
         let def = mock.into_mock_definition().await.expect("lower mock");
@@ -229,7 +229,7 @@ mocks:
       echo: true
 "#;
     let collection: ferrimock::config::MockCollectionConfig =
-        serde_yaml::from_str(yaml).expect("parse");
+        serde_yaml_ng::from_str(yaml).expect("parse");
     let err = collection.mocks[0]
         .clone()
         .into_mock_definition()
@@ -246,7 +246,7 @@ mocks:
       events: ["a"]
 "#;
     let collection: ferrimock::config::MockCollectionConfig =
-        serde_yaml::from_str(yaml).expect("parse");
+        serde_yaml_ng::from_str(yaml).expect("parse");
     let err = collection.mocks[0]
         .clone()
         .into_mock_definition()
@@ -444,7 +444,7 @@ mocks:
       events: ["a"]
 "#;
     let collection: ferrimock::config::MockCollectionConfig =
-        serde_yaml::from_str(yaml).expect("parse");
+        serde_yaml_ng::from_str(yaml).expect("parse");
     let err = collection.mocks[0]
         .clone()
         .into_mock_definition()
@@ -460,7 +460,7 @@ mocks:
       upstream: ws://real.example.com/stream
 "#;
     let collection: ferrimock::config::MockCollectionConfig =
-        serde_yaml::from_str(yaml).expect("parse");
+        serde_yaml_ng::from_str(yaml).expect("parse");
     let err = collection.mocks[0]
         .clone()
         .into_mock_definition()

@@ -114,7 +114,7 @@ impl SpinnerExt for ProgressBar {
 
 pub fn table() -> Table {
     let mut t = Table::new();
-    t.load_preset(presets::UTF8_FULL);
+    t.load_style(presets::UTF8_FULL);
     t
 }
 

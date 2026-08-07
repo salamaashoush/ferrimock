@@ -122,18 +122,18 @@ multiple_crate_versions = "allow"
 [workspace.dependencies]
 # Async runtime
 futures = "0.3"
-tokio = { version = "1.50", features = ["full"] }
+tokio = { version = "1.53", features = ["full"] }
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "timeout"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 
 # Serialization
-base64 = "0.22"
+base64 = "0.23"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 
 # Error handling and logging
 anyhow = "1.0"
@@ -142,37 +142,34 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utilities
-bytes = "1.11"
+bytes = "1.12"
 chrono = { version = "0.4", features = ["serde"] }
-dashmap = "6.1"
+dashmap = "6.2"
 flate2 = "1.1"
 globset = "0.4"
 har = "0.9"
-json-patch = "4.1"
-lazy_static = "1.5"
-lean_string = { version = "0.5", features = ["serde"] }
-lru = "0.16"
+json-patch = "4.2"
+lean_string = { version = "0.7", features = ["serde"] }
+lru = "0.18"
 nohash-hasher = "0.2"
 notify = "8.2"
 parking_lot = "0.12"
-regex = "1.12"
+regex = "1.13"
 rustc-hash = "2.1"
 sha2 = "0.11"
 smallvec = { version = "1.15", features = ["serde", "union", "const_generics"] }
 url = "2.5"
 urlencoding = "2.1.3"
-uuid = { version = "1.23", features = ["v4", "serde"] }
+uuid = { version = "1.24", features = ["v4", "serde"] }
 
 # CLI
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6"
 dirs = "6.0"
 colored = "3.1"
-comfy-table = { version = "7.2", features = ["custom_styling"] }
-dialoguer = { version = "0.12", features = ["fuzzy-select"] }
+comfy-table = { version = "8.0", features = ["custom_styling"] }
 indicatif = "0.18"
-open = "5.3"
-rpassword = "7.4"
+open = "5.4"
 
 # Fake data
 fake = { version = "5.1", features = ["derive", "chrono", "http", "uuid"] }
@@ -183,21 +180,21 @@ ab_glyph = "0.2"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Without default features: `image/default` drags the AVIF encoder in
 # (rav1e -> core2, unmaintained/yanked); drawing text needs only `text`.
-imageproc = { version = "0.26.1", default-features = false, features = ["rayon", "text"] }
+imageproc = { version = "0.27.0", default-features = false, features = ["rayon", "text"] }
 # default-features pull lopdf's datetime integrations (time/jiff/chrono
 # interop, currently broken against newer `time`); fake_pdf only writes
 # documents and needs none of them.
-lopdf = { version = "0.43", default-features = false }
+lopdf = { version = "0.44", default-features = false }
 # No "compression" feature: it pulls include-flate -> proc-macro-error2,
 # which trips a future-incompat lint (E0365) with no fixed release. The
 # only embedded asset is one font; the size trade is acceptable.
-rust-embed = { version = "8.11" }
-
-# GraphQL
-graphql-parser = "0.4"
+rust-embed = { version = "8.12" }
 
 # Template engine
-tera = "1.20"
+tera = "2.1"
+# Tera 2 moved its dependency-heavy built-ins out of core; json_encode, date,
+# now and get_random are part of the documented mock template surface.
+tera-contrib = { version = "0.2", features = ["json", "date", "rand"] }
 
 # QuickJS scripting (scripting feature)
 # `full-async` does NOT imply `parallel`; without it AsyncRuntime is !Send/!Sync
@@ -218,11 +215,11 @@ sourcemap = "9"
 # Testing
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 tempfile = "3.27"
-serial_test = "3.4"
+serial_test = "3.5"
 
 # HTTP
 http = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "charset", "http2"] }
 
 [profile.dev]
 debug = false

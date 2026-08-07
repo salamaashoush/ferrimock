@@ -60,6 +60,15 @@ pub fn register_template_function(name: impl Into<String>, func: impl TemplateFu
     }
 }
 
+/// Look up a plugin function by name.
+pub(crate) fn lookup(name: &str) -> Option<Arc<dyn TemplateFunction>> {
+    let functions = PLUGIN_FUNCTIONS.lock().ok()?;
+    functions
+        .iter()
+        .find(|f| f.name == name)
+        .map(|f| Arc::clone(&f.func))
+}
+
 /// Apply all registered plugin functions to a Tera instance.
 /// Called internally when creating new thread-local Tera instances.
 pub(super) fn apply_plugins(tera: &mut tera::Tera) {
@@ -69,9 +78,11 @@ pub(super) fn apply_plugins(tera: &mut tera::Tera) {
     for registered in functions.iter() {
         let func = Arc::clone(&registered.func);
         tera.register_function(
-            &registered.name,
-            move |args: &HashMap<String, Value>| -> tera::Result<Value> {
-                func.call(args).map_err(tera::Error::msg)
+            registered.name.clone(),
+            move |kwargs: tera::Kwargs, _: &tera::State<'_>| -> tera::TeraResult<tera::Value> {
+                let args = super::convert::kwargs_to_args(&kwargs);
+                let result = func.call(&args).map_err(tera::Error::message)?;
+                Ok(super::convert::to_tera(result))
             },
         );
     }

@@ -3,13 +3,9 @@
 //! Provides global persistence store and Tera function registration for
 //! store operations (get, set, incr, decr, etc.)
 
-// Tera library callbacks require std::collections::HashMap - cannot use FxHashMap
-#![allow(clippy::disallowed_types)]
-
 use crate::core::PersistenceStore;
-use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use tera::{Kwargs, State, TeraResult, Value as TeraValue};
 
 // ============================================================================
 // GLOBAL PERSISTENCE STORE
@@ -48,178 +44,126 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
     // store_get(key) - supports dot notation for namespaces
     tera.register_function(
         "store_get",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_get requires 'key' parameter"))?;
-
-            Ok(get_persistence_store().get(key).unwrap_or(Value::Null))
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<TeraValue> {
+            let key = kwargs.must_get::<&str>("key")?;
+            Ok(get_persistence_store()
+                .get(key)
+                .map_or_else(TeraValue::none, super::convert::to_tera))
         },
     );
 
     // store_set(key, value, ttl_seconds=None)
     tera.register_function(
         "store_set",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_set requires 'key' parameter"))?;
-            let value = args
-                .get("value")
-                .ok_or_else(|| tera::Error::msg("store_set requires 'value' parameter"))?;
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<String> {
+            let key = kwargs.must_get::<&str>("key")?;
+            let value = super::convert::to_json(kwargs.must_get::<&TeraValue>("value")?);
 
-            let ttl_seconds = args.get("ttl_seconds").and_then(serde_json::Value::as_u64);
-            let ttl = ttl_seconds.map(std::time::Duration::from_secs);
-
-            get_persistence_store().set_with_ttl(key.to_string(), value.clone(), ttl);
+            get_persistence_store().set_with_ttl(key.to_string(), value, ttl_from(&kwargs)?);
 
             // Return empty string for cleaner template syntax
-            Ok(Value::String(String::new()))
+            Ok(String::new())
         },
     );
 
     // store_incr(key)
     tera.register_function(
         "store_incr",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_incr requires 'key' parameter"))?;
-
-            Ok(Value::Number(
-                get_persistence_store().increment(key.to_string()).into(),
-            ))
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<i64> {
+            let key = kwargs.must_get::<&str>("key")?;
+            Ok(get_persistence_store().increment(key.to_string()))
         },
     );
 
     // store_decr(key)
     tera.register_function(
         "store_decr",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_decr requires 'key' parameter"))?;
-
-            Ok(Value::Number(
-                get_persistence_store().decrement(key.to_string()).into(),
-            ))
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<i64> {
+            let key = kwargs.must_get::<&str>("key")?;
+            Ok(get_persistence_store().decrement(key.to_string()))
         },
     );
 
     // store_has(key)
     tera.register_function(
         "store_has",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_has requires 'key' parameter"))?;
-
-            Ok(Value::Bool(get_persistence_store().exists(key)))
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<bool> {
+            let key = kwargs.must_get::<&str>("key")?;
+            Ok(get_persistence_store().exists(key))
         },
     );
 
     // store_del(key)
     tera.register_function(
         "store_del",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_del requires 'key' parameter"))?;
-
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<String> {
+            let key = kwargs.must_get::<&str>("key")?;
             get_persistence_store().delete(key);
-            Ok(Value::String(String::new()))
+            Ok(String::new())
         },
     );
 
     // store_clear()
-    tera.register_function(
-        "store_clear",
-        |_args: &HashMap<String, Value>| -> tera::Result<Value> {
-            get_persistence_store().clear();
-            Ok(Value::String(String::new()))
-        },
-    );
+    tera.register_function("store_clear", |_: Kwargs, _: &State<'_>| -> String {
+        get_persistence_store().clear();
+        String::new()
+    });
 
     // store_keys()
     tera.register_function(
         "store_keys",
-        |_args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let keys = get_persistence_store()
-                .keys()
-                .into_iter()
-                .map(Value::String)
-                .collect::<Vec<Value>>();
-
-            Ok(Value::Array(keys))
+        |_: Kwargs, _: &State<'_>| -> TeraResult<TeraValue> {
+            Ok(super::convert::to_tera(serde_json::json!(
+                get_persistence_store().keys()
+            )))
         },
     );
 
     // store_set_nx(key, value, ttl_seconds=None)
     tera.register_function(
         "store_set_nx",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_set_nx requires 'key' parameter"))?;
-            let value = args
-                .get("value")
-                .ok_or_else(|| tera::Error::msg("store_set_nx requires 'value' parameter"))?;
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<bool> {
+            let key = kwargs.must_get::<&str>("key")?;
+            let value = super::convert::to_json(kwargs.must_get::<&TeraValue>("value")?);
 
-            let ttl_seconds = args.get("ttl_seconds").and_then(serde_json::Value::as_u64);
-            let ttl = ttl_seconds.map(std::time::Duration::from_secs);
-
-            let was_set =
-                get_persistence_store().set_nx_with_ttl(key.to_string(), value.clone(), ttl);
-
-            Ok(Value::Bool(was_set))
+            Ok(get_persistence_store().set_nx_with_ttl(key.to_string(), value, ttl_from(&kwargs)?))
         },
     );
 
     // store_get_or_set(key, default, ttl_seconds=None)
     tera.register_function(
         "store_get_or_set",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_get_or_set requires 'key' parameter"))?;
-            let default = args
-                .get("default")
-                .ok_or_else(|| tera::Error::msg("store_get_or_set requires 'default' parameter"))?;
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<TeraValue> {
+            let key = kwargs.must_get::<&str>("key")?;
+            let default = kwargs.must_get::<&TeraValue>("default")?;
 
-            let ttl_seconds = args.get("ttl_seconds").and_then(serde_json::Value::as_u64);
-            let ttl = ttl_seconds.map(std::time::Duration::from_secs);
-
-            // Try to get existing value
             if let Some(value) = get_persistence_store().get(key) {
-                Ok(value)
-            } else {
-                // Set the default value and return it
-                get_persistence_store().set_with_ttl(key.to_string(), default.clone(), ttl);
-                Ok(default.clone())
+                return Ok(super::convert::to_tera(value));
             }
+
+            get_persistence_store().set_with_ttl(
+                key.to_string(),
+                super::convert::to_json(default),
+                ttl_from(&kwargs)?,
+            );
+            Ok(default.clone())
         },
     );
 
     // store_ttl(key)
     tera.register_function(
         "store_ttl",
-        |args: &HashMap<String, Value>| -> tera::Result<Value> {
-            let key = args
-                .get("key")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| tera::Error::msg("store_ttl requires 'key' parameter"))?;
-
-            let ttl_secs = get_persistence_store().ttl_seconds(key);
-
-            Ok(ttl_secs.map_or(Value::Null, |s| Value::Number(s.into())))
+        |kwargs: Kwargs, _: &State<'_>| -> TeraResult<TeraValue> {
+            let key = kwargs.must_get::<&str>("key")?;
+            Ok(get_persistence_store()
+                .ttl_seconds(key)
+                .map_or_else(TeraValue::none, TeraValue::from))
         },
     );
+}
+
+fn ttl_from(kwargs: &Kwargs) -> TeraResult<Option<std::time::Duration>> {
+    Ok(kwargs
+        .get::<u64>("ttl_seconds")?
+        .map(std::time::Duration::from_secs))
 }

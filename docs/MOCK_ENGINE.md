@@ -1168,7 +1168,7 @@ mocks:
         "name": "{{ fake_name() }}",
         "email": "{{ fake_email() }}",
         "created_at": "{{ fake_iso_date() }}",
-        "avatar": "{{ fake_avatar(initials=fake_first_name() | slice(start=0, end=1) ~ fake_last_name() | slice(start=0, end=1)) }}"
+        "avatar": "{{ fake_avatar(initials=fake_first_name() | truncate(length=1, end='') ~ fake_last_name() | truncate(length=1, end='')) }}"
       }
 ```
 

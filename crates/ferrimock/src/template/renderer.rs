@@ -47,10 +47,15 @@ fn build_tera_context(context: &RequestContext) -> Context {
         tera_context.insert("body", body);
     }
     if let Some(body_json) = &context.body_json {
-        tera_context.insert("body_json", body_json);
+        // JSON values go through the explicit converter, never serde: see
+        // `super::convert`.
+        tera_context.insert_value("body_json", super::convert::to_tera_ref(body_json));
     }
     if let Some(vars) = &context.vars {
-        tera_context.insert("vars", vars);
+        tera_context.insert_value(
+            "vars",
+            super::convert::to_tera(serde_json::Value::Object(vars.clone())),
+        );
     }
     tera_context
 }
@@ -116,13 +121,22 @@ pub fn render_patch_template(
         let mut tera_context = build_tera_context(&context.request);
 
         // Add upstream response context under "response" namespace
-        let mut response_map = FxHashMap::default();
-        response_map.insert("status", serde_json::json!(context.response_status));
-        response_map.insert("headers", serde_json::json!(context.response_headers));
+        let mut response_map = serde_json::Map::new();
+        response_map.insert(
+            "status".to_string(),
+            serde_json::json!(context.response_status),
+        );
+        response_map.insert(
+            "headers".to_string(),
+            serde_json::json!(context.response_headers),
+        );
         if let Some(ref body_json) = context.response_body_json {
-            response_map.insert("body_json", body_json.clone());
+            response_map.insert("body_json".to_string(), body_json.clone());
         }
-        tera_context.insert("response", &response_map);
+        tera_context.insert_value(
+            "response",
+            super::convert::to_tera(serde_json::Value::Object(response_map)),
+        );
 
         engine
             .render(template, &tera_context)

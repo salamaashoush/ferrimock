@@ -256,11 +256,11 @@ pub(super) fn generate_prev_field(
         PaginationType::Offset => {
             if static_params.is_empty() {
                 format!(
-                    "  \"{prev_field}\": {{% if offset > 0 %}}\"{{{{ fake_api_url() }}}}{base_path}?offset={{{{ [0, offset - limit] | max }}}}&limit={{{{ limit }}}}\"{{% else %}}null{{% endif %}}"
+                    "  \"{prev_field}\": {{% if offset > 0 %}}\"{{{{ fake_api_url() }}}}{base_path}?offset={{% if offset > limit %}}{{{{ offset - limit }}}}{{% else %}}0{{% endif %}}&limit={{{{ limit }}}}\"{{% else %}}null{{% endif %}}"
                 )
             } else {
                 format!(
-                    "  \"{prev_field}\": {{% if offset > 0 %}}\"{{{{ fake_api_url() }}}}{base_path}?{static_params}&offset={{{{ [0, offset - limit] | max }}}}&limit={{{{ limit }}}}\"{{% else %}}null{{% endif %}}"
+                    "  \"{prev_field}\": {{% if offset > 0 %}}\"{{{{ fake_api_url() }}}}{base_path}?{static_params}&offset={{% if offset > limit %}}{{{{ offset - limit }}}}{{% else %}}0{{% endif %}}&limit={{{{ limit }}}}\"{{% else %}}null{{% endif %}}"
                 )
             }
         }

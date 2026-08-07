@@ -173,14 +173,7 @@ pub fn create(input: CreateInput) -> Result<CreateResult, crate::FerrimockError>
     let content = if input.format == "json" {
         serde_json::to_string_pretty(&collection)?
     } else {
-        // Round-trip through JSON text: serializing serde_json numbers
-        // directly with serde_yaml emits arbitrary-precision private
-        // maps when a dependency force-enables that feature (the
-        // rolldown bundler does, workspace-wide).
-        let json = serde_json::to_string(&collection)?;
-        let value: serde_yaml::Value = serde_yaml::from_str(&json)
-            .map_err(|e| crate::mp_err!("mock serialization failed: {e}"))?;
-        serde_yaml::to_string(&value)?
+        crate::config::json_yaml::to_yaml(&collection)?
     };
 
     Ok(CreateResult { mock_id, content })

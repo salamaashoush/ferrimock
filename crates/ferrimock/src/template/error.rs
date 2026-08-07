@@ -104,13 +104,28 @@ impl TemplateError {
         // Tera errors often include line numbers
         let (line, column) = extract_line_column(&message);
 
-        // Determine error type
-        let error_type = if message.contains("parse") || message.contains("syntax") {
-            "parse"
-        } else if message.contains("function") || message.contains("filter") {
-            "function"
-        } else {
-            "render"
+        // Tera 2 carries a typed kind, so classify from that rather than from
+        // the rendered message. Unknown filters/functions are reported as
+        // syntax errors, so those still need the message to separate out.
+        let error_type = match error.kind() {
+            tera::ErrorKind::SyntaxError(_) => {
+                if message.contains("Unknown filter")
+                    || message.contains("Unknown function")
+                    || message.contains("Unknown test")
+                {
+                    "function"
+                } else {
+                    "parse"
+                }
+            }
+            tera::ErrorKind::Msg(_)
+                if message.contains("function")
+                    || message.contains("filter")
+                    || message.contains("test") =>
+            {
+                "function"
+            }
+            _ => "render",
         };
 
         // Generate suggestions based on error

@@ -77,7 +77,7 @@ impl MockRecorderConsolidationExt for MockRecorder {
         // Write the consolidated mocks back to the file
         let content = match format {
             RecordingFormat::Json => serde_json::to_string_pretty(&consolidated)?,
-            RecordingFormat::Yaml => serde_yaml::to_string(&consolidated)
+            RecordingFormat::Yaml => serde_yaml_ng::to_string(&consolidated)
                 .map_err(|e| crate::mp_err!("YAML serialization error: {e}"))?,
             RecordingFormat::Har => crate::mp_bail!("HAR format already handled above"),
         };

@@ -192,11 +192,11 @@ fn format_json(content: &str) -> Result<String, crate::FerrimockError> {
 /// Format a YAML mock file (comment preservation deferred).
 fn format_yaml(content: &str) -> Result<String, crate::FerrimockError> {
     let config: MockCollectionConfig =
-        serde_yaml::from_str(content).map_err(|e| crate::mp_err!("YAML parse error: {e}"))?;
-    let structural =
-        serde_yaml::to_string(&config).map_err(|e| crate::mp_err!("YAML serialize error: {e}"))?;
+        serde_yaml_ng::from_str(content).map_err(|e| crate::mp_err!("YAML parse error: {e}"))?;
+    let structural = serde_yaml_ng::to_string(&config)
+        .map_err(|e| crate::mp_err!("YAML serialize error: {e}"))?;
 
-    let mut config_mut: MockCollectionConfig = serde_yaml::from_str(&structural)
+    let mut config_mut: MockCollectionConfig = serde_yaml_ng::from_str(&structural)
         .map_err(|e| crate::mp_err!("YAML re-parse error: {e}"))?;
     let mut changed = false;
     for mock in &mut config_mut.mocks {
@@ -219,7 +219,7 @@ fn format_yaml(content: &str) -> Result<String, crate::FerrimockError> {
     }
 
     let serialized = if changed {
-        serde_yaml::to_string(&config_mut)
+        serde_yaml_ng::to_string(&config_mut)
             .map_err(|e| crate::mp_err!("YAML re-serialize error: {e}"))?
     } else {
         structural
@@ -264,33 +264,32 @@ fn expand_json_body_values(value: &mut serde_json::Value) {
 }
 
 fn expand_yaml_body_strings(yaml_str: &str) -> Result<String, crate::FerrimockError> {
-    let mut value: serde_yaml::Value = serde_yaml::from_str(yaml_str)
+    // The document is manipulated as JSON (`preserve_order` keeps key order)
+    // and emitted through `json_yaml`, so no YAML DOM type is needed.
+    let mut value: serde_json::Value = serde_yaml_ng::from_str(yaml_str)
         .map_err(|e| crate::mp_err!("YAML re-parse for body expansion: {e}"))?;
     expand_yaml_body_values(&mut value);
     sort_yaml_keys(&mut value);
-    serde_yaml::to_string(&value)
-        .map_err(|e| crate::mp_err!("YAML re-serialize after body expansion: {e}"))
+    crate::config::json_yaml::to_yaml(&value)
 }
 
-fn expand_yaml_body_values(value: &mut serde_yaml::Value) {
+fn expand_yaml_body_values(value: &mut serde_json::Value) {
     match value {
-        serde_yaml::Value::Mapping(map) => {
-            let body_key = serde_yaml::Value::String("body".to_string());
-            if let Some(body_val) = map.get_mut(&body_key)
+        serde_json::Value::Object(map) => {
+            if let Some(body_val) = map.get_mut("body")
                 && let Some(body_str) = body_val.as_str()
                 && !body_str.contains("{{")
                 && !body_str.contains("{%")
                 && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body_str)
                 && (parsed.is_object() || parsed.is_array())
-                && let Ok(yaml_val) = serde_yaml::to_value(&parsed)
             {
-                *body_val = yaml_val;
+                *body_val = parsed;
             }
             for (_, val) in map.iter_mut() {
                 expand_yaml_body_values(val);
             }
         }
-        serde_yaml::Value::Sequence(seq) => {
+        serde_json::Value::Array(seq) => {
             for item in seq {
                 expand_yaml_body_values(item);
             }
@@ -344,28 +343,26 @@ fn sort_json_keys_inner(value: &mut serde_json::Value, ctx: JsonContext) {
     }
 }
 
-fn sort_yaml_keys(value: &mut serde_yaml::Value) {
+fn sort_yaml_keys(value: &mut serde_json::Value) {
     sort_yaml_keys_inner(value, JsonContext::TopLevel);
 }
 
-fn sort_yaml_keys_inner(value: &mut serde_yaml::Value, ctx: JsonContext) {
+fn sort_yaml_keys_inner(value: &mut serde_json::Value, ctx: JsonContext) {
     match value {
-        serde_yaml::Value::Mapping(map) => {
+        serde_json::Value::Object(map) => {
             for (key, val) in map.iter_mut() {
-                let child_ctx = child_context(ctx, key.as_str().unwrap_or(""));
+                let child_ctx = child_context(ctx, key);
                 sort_yaml_keys_inner(val, child_ctx);
             }
             let mut sorted: Vec<_> = std::mem::take(map).into_iter().collect();
             sorted.sort_by(|a, b| {
-                let a_str = a.0.as_str().unwrap_or("");
-                let b_str = b.0.as_str().unwrap_or("");
-                json_key_order(a_str, ctx)
-                    .cmp(&json_key_order(b_str, ctx))
-                    .then_with(|| a_str.cmp(b_str))
+                json_key_order(&a.0, ctx)
+                    .cmp(&json_key_order(&b.0, ctx))
+                    .then_with(|| a.0.cmp(&b.0))
             });
             *map = sorted.into_iter().collect();
         }
-        serde_yaml::Value::Sequence(seq) => {
+        serde_json::Value::Array(seq) => {
             let child_ctx = match ctx {
                 JsonContext::TopLevel => JsonContext::Mock,
                 _ => ctx,

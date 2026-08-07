@@ -649,8 +649,8 @@ async fn test_yaml_serialization_format() {
     println!("=== Generated YAML ===\n{yaml_content}\n=== End YAML ===");
 
     // Verify it's valid YAML and can be parsed back
-    let parsed: ferrimock::config::MockCollectionConfig =
-        serde_yaml::from_str(&yaml_content).expect("Generated YAML should be valid and parseable");
+    let parsed: ferrimock::config::MockCollectionConfig = serde_yaml_ng::from_str(&yaml_content)
+        .expect("Generated YAML should be valid and parseable");
 
     assert!(parsed.name.is_some(), "Should have collection name");
     assert_eq!(parsed.mocks.len(), 1, "Should have 1 mock");
@@ -775,7 +775,7 @@ async fn test_yaml_format_recording() {
     );
 
     // Verify YAML can be parsed
-    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+    let parsed: serde_json::Value = serde_yaml_ng::from_str(&content).unwrap();
     assert!(
         parsed.get("name").is_some(),
         "Parsed YAML should have name field"
@@ -847,7 +847,7 @@ async fn test_yaml_streaming_format() {
 
     // Verify it can be parsed back
     let parsed: ferrimock::config::MockCollectionConfig =
-        serde_yaml::from_str(&content).expect("Streamed YAML should be valid and parseable");
+        serde_yaml_ng::from_str(&content).expect("Streamed YAML should be valid and parseable");
     assert_eq!(parsed.mocks.len(), 3, "Should parse 3 mocks");
 }
 
@@ -1140,7 +1140,7 @@ async fn test_yaml_streaming_format_multiple() {
     );
 
     // Verify YAML can be parsed
-    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+    let parsed: serde_json::Value = serde_yaml_ng::from_str(&content).unwrap();
     assert!(
         parsed.get("name").is_some(),
         "Parsed YAML should have name field"
@@ -1150,7 +1150,7 @@ async fn test_yaml_streaming_format_multiple() {
         "Parsed YAML should have mocks array"
     );
 
-    let mocks = parsed["mocks"].as_sequence().unwrap();
+    let mocks = parsed["mocks"].as_array().unwrap();
     assert_eq!(mocks.len(), 3, "Should have 3 mocks in YAML");
 
     // Verify all mocks have required fields (using match_config and response_config)
@@ -2925,11 +2925,11 @@ async fn test_yaml_with_complex_data() {
     let file_path = recorder.save(RecordingFormat::Yaml).await.unwrap();
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
 
-    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+    let parsed: serde_json::Value = serde_yaml_ng::from_str(&content).unwrap();
     assert!(parsed.get("name").is_some());
     assert!(parsed.get("mocks").is_some());
 
-    let mocks = parsed["mocks"].as_sequence().unwrap();
+    let mocks = parsed["mocks"].as_array().unwrap();
     assert_eq!(mocks.len(), 1);
 }
 
@@ -2964,7 +2964,7 @@ async fn test_yaml_with_multiline_body() {
     assert!(file_path.exists());
 
     let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    let parsed: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+    let parsed: serde_json::Value = serde_yaml_ng::from_str(&content).unwrap();
     assert!(parsed.get("name").is_some());
 }
 
@@ -3005,7 +3005,7 @@ async fn test_finalize_and_consolidate_with_yaml() -> Result<()> {
     assert_eq!(stats.original_count, 3);
 
     let content = tokio::fs::read_to_string(&file_path).await?;
-    let _collection: ferrimock::config::MockCollectionConfig = serde_yaml::from_str(&content)?;
+    let _collection: ferrimock::config::MockCollectionConfig = serde_yaml_ng::from_str(&content)?;
 
     Ok(())
 }
@@ -3045,7 +3045,7 @@ async fn test_finalize_and_consolidate_with_yaml_items() -> Result<()> {
 
     assert_eq!(stats.original_count, 3);
     let content = tokio::fs::read_to_string(&file_path).await?;
-    let _collection: ferrimock::config::MockCollectionConfig = serde_yaml::from_str(&content)?;
+    let _collection: ferrimock::config::MockCollectionConfig = serde_yaml_ng::from_str(&content)?;
 
     Ok(())
 }

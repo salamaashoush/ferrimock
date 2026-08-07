@@ -796,7 +796,7 @@ body:
 "#;
 
         let config: ResolvedResponse =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         assert_eq!(config.status, 200);
     }
 
@@ -812,7 +812,7 @@ headers:
 "#;
 
         let config: ResolvedResponse =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         let generator = config
             .into_response_generator_with_dir(None)
             .await
@@ -844,7 +844,7 @@ body:
 "#;
 
         let config: ResolvedResponse =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         let result = config.into_response_generator_with_dir(None).await;
 
         assert!(result.is_ok());
@@ -862,7 +862,7 @@ json:
 "#;
 
         let config: ResponseConfig =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         let resolved_response = config.into_resolved_response();
 
         assert_eq!(
@@ -881,7 +881,7 @@ json: '{"message": "hello"}'
 "#;
 
         let config: ResponseConfig =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         let resolved_response = config.into_resolved_response();
 
         assert_eq!(
@@ -903,7 +903,7 @@ json:
 "#;
 
         let config: ResponseConfig =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         let resolved_response = config.into_resolved_response();
 
         assert_eq!(
@@ -922,7 +922,7 @@ body: '{"message": "hello"}'
 "#;
 
         let config: ResponseConfig =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         let resolved_response = config.into_resolved_response();
 
         assert!(

@@ -35,7 +35,6 @@ axum = { workspace = true }
 # Utilities
 bytes = { workspace = true }
 urlencoding = { workspace = true }
-anyhow = { workspace = true }
 rustc-hash = { workspace = true }
 regex = { workspace = true }
 smallvec = { workspace = true }

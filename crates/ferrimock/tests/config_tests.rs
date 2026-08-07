@@ -28,7 +28,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     assert_eq!(config.name, None);
     assert_eq!(config.description, None);
     assert!(config.enabled); // default_enabled
@@ -47,7 +47,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     assert!(!config.enabled);
 }
 
@@ -59,7 +59,7 @@ description: "No mocks"
 enabled: true
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     assert_eq!(config.mocks.len(), 0);
     assert_eq!(config.name, Some("Empty Collection".to_string()));
 }
@@ -415,7 +415,7 @@ response:
   status: 200
 "#;
 
-    let config: MockConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockConfig = serde_yaml_ng::from_str(yaml).unwrap();
     assert_eq!(config.scope, Some("test-suite".into()));
     assert_eq!(config.priority, 200);
     assert!(!config.enabled);
@@ -435,7 +435,7 @@ mocks:
       status: 201
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.method, Some("POST".to_string()));
     assert_eq!(match_config.url, Some("/api/users".to_string()));
@@ -451,7 +451,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.method, Some("GET".to_string()));
     assert_eq!(match_config.url, Some("/path/with/spaces".to_string()));
@@ -467,7 +467,7 @@ mocks:
       status: 200
 "#;
 
-    let result = serde_yaml::from_str::<MockCollectionConfig>(yaml);
+    let result = serde_yaml_ng::from_str::<MockCollectionConfig>(yaml);
     assert!(result.is_err());
 }
 
@@ -481,7 +481,7 @@ mocks:
       status: 200
 "#;
 
-    let result = serde_yaml::from_str::<MockCollectionConfig>(yaml);
+    let result = serde_yaml_ng::from_str::<MockCollectionConfig>(yaml);
     assert!(result.is_err());
     assert!(
         result
@@ -502,7 +502,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert!(match_config.methods.contains(&"GET".to_string()));
     assert!(match_config.urls.contains(&"/api/health".to_string()));
@@ -521,7 +521,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.methods.len(), 3);
     assert!(match_config.methods.contains(&"GET".to_string()));
@@ -549,7 +549,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.methods.len(), 9);
 }
@@ -565,7 +565,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert!(match_config.methods.contains(&"get".to_string()));
 }
@@ -583,7 +583,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.method, Some("GET".to_string()));
     assert_eq!(match_config.methods.len(), 2);
@@ -601,7 +601,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.url, Some("/test1".to_string()));
     assert_eq!(match_config.urls.len(), 2);
@@ -621,7 +621,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.headers.len(), 2);
 }
@@ -640,7 +640,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.query.len(), 2);
     assert_eq!(match_config.query.get("page"), Some(&"1".to_string()));
@@ -659,7 +659,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.body.len(), 1);
 }
@@ -672,7 +672,7 @@ fn test_match_config_serialization() {
         ..Default::default()
     };
 
-    let serialized = serde_yaml::to_string(&match_config).unwrap();
+    let serialized = serde_yaml_ng::to_string(&match_config).unwrap();
     assert!(serialized.contains("method"));
     assert!(serialized.contains("url"));
 }
@@ -691,7 +691,7 @@ mocks:
     return: "{{ request.body }}"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Template(s) => assert!(s.contains("request.body")),
@@ -710,7 +710,7 @@ mocks:
       "200": "OK"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::StatusShortcuts(shortcuts) => {
@@ -734,7 +734,7 @@ mocks:
       "404": "Not Found"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::StatusShortcuts(shortcuts) => {
@@ -759,7 +759,7 @@ mocks:
       "599": "Network error"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::StatusShortcuts(shortcuts) => {
@@ -782,7 +782,7 @@ mocks:
       status: 201
 "#;
 
-    let result = serde_yaml::from_str::<MockCollectionConfig>(yaml);
+    let result = serde_yaml_ng::from_str::<MockCollectionConfig>(yaml);
     assert!(result.is_err());
     assert!(
         result
@@ -804,7 +804,7 @@ mocks:
       body: "test"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { status, body, .. } => {
@@ -829,7 +829,7 @@ mocks:
         count: 42
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { json, .. } => {
@@ -856,7 +856,7 @@ mocks:
         x-custom: "value"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { headers, .. } => {
@@ -882,7 +882,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     assert_eq!(config.mocks[0].delay.as_deref(), Some("100ms"));
 }
 
@@ -970,7 +970,7 @@ fn test_return_serialization() {
         json: Box::new(serde_json::Value::Null),
     };
 
-    let serialized = serde_yaml::to_string(&config).unwrap();
+    let serialized = serde_yaml_ng::to_string(&config).unwrap();
     assert!(serialized.contains("status"));
     assert!(serialized.contains("body"));
 }
@@ -990,7 +990,7 @@ mocks:
       file: "response.json"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { file, .. } => {
@@ -1011,7 +1011,7 @@ mocks:
       template_file: "response.tpl"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { template_file, .. } => {
@@ -1032,7 +1032,7 @@ mocks:
       template: "{{ request.body }}"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { template, .. } => {
@@ -1053,7 +1053,7 @@ mocks:
       template: "{% if user %}hello{% endif %}"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { template, .. } => {
@@ -1074,7 +1074,7 @@ mocks:
       json: "{{ dynamic_json }}"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { json, .. } => {
@@ -1098,7 +1098,7 @@ mocks:
           count: 42
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let response_config = config.mocks[0].response_config.as_ref().unwrap();
     match response_config {
         ReturnConfig::Structured { json, .. } => {
@@ -1125,7 +1125,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = mock_def[0].request.body_matcher.as_ref().unwrap();
     assert!(matcher.matches(b"this text is here", None));
@@ -1145,7 +1145,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = mock_def[0].request.body_matcher.as_ref().unwrap();
     // Should match first element
@@ -1165,7 +1165,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = mock_def[0].request.body_matcher.as_ref().unwrap();
     assert!(matcher.matches(b"number 123 here", None));
@@ -1185,7 +1185,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = mock_def[0].request.body_matcher.as_ref().unwrap();
     assert!(matcher.matches(b"number 456", None));
@@ -1204,7 +1204,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = mock_def[0].request.body_matcher.as_ref().unwrap();
     assert!(matcher.matches(b"this is important", None));
@@ -1223,7 +1223,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = mock_def[0].request.body_matcher.as_ref().unwrap();
     assert!(matcher.matches(br#"{"user": {"id": 42}}"#, None));
@@ -1246,7 +1246,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = &mock_def[0].request.header_matchers[0];
 
@@ -1271,7 +1271,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = &mock_def[0].request.header_matchers[0];
 
@@ -1296,7 +1296,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = &mock_def[0].request.header_matchers[0];
 
@@ -1321,7 +1321,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     let matcher = &mock_def[0].request.header_matchers[0];
 
@@ -1339,7 +1339,7 @@ fn test_url_pattern_express_optional_param() {
 url_patterns: ["/api/users/:id?"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1350,7 +1350,7 @@ fn test_url_pattern_express_multiple_params() {
 url_patterns: ["/users/:user_id/posts/:post_id/comments/:comment_id"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1361,7 +1361,7 @@ fn test_url_pattern_express_with_wildcard() {
 url_patterns: ["/api/*/users/:id"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1372,7 +1372,7 @@ fn test_url_pattern_glob_double_star() {
 url_patterns: ["/api/**/files"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1383,7 +1383,7 @@ fn test_url_pattern_glob_single_star() {
 url_patterns: ["/api/*/data"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1394,7 +1394,7 @@ fn test_url_pattern_regex_digit() {
 url_patterns: ["^/api/v\\d+/users$"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1405,7 +1405,7 @@ fn test_url_pattern_regex_word() {
 url_patterns: ["/api/\\w+"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1416,7 +1416,7 @@ fn test_url_pattern_regex_whitespace() {
 url_patterns: ["/api/\\s+"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1427,7 +1427,7 @@ fn test_url_pattern_regex_bracket() {
 url_patterns: ["/api/[a-z]+"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1438,7 +1438,7 @@ fn test_url_pattern_regex_paren() {
 url_patterns: ["/api/(users|posts)"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1449,7 +1449,7 @@ fn test_url_pattern_regex_plus() {
 url_patterns: ["/api/.+"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1460,7 +1460,7 @@ fn test_url_pattern_regex_star() {
 url_patterns: ["/api/.*"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1471,7 +1471,7 @@ fn test_url_pattern_exact_simple() {
 url_patterns: ["/api/users"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let matcher = config.into_request_matcher().unwrap();
     assert_eq!(matcher.url_patterns.len(), 1);
 }
@@ -1492,7 +1492,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     assert_eq!(
         mock_def[0].response.delay,
@@ -1512,7 +1512,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     assert_eq!(
         mock_def[0].response.delay,
@@ -1532,7 +1532,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     assert_eq!(
         mock_def[0].response.delay,
@@ -1552,7 +1552,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock_def = config.into_mock_definitions().await.unwrap();
     assert_eq!(
         mock_def[0].response.delay,
@@ -1572,7 +1572,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
 }
@@ -1589,7 +1589,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
 }
@@ -1606,7 +1606,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
 }
@@ -1623,7 +1623,7 @@ methods: ["CUSTOM"]
 url_patterns: ["/test"]
 "#;
 
-    let config: RequestConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: RequestConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_request_matcher();
     // Custom methods are allowed, so this should succeed
     assert!(result.is_ok());
@@ -1692,7 +1692,7 @@ mocks:
       status: 0
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
     assert!(
@@ -1714,7 +1714,7 @@ mocks:
       status: 1000
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
     assert!(
@@ -1742,7 +1742,7 @@ mocks:
       template: "{{ unclosed"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     // Config parsing succeeds - the template error will be caught by MockValidator
     assert!(result.is_ok());
@@ -1759,7 +1759,7 @@ mocks:
       template_file: "nonexistent.tpl"
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let result = config.into_mock_definitions().await;
     assert!(result.is_err());
     assert!(
@@ -1790,7 +1790,7 @@ mocks:
         template_path.display().to_string().replace('\\', "/")
     );
 
-    let config: MockCollectionConfig = serde_yaml::from_str(&yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(&yaml).unwrap();
     let result = config.into_mock_definitions().await;
     // Config parsing succeeds - the template error will be caught by MockValidator
     assert!(result.is_ok());
@@ -1920,7 +1920,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     assert_eq!(config.mocks.len(), 1);
 
     let mock = &config.mocks[0];
@@ -1965,7 +1965,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock = &config.mocks[0];
     let request = mock
         .request
@@ -2006,7 +2006,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock = &config.mocks[0];
     let request = mock
         .request
@@ -2032,7 +2032,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock = &config.mocks[0];
     let request = mock
         .request
@@ -2060,7 +2060,7 @@ mocks:
       status: 200
 "#;
 
-    let config: MockCollectionConfig = serde_yaml::from_str(yaml).unwrap();
+    let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let mock = &config.mocks[0];
     let request = mock
         .request

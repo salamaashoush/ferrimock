@@ -551,7 +551,7 @@ headers:
 "#;
 
         let config: RequestConfig =
-            serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         let matcher = config
             .into_request_matcher()
             .expect("Failed to convert to request matcher");

@@ -10,6 +10,7 @@
 //! - `engine` - Core template engine with LRU caching
 //! - `renderer` - Public API for rendering and validating templates
 //! - `functions` - Registration of custom Tera functions
+//! - `fake_data` - Engine-neutral fake data generator registry
 //! - `filters` - Custom Tera filters
 //! - `store` - Persistence store and Tera functions
 //! - `graphql_helpers` - GraphQL-specific template helpers
@@ -22,8 +23,9 @@ pub mod error;
 mod renderer;
 
 // Private modules
+mod convert;
 mod engine;
-mod fake_data;
+pub mod fake_data;
 mod filters;
 pub(crate) mod functions;
 pub mod graphql_helpers;

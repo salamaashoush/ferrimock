@@ -911,7 +911,9 @@ mod tests {
         assert!(template.contains("offset={{ offset + limit }}"));
 
         // Verify previous URL uses max filter to prevent negative offset
-        assert!(template.contains("[0, offset - limit] | max"));
+        assert!(
+            template.contains("{% if offset > limit %}{{ offset - limit }}{% else %}0{% endif %}")
+        );
     }
 
     #[test]

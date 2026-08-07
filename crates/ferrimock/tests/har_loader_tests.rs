@@ -1846,12 +1846,12 @@ async fn test_websocket_messages_become_a_ws_mock() {
 
     // Pre-client server frame replays on connect.
     assert_eq!(ws.on_connect.len(), 1);
-    let yaml = serde_yaml::to_string(&ws.on_connect).unwrap();
+    let yaml = serde_yaml_ng::to_string(&ws.on_connect).unwrap();
     assert!(yaml.contains("welcome"), "{yaml}");
 
     // Text pairing: exact ping -> delay + pong.
     assert_eq!(ws.on_message.len(), 2);
-    let rules = serde_yaml::to_string(&ws.on_message).unwrap();
+    let rules = serde_yaml_ng::to_string(&ws.on_message).unwrap();
     assert!(rules.contains("exact: ping"), "{rules}");
     assert!(rules.contains("delay: 120ms"), "{rules}");
     assert!(rules.contains("send: pong"), "{rules}");
@@ -1893,7 +1893,7 @@ async fn test_ambiguous_websocket_pairing_folds_into_connect_sequence() {
         ws.on_message.is_empty(),
         "ambiguous pairing must not build rules"
     );
-    let yaml = serde_yaml::to_string(&ws.on_connect).unwrap();
+    let yaml = serde_yaml_ng::to_string(&ws.on_connect).unwrap();
     assert!(yaml.contains("pong-1"), "{yaml}");
     assert!(yaml.contains("pong-2"), "{yaml}");
     // Inter-frame delay between the two server frames (1751364001.1 - 1751364000.1).

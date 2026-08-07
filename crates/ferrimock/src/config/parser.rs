@@ -47,8 +47,8 @@ impl MockCollectionConfig {
     }
 
     /// Parse from YAML string
-    pub fn from_yaml(content: &str) -> Result<Self, serde_yaml::Error> {
-        serde_yaml::from_str(content)
+    pub fn from_yaml(content: &str) -> Result<Self, serde_yaml_ng::Error> {
+        serde_yaml_ng::from_str(content)
     }
 
     /// Parse from file (supports JSON, YAML, HAR based on extension)
@@ -588,7 +588,8 @@ response:
   body: "{}"
 "#;
 
-        let config: MockConfig = serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+        let config: MockConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         assert_eq!(config.priority, 100);
     }
 
@@ -602,7 +603,8 @@ response:
   body: "{}"
 "#;
 
-        let config: MockConfig = serde_yaml::from_str(yaml).expect("Failed to parse YAML config");
+        let config: MockConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
         assert!(config.enabled);
     }
 
@@ -911,7 +913,7 @@ mocks:
       body: "{}"
 "#;
 
-        let result = serde_yaml::from_str::<MockCollectionConfig>(yaml);
+        let result = serde_yaml_ng::from_str::<MockCollectionConfig>(yaml);
         assert!(result.is_err());
     }
 
@@ -925,7 +927,7 @@ mocks:
       body: "{}"
 "#;
 
-        let result = serde_yaml::from_str::<MockCollectionConfig>(yaml);
+        let result = serde_yaml_ng::from_str::<MockCollectionConfig>(yaml);
         assert!(result.is_err());
     }
 

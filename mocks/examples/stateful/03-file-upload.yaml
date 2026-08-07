@@ -201,7 +201,7 @@ mocks:
       {
         "sessions": [
           {%- for key in all_keys -%}
-          {%- if key | startswith(pat="upload.") and key | endswith(pat=".status") -%}
+          {%- if key is starting_with(pat="upload.") and key is ending_with(pat=".status") -%}
           {%- set key_parts = key | split(pat=".") -%}
           {%- set upload_id = key_parts | nth(n=1) -%}
           {%- set status = store_get(key=key) | default(value="unknown") -%}

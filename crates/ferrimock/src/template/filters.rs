@@ -8,13 +8,8 @@
 //! cargo run --example verify_tera_filters
 //! ```
 
-// Tera library callbacks require std::collections::HashMap - cannot use FxHashMap
-#![allow(clippy::disallowed_types)]
-
 use base64::Engine;
-use serde_json::Value;
-use std::collections::HashMap;
-use tera::{Result as TeraResult, Value as TeraValue, to_value, try_get_value};
+use tera::{Kwargs, State, TeraResult, Value as TeraValue};
 
 // ============================================================================
 // BASE64 FILTERS
@@ -26,10 +21,8 @@ use tera::{Result as TeraResult, Value as TeraValue, to_value, try_get_value};
 /// ```text
 /// {{ "Hello World" | base64_encode }}
 /// ```
-pub fn b64encode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraResult<TeraValue> {
-    let s = try_get_value!("b64encode", "value", String, value);
-    let encoded = base64::engine::general_purpose::STANDARD.encode(s.as_bytes());
-    Ok(to_value(encoded)?)
+pub fn b64encode(value: &str, _kwargs: Kwargs, _state: &State<'_>) -> String {
+    base64::engine::general_purpose::STANDARD.encode(value.as_bytes())
 }
 
 /// Base64 decode a string
@@ -38,14 +31,11 @@ pub fn b64encode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraR
 /// ```text
 /// {{ "SGVsbG8gV29ybGQ=" | base64_decode }}
 /// ```
-pub fn b64decode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraResult<TeraValue> {
-    let s = try_get_value!("b64decode", "value", String, value);
+pub fn b64decode(value: &str, _kwargs: Kwargs, _state: &State<'_>) -> TeraResult<String> {
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(s.as_bytes())
-        .map_err(|e| tera::Error::msg(format!("Base64 decode error: {e}")))?;
-    let result = String::from_utf8(decoded)
-        .map_err(|e| tera::Error::msg(format!("UTF-8 decode error: {e}")))?;
-    Ok(to_value(result)?)
+        .decode(value.as_bytes())
+        .map_err(|e| tera::Error::message(format!("Base64 decode error: {e}")))?;
+    String::from_utf8(decoded).map_err(|e| tera::Error::message(format!("UTF-8 decode error: {e}")))
 }
 
 /// URL-safe base64 encode
@@ -54,13 +44,8 @@ pub fn b64decode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraR
 /// ```text
 /// {{ "Hello World" | base64_encode_urlsafe }}
 /// ```
-pub fn b64encode_urlsafe(
-    value: &TeraValue,
-    _args: &HashMap<String, TeraValue>,
-) -> TeraResult<TeraValue> {
-    let s = try_get_value!("b64encode_urlsafe", "value", String, value);
-    let encoded = base64::engine::general_purpose::URL_SAFE.encode(s.as_bytes());
-    Ok(to_value(encoded)?)
+pub fn b64encode_urlsafe(value: &str, _kwargs: Kwargs, _state: &State<'_>) -> String {
+    base64::engine::general_purpose::URL_SAFE.encode(value.as_bytes())
 }
 
 /// URL-safe base64 decode
@@ -69,17 +54,11 @@ pub fn b64encode_urlsafe(
 /// ```text
 /// {{ "SGVsbG8gV29ybGQ=" | base64_decode_urlsafe }}
 /// ```
-pub fn b64decode_urlsafe(
-    value: &TeraValue,
-    _args: &HashMap<String, TeraValue>,
-) -> TeraResult<TeraValue> {
-    let s = try_get_value!("b64decode_urlsafe", "value", String, value);
+pub fn b64decode_urlsafe(value: &str, _kwargs: Kwargs, _state: &State<'_>) -> TeraResult<String> {
     let decoded = base64::engine::general_purpose::URL_SAFE
-        .decode(s.as_bytes())
-        .map_err(|e| tera::Error::msg(format!("Base64 decode error: {e}")))?;
-    let result = String::from_utf8(decoded)
-        .map_err(|e| tera::Error::msg(format!("UTF-8 decode error: {e}")))?;
-    Ok(to_value(result)?)
+        .decode(value.as_bytes())
+        .map_err(|e| tera::Error::message(format!("Base64 decode error: {e}")))?;
+    String::from_utf8(decoded).map_err(|e| tera::Error::message(format!("UTF-8 decode error: {e}")))
 }
 
 // ============================================================================
@@ -96,11 +75,10 @@ pub fn b64decode_urlsafe(
 /// {% set data = '{"name": "John"}' | json_decode %}
 /// {{ data.name }}
 /// ```
-pub fn json_parse(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraResult<TeraValue> {
-    let s = try_get_value!("json_parse", "value", String, value);
-    let parsed: Value =
-        serde_json::from_str(&s).map_err(|e| tera::Error::msg(format!("JSON parse error: {e}")))?;
-    Ok(to_value(parsed)?)
+pub fn json_parse(value: &str, _kwargs: Kwargs, _state: &State<'_>) -> TeraResult<TeraValue> {
+    let parsed: serde_json::Value = serde_json::from_str(value)
+        .map_err(|e| tera::Error::message(format!("JSON parse error: {e}")))?;
+    Ok(super::convert::to_tera(parsed))
 }
 
 // ============================================================================
@@ -115,11 +93,10 @@ pub fn json_parse(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> Tera
 /// ```text
 /// {{ "Hello%20World" | urldecode }}
 /// ```
-pub fn urldecode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraResult<TeraValue> {
-    let s = try_get_value!("urldecode", "value", String, value);
-    let decoded =
-        urlencoding::decode(&s).map_err(|e| tera::Error::msg(format!("URL decode error: {e}")))?;
-    Ok(to_value(decoded.to_string())?)
+pub fn urldecode(value: &str, _kwargs: Kwargs, _state: &State<'_>) -> TeraResult<String> {
+    urlencoding::decode(value)
+        .map(std::borrow::Cow::into_owned)
+        .map_err(|e| tera::Error::message(format!("URL decode error: {e}")))
 }
 
 // ============================================================================
@@ -133,25 +110,23 @@ pub fn urldecode(value: &TeraValue, _args: &HashMap<String, TeraValue>) -> TeraR
 /// {{ ["option1", "option2", "option3"] | random_choice }}
 /// ```
 pub fn random_choice(
-    value: &TeraValue,
-    _args: &HashMap<String, TeraValue>,
+    value: &[TeraValue],
+    _kwargs: Kwargs,
+    _state: &State<'_>,
 ) -> TeraResult<TeraValue> {
     use rand::RngExt;
 
-    // Extract array from input value
-    let values = value
-        .as_array()
-        .ok_or_else(|| tera::Error::msg("random_choice filter requires an array input"))?;
-
-    if values.is_empty() {
-        return Err(tera::Error::msg(
+    if value.is_empty() {
+        return Err(tera::Error::message(
             "random_choice filter requires a non-empty array",
         ));
     }
 
-    // Select random element
-    let index = rand::rng().random_range(0..values.len());
-    Ok(values.get(index).cloned().unwrap_or(Value::Null))
+    let index = rand::rng().random_range(0..value.len());
+    value
+        .get(index)
+        .cloned()
+        .ok_or_else(|| tera::Error::message("random_choice failed to select an element"))
 }
 
 // ============================================================================
@@ -185,55 +160,47 @@ pub fn register_all_filters(tera: &mut tera::Tera) {
 mod tests {
     use super::*;
 
+    /// Filters take `&State<'_>`, which only the VM can build, so exercise them
+    /// through a rendered template instead of calling them directly.
+    fn render(template: &str) -> String {
+        let mut tera = tera::Tera::default();
+        register_all_filters(&mut tera);
+        tera.add_raw_template("t", template)
+            .expect("template should compile");
+        tera.render("t", &tera::Context::new())
+            .expect("template should render")
+    }
+
     #[test]
     fn test_b64encode() {
-        let value = to_value("Hello World").expect("Failed to convert string to Tera value");
-        let result = b64encode(&value, &HashMap::default()).expect("Failed to base64 encode value");
         assert_eq!(
-            result.as_str().expect("Result should be a string"),
+            render(r#"{{ "Hello World" | base64_encode }}"#),
             "SGVsbG8gV29ybGQ="
         );
     }
 
     #[test]
     fn test_b64decode() {
-        let value = to_value("SGVsbG8gV29ybGQ=").expect("Failed to convert string to Tera value");
-        let result = b64decode(&value, &HashMap::default()).expect("Failed to base64 decode value");
         assert_eq!(
-            result.as_str().expect("Result should be a string"),
+            render(r#"{{ "SGVsbG8gV29ybGQ=" | base64_decode }}"#),
             "Hello World"
         );
     }
 
     #[test]
     fn test_json_parse() {
-        let value = to_value(r#"{"name":"John","age":30}"#)
-            .expect("Failed to convert JSON string to Tera value");
-        let result = json_parse(&value, &HashMap::default()).expect("Failed to parse JSON");
         assert_eq!(
-            result
-                .get("name")
-                .expect("name field should exist")
-                .as_str()
-                .expect("name should be a string"),
-            "John"
-        );
-        assert_eq!(
-            result
-                .get("age")
-                .expect("age field should exist")
-                .as_i64()
-                .expect("age should be an integer"),
-            30
+            render(
+                r#"{% set d = '{"name":"John","age":30}' | json_decode %}{{ d.name }}:{{ d.age }}"#
+            ),
+            "John:30"
         );
     }
 
     #[test]
     fn test_urldecode() {
-        let value = to_value("Hello%20World").expect("Failed to convert string to Tera value");
-        let result = urldecode(&value, &HashMap::default()).expect("Failed to URL decode value");
         assert_eq!(
-            result.as_str().expect("Result should be a string"),
+            render(r#"{{ "Hello%20World" | urldecode }}"#),
             "Hello World"
         );
     }

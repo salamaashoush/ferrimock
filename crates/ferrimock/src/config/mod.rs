@@ -11,8 +11,10 @@
 //! - `patches`: Patch operations for modifying upstream responses
 //! - `patterns`: URL pattern parsing utilities (Express-style, glob, regex)
 //! - `har`: HAR file loading and conversion to mock configurations
+//! - `json_yaml`: Emitting a `serde_json::Value` as YAML
 
 pub mod har;
+pub mod json_yaml;
 pub mod matcher;
 pub mod parser;
 pub mod patches;

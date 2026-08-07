@@ -13,7 +13,7 @@ pub async fn load_session(path: impl AsRef<Path>) -> Result<RecordingSession> {
         return Ok(session);
     }
 
-    if let Ok(session) = serde_yaml::from_str::<RecordingSession>(&content) {
+    if let Ok(session) = serde_yaml_ng::from_str::<RecordingSession>(&content) {
         return Ok(session);
     }
 

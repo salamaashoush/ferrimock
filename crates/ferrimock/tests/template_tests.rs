@@ -1204,7 +1204,8 @@ fn test_template_math_operations() {
     let ctx = RequestContext::new();
     let template = "{{ 10 + 5 }},{{ 20 - 7 }},{{ 3 * 4 }},{{ 15 / 3 }}";
     let result = render_template(template, &ctx).unwrap();
-    assert_eq!(result, "15,13,12,5");
+    // Tera 2 division always yields a float, even when it divides evenly.
+    assert_eq!(result, "15,13,12,5.0");
 }
 
 #[test]

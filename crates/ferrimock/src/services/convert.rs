@@ -86,7 +86,7 @@ pub async fn convert(input: ConvertInput) -> Result<ConvertResult, crate::Ferrim
 
     let content = match input.format.as_str() {
         "json" => serde_json::to_string_pretty(&collection)?,
-        _ => serde_yaml::to_string(&collection)?,
+        _ => serde_yaml_ng::to_string(&collection)?,
     };
 
     Ok(ConvertResult {

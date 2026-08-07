@@ -91,7 +91,7 @@ mocks:
     template: |-
       {%- set auth_header = headers.authorization | default(value="") -%}
       {%- set token = auth_header | replace(from="Bearer ", to="") -%}
-      {%- set is_valid = token | startswith(pat="at_") -%}
+      {%- set is_valid = token is starting_with(pat="at_") -%}
       {
         "active": {{ is_valid }},
         {% if is_valid %}
@@ -137,7 +137,7 @@ mocks:
     template: |-
       {%- set auth_header = headers.authorization | default(value="") -%}
       {%- set token = auth_header | replace(from="Bearer ", to="") -%}
-      {%- set is_valid = token | startswith(pat="at_") -%}
+      {%- set is_valid = token is starting_with(pat="at_") -%}
       {% if is_valid %}
       {
         "user": {

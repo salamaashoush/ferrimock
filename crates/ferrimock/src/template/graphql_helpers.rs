@@ -1,22 +1,23 @@
 //! GraphQL-specific template helper functions
 
-// Tera library callbacks require std::collections::HashMap - cannot use FxHashMap
+// The builders below take a plain JSON argument map so they stay independent of
+// the template engine; `register_all_functions` adapts them to Tera 2.
 #![allow(clippy::disallowed_types)]
 
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use tera::{Error, Result};
+use tera::{Error, Kwargs, State, TeraResult, Value as TeraValue};
 
 /// Create GraphQL error response
 ///
 /// Usage: `{{ graphql_error(message="User not found", code="NOT_FOUND") }}`
 pub fn graphql_error<S: ::std::hash::BuildHasher>(
     args: &HashMap<String, Value, S>,
-) -> Result<Value> {
+) -> TeraResult<Value> {
     let message = args
         .get("message")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::msg("graphql_error requires 'message' argument"))?;
+        .ok_or_else(|| Error::message("graphql_error requires 'message' argument"))?;
 
     let code = args.get("code").and_then(|v| v.as_str());
     let path = args.get("path").and_then(|v| v.as_array());
@@ -49,16 +50,16 @@ pub fn graphql_error<S: ::std::hash::BuildHasher>(
 /// Usage: `{{ graphql_field_error(field="user.email", message="Invalid email", code="VALIDATION_ERROR") }}`
 pub fn graphql_field_error<S: ::std::hash::BuildHasher>(
     args: &HashMap<String, Value, S>,
-) -> Result<Value> {
+) -> TeraResult<Value> {
     let field = args
         .get("field")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::msg("graphql_field_error requires 'field' argument"))?;
+        .ok_or_else(|| Error::message("graphql_field_error requires 'field' argument"))?;
 
     let message = args
         .get("message")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::msg("graphql_field_error requires 'message' argument"))?;
+        .ok_or_else(|| Error::message("graphql_field_error requires 'message' argument"))?;
 
     let code = args.get("code").and_then(|v| v.as_str());
 
@@ -92,11 +93,11 @@ pub fn graphql_field_error<S: ::std::hash::BuildHasher>(
 /// Usage: `{{ graphql_type(name="User", kind="OBJECT") }}`
 pub fn graphql_type<S: ::std::hash::BuildHasher>(
     args: &HashMap<String, Value, S>,
-) -> Result<Value> {
+) -> TeraResult<Value> {
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::msg("graphql_type requires 'name'"))?;
+        .ok_or_else(|| Error::message("graphql_type requires 'name'"))?;
 
     let kind = args
         .get("kind")
@@ -131,7 +132,7 @@ pub fn graphql_type<S: ::std::hash::BuildHasher>(
 /// Usage: `{{ graphql_schema(types=[...]) }}` or just `{{ graphql_schema() }}` for empty schema
 pub fn graphql_schema<S: ::std::hash::BuildHasher>(
     args: &HashMap<String, Value, S>,
-) -> Result<Value> {
+) -> TeraResult<Value> {
     let query_type = args
         .get("queryType")
         .and_then(|v| v.as_str())
@@ -179,10 +180,20 @@ pub fn graphql_schema<S: ::std::hash::BuildHasher>(
 
 /// Register all GraphQL helper functions with Tera
 pub fn register_all_functions(tera: &mut tera::Tera) {
-    tera.register_function("graphql_error", graphql_error);
-    tera.register_function("graphql_field_error", graphql_field_error);
-    tera.register_function("graphql_type", graphql_type);
-    tera.register_function("graphql_schema", graphql_schema);
+    tera.register_function("graphql_error", adapt(graphql_error));
+    tera.register_function("graphql_field_error", adapt(graphql_field_error));
+    tera.register_function("graphql_type", adapt(graphql_type));
+    tera.register_function("graphql_schema", adapt(graphql_schema));
+}
+
+/// Bridge a JSON-map builder into Tera 2's `Kwargs`/`Value` calling convention.
+fn adapt(
+    builder: fn(&HashMap<String, Value>) -> TeraResult<Value>,
+) -> impl Fn(Kwargs, &State<'_>) -> TeraResult<TeraValue> {
+    move |kwargs: Kwargs, _: &State<'_>| {
+        let args = super::convert::kwargs_to_args(&kwargs);
+        Ok(super::convert::to_tera(builder(&args)?))
+    }
 }
 
 #[cfg(test)]

@@ -178,7 +178,8 @@ body:
     "$.clientId": "test-client"
     "#;
 
-        let config: RequestTransformConfig = serde_yaml::from_str(yaml).expect("Failed to parse");
+        let config: RequestTransformConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse");
         assert_eq!(config.delay.as_deref(), Some("500ms"));
         assert_eq!(config.timeout.as_deref(), Some("10s"));
         assert_eq!(
@@ -203,7 +204,8 @@ body:
 delay: "100ms"
     "#;
 
-        let config: RequestTransformConfig = serde_yaml::from_str(yaml).expect("Failed to parse");
+        let config: RequestTransformConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse");
         assert_eq!(config.delay.as_deref(), Some("100ms"));
         assert!(config.timeout.is_none());
         assert!(config.forward_to.is_none());
@@ -213,7 +215,8 @@ delay: "100ms"
     #[test]
     fn test_parse_request_transform_empty() {
         let yaml = "{}";
-        let config: RequestTransformConfig = serde_yaml::from_str(yaml).expect("Failed to parse");
+        let config: RequestTransformConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse");
         assert!(config.is_empty());
     }
 
@@ -225,7 +228,8 @@ headers:
     x-internal-auth: "secret-token"
     "#;
 
-        let config: RequestTransformConfig = serde_yaml::from_str(yaml).expect("Failed to parse");
+        let config: RequestTransformConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse");
         assert_eq!(config.headers.add.len(), 1);
         assert_eq!(
             config.headers.add.get("x-internal-auth"),
@@ -246,7 +250,8 @@ query:
     - "token"
     "#;
 
-        let config: RequestTransformConfig = serde_yaml::from_str(yaml).expect("Failed to parse");
+        let config: RequestTransformConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse");
         assert_eq!(config.query.add.len(), 2);
         assert_eq!(config.query.remove.len(), 2);
     }
@@ -267,7 +272,8 @@ body:
       value: "added"
     "#;
 
-        let config: RequestTransformConfig = serde_yaml::from_str(yaml).expect("Failed to parse");
+        let config: RequestTransformConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse");
         assert_eq!(config.body.jsonpath.len(), 2);
         assert_eq!(config.body.regex.len(), 1);
         assert_eq!(config.body.operations.len(), 1);

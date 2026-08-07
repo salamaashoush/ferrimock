@@ -224,7 +224,9 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
 
     let content = match opts.format.to_lowercase().as_str() {
         "json" => serde_json::to_string_pretty(&collection)?,
-        "yaml" | "yml" => serde_yaml::to_string(&collection).context("YAML serialization error")?,
+        "yaml" | "yml" => {
+            serde_yaml_ng::to_string(&collection).context("YAML serialization error")?
+        }
         _ => {
             anyhow::bail!("Invalid format: {}. Use 'json' or 'yaml'", opts.format);
         }

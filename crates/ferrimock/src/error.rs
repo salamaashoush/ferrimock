@@ -35,7 +35,7 @@ pub enum FerrimockError {
     Json(#[from] serde_json::Error),
     /// YAML (de)serialization failure.
     #[error(transparent)]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_yaml_ng::Error),
 }
 
 impl FerrimockError {

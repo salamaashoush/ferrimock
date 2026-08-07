@@ -51,6 +51,15 @@ pub fn fake_sha256() -> String {
     })
 }
 
+/// Generate a full SHA-1 hash
+pub fn fake_sha1() -> String {
+    use std::fmt::Write;
+    (0..40).fold(String::with_capacity(40), |mut output, _| {
+        let _ = write!(output, "{:x}", rand::rng().random_range(0..16));
+        output
+    })
+}
+
 /// Generate a MD5 hash
 pub fn fake_md5() -> String {
     use std::fmt::Write;
