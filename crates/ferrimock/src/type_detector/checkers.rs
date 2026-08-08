@@ -229,7 +229,7 @@ pub(super) fn check_data_uri(values: &[&str], features: &TypeFeatures) -> Option
     let match_ratio = matches as f64 / values.len() as f64;
 
     if match_ratio > MIN_MATCH_RATIO_DATA_URI && features.avg_length > 50.0 {
-        Some((match_ratio * 0.95) + 0.05)
+        Some(match_ratio.mul_add(0.95, 0.05))
     } else {
         None
     }

@@ -54,6 +54,9 @@ rest_pat_in_fully_bound_structs = "warn"
 undocumented_unsafe_blocks = "warn"
 infinite_loop = "warn"
 unused_result_ok = "warn"
+# `assert!(!x.is_empty())` reads better than the suggested
+# `assert_ne!(x, [] as [String; 0])`, which needs the element type spelled out.
+assert_is_empty = "allow"
 pathbuf_init_then_push = "warn"
 
 # Crash prevention
