@@ -164,6 +164,10 @@ name = "mock_performance"
 harness = false
 
 [[bench]]
+name = "corpus_scale"
+harness = false
+
+[[bench]]
 name = "template_performance"
 harness = false
 
