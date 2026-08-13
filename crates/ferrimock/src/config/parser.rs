@@ -225,6 +225,14 @@ pub struct MockConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delay: Option<String>,
 
+    /// Retire this mock after it matches once, so the next request for the
+    /// same thing falls through to the mock behind it. Chaining several of
+    /// these replays a recorded sequence in order: the endpoint answers
+    /// differently each time, and the last mock (without `once`) answers from
+    /// then on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub once: bool,
+
     /// Simulate a dropped connection instead of answering: headers commit,
     /// then the body stream errors, so the caller sees a transport failure
     /// (`fetch` raises `TypeError`, curl reports an aborted transfer).
@@ -254,6 +262,7 @@ impl Default for MockConfig {
             description: None,
             priority: default_priority(),
             enabled: default_enabled(),
+            once: false,
             scope: None,
             vars: None,
             match_config: None,
@@ -455,7 +464,7 @@ impl MockConfig {
             id: self.id,
             priority: self.priority,
             enabled: self.enabled,
-            once: false,
+            once: self.once,
             scope: self.scope,
             source_file: None,
             request_transforms,

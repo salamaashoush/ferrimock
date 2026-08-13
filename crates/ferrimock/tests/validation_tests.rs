@@ -575,6 +575,7 @@ async fn test_validate_config_directly() {
             id: "test".into(),
             description: None,
             enabled: true,
+            once: false,
             priority: 100,
             scope: None,
             vars: None,
@@ -1294,6 +1295,7 @@ async fn test_validate_config_directly_with_errors() {
             id: "test".into(),
             description: None,
             enabled: true,
+            once: false,
             priority: 100,
             scope: None,
             vars: None,
@@ -1350,6 +1352,7 @@ async fn test_validate_config_with_warnings() {
                 id: "duplicate".into(),
                 description: None,
                 enabled: false,
+                once: false,
                 priority: 100,
                 scope: None,
                 vars: None,
@@ -1383,6 +1386,7 @@ async fn test_validate_config_with_warnings() {
                 id: "duplicate".into(),
                 description: None,
                 enabled: true,
+                once: false,
                 priority: 100,
                 scope: None,
                 vars: None,
@@ -2505,5 +2509,44 @@ mocks:
         !result.has_errors(),
         "Fully valid patch config should not produce errors, got: {}",
         result.format_errors()
+    );
+}
+
+/// A `once` mock exists to be shadowed: it answers, retires, and hands the
+/// request to the mock behind it. Reporting the deliberate overlap as a
+/// priority mistake would flag every recorded sequence as something to fix.
+#[tokio::test]
+async fn a_one_shot_sequence_is_not_an_overlap_warning() {
+    let yaml = r#"
+mocks:
+  - id: job-pending
+    once: true
+    match:
+      methods: [GET]
+      url: "exact:/api/jobs/7"
+    response:
+      status: 200
+      body: '{"state":"pending"}'
+  - id: job-done
+    match:
+      methods: [GET]
+      url: "exact:/api/jobs/7"
+    response:
+      status: 200
+      body: '{"state":"done"}'
+"#;
+
+    let config = MockCollectionConfig::from_yaml(yaml).expect("parses");
+    let result = MockValidator::new().validate_config(&config, None).await;
+
+    let overlaps: Vec<&str> = result
+        .warnings
+        .iter()
+        .filter(|w| w.warning_type == WarningType::OverlappingPatterns)
+        .map(|w| w.message.as_str())
+        .collect();
+    assert!(
+        overlaps.is_empty(),
+        "a one-shot sequence is not an overlap: {overlaps:?}"
     );
 }

@@ -13,6 +13,7 @@ fn create_test_mock(id: &str, method: &str, url: &str, response_body: &str) -> M
         description: None,
         priority: 100,
         enabled: true,
+        once: false,
         scope: None,
         vars: None,
         match_config: Some(MatchConfig {
@@ -864,6 +865,7 @@ async fn test_fuzzy_pagination_field_detection() {
             description: None,
             priority: 100,
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {
@@ -893,6 +895,7 @@ async fn test_fuzzy_pagination_field_detection() {
             description: None,
             priority: 100,
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {

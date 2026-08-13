@@ -220,6 +220,7 @@ impl MockGenerator {
             description: None,
             priority: self.options.base_priority,
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {

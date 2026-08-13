@@ -426,6 +426,7 @@ impl HarLoader {
             #[allow(clippy::cast_possible_truncation)]
             priority: 100u32.saturating_sub(index as u32),
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {
@@ -514,6 +515,7 @@ impl HarLoader {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {

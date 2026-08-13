@@ -27,6 +27,7 @@ fn create_mock(id: &str, method: &str, url: &str, status: u16, body: &str) -> Mo
         description: None,
         priority: 100,
         enabled: true,
+        once: false,
         scope: None,
         match_config: Some(MatchConfig {
             method: None,

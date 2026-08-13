@@ -294,6 +294,7 @@ async fn test_into_mock_definitions_with_dir() {
             description: None,
             priority: 100,
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {
@@ -342,6 +343,7 @@ async fn test_mock_config_missing_match() {
         description: None,
         priority: 100,
         enabled: true,
+        once: false,
         scope: None,
         vars: None,
         match_config: None,
@@ -379,6 +381,7 @@ async fn test_mock_config_missing_return() {
         description: None,
         priority: 100,
         enabled: true,
+        once: false,
         scope: None,
         vars: None,
         match_config: Some(MatchConfig {
@@ -1814,6 +1817,7 @@ async fn test_body_file_with_config_dir() {
         description: None,
         priority: 100,
         enabled: true,
+        once: false,
         scope: None,
         vars: None,
         match_config: Some(MatchConfig {
@@ -1856,6 +1860,7 @@ async fn test_body_file_not_found_fallback() {
         description: None,
         priority: 100,
         enabled: true,
+        once: false,
         scope: None,
         vars: None,
         match_config: Some(MatchConfig {

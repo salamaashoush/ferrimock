@@ -674,6 +674,7 @@ impl MockRecorder {
                 // Recording order used as tiebreaker (earlier = slightly higher)
                 priority: Self::calculate_priority_from_url(&full_url, recording_number),
                 enabled: true,
+                once: false,
                 scope: None, // Recorded mocks don't belong to a scope by default
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -926,6 +927,7 @@ impl MockRecorder {
                 description: None,
                 priority: 100_u32.saturating_sub(u32::try_from(idx).unwrap_or(u32::MAX)),
                 enabled: true,
+                once: false,
                 scope: None, // Recorded mocks don't belong to a scope by default
                 vars: None,
                 match_config: Some(MatchConfig {

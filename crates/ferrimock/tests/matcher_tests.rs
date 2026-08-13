@@ -1536,3 +1536,113 @@ fn repeatable_path_params_capture_segments_and_convert_to_msw_arrays() {
         )]
     );
 }
+
+/// A `once` mock retires when it matches, so the request after it must fall
+/// through to the mock behind. Serving it from the match cache skipped that
+/// retirement and answered with the same mock forever, which silently undid
+/// every chain built on `once` — MSW-style one-shot handlers and the ordered
+/// replay a recording is converted into.
+#[test]
+fn a_once_mock_retires_even_when_it_could_be_cached() {
+    let registry = MockRegistry::new();
+
+    let mut first = create_test_mock(
+        "first",
+        200,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::exact("/jobs/7")],
+        smallvec![],
+        smallvec![],
+        None,
+    );
+    first.once = true;
+    first.response = ResponseGenerator::new(StatusCode::OK, BodySource::inline("pending"));
+    registry.add_mock(first);
+
+    let mut second = create_test_mock(
+        "second",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::exact("/jobs/7")],
+        smallvec![],
+        smallvec![],
+        None,
+    );
+    second.response = ResponseGenerator::new(StatusCode::OK, BodySource::inline("done"));
+    registry.add_mock(second);
+
+    let matcher = MockMatcher::new(registry);
+    let ask = || {
+        matcher
+            .find_match(&Method::GET, "/jobs/7", None, &HeaderMap::new(), None)
+            .expect("something must answer")
+            .mock
+            .id
+            .to_string()
+    };
+
+    assert_eq!(ask(), "first");
+    assert_eq!(ask(), "second", "the once mock must not answer twice");
+    assert_eq!(ask(), "second");
+}
+
+/// Fall-through re-enables a `once` mock: MSW does not count a handler as used
+/// when its resolver declines, so the caller hands it back. A re-enabled mock
+/// still sitting in the match cache was then served straight from there, which
+/// skips the retirement and makes it answer every later request forever.
+#[test]
+fn a_reenabled_once_mock_retires_again() {
+    let registry = MockRegistry::new();
+
+    let mut first = create_test_mock(
+        "first",
+        200,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::exact("/jobs/7")],
+        smallvec![],
+        smallvec![],
+        None,
+    );
+    first.once = true;
+    registry.add_mock(first);
+    registry.add_mock(create_test_mock(
+        "second",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::exact("/jobs/7")],
+        smallvec![],
+        smallvec![],
+        None,
+    ));
+    // One conditional mock anywhere in the registry takes the exact-match index
+    // out of play, which is what routes this request through the match cache.
+    // A converted recording always has some, so this is the ordinary shape.
+    registry.add_mock(create_test_mock(
+        "elsewhere",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::exact("/other")],
+        smallvec![],
+        smallvec![QueryMatcher::exact("page", "1")],
+        None,
+    ));
+
+    let matcher = MockMatcher::new(registry);
+    let ask = || {
+        matcher
+            .find_match(&Method::GET, "/jobs/7", None, &HeaderMap::new(), None)
+            .expect("something must answer")
+            .mock
+            .id
+            .to_string()
+    };
+
+    assert_eq!(ask(), "first");
+    matcher.reenable_mock("first");
+    assert_eq!(ask(), "first", "handed back, it gets another turn");
+    assert_eq!(
+        ask(),
+        "second",
+        "and that turn must retire it, not renew it forever"
+    );
+}

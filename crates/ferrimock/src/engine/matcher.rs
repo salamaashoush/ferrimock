@@ -215,7 +215,11 @@ impl MockMatcher {
                 if let Some(mock_id) = cache.get(&hash) {
                     // Cache hit! Retrieve the mock by ID and verify it's still cacheable
                     if let Some(mock) = self.registry.get_mock(mock_id.as_str()) {
+                        // A `once` mock retires when it matches, so it is never
+                        // a stable cache entry; serving it from here would skip
+                        // that and answer with it forever.
                         let is_cacheable = mock.enabled
+                            && !mock.once
                             && mock.request.query_matchers.is_empty()
                             && mock.request.header_matchers.is_empty()
                             && mock.request.body_matcher.is_none()
@@ -310,7 +314,8 @@ impl MockMatcher {
 
             // Cache the result if eligible
             if can_use_cache {
-                let is_cacheable = mock.request.query_matchers.is_empty()
+                let is_cacheable = !mock.once
+                    && mock.request.query_matchers.is_empty()
                     && mock.request.header_matchers.is_empty()
                     && mock.request.body_matcher.is_none()
                     && !conditional_competitor;

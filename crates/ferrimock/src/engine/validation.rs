@@ -427,28 +427,22 @@ impl MockValidator {
                 }
 
                 for url_pattern in &all_urls {
-                    // Check if it looks like a regex pattern
-                    if url_pattern.starts_with('^')
-                        || url_pattern.ends_with('$')
-                        || url_pattern.contains("\\d")
-                        || url_pattern.contains("\\w")
-                        || url_pattern.contains('[')
-                        || url_pattern.contains('(')
-                    {
-                        // Validate as regex
-                        if let Err(e) = Regex::new(url_pattern) {
-                            let line_number = Self::find_line_number(file_content, url_pattern);
-                            errors.push(ValidationError {
+                    // Ask the parser the loader will use, rather than guessing
+                    // again here: an `exact:`-prefixed URL is a literal however
+                    // many brackets it holds, and a query string carrying PHP
+                    // array params (`?ids[]=1`) is not a character class.
+                    if let Err(e) = crate::config::parse_url_pattern(url_pattern) {
+                        let line_number = Self::find_line_number(file_content, url_pattern);
+                        errors.push(ValidationError {
                 mock_id: mock_id.clone(),
                 error_type: ErrorType::InvalidRegex,
-                message: format!("Invalid regex pattern in URL: {e}"),
+                message: format!("Invalid URL pattern: {e}"),
                 snippet: line_number.and_then(|line| Self::extract_snippet(file_content, line, url_pattern)),
                 suggestion: Some(
-                  "Check regex syntax: brackets, parentheses, and special characters must be balanced".to_string(),
+                  "Check pattern syntax: brackets, parentheses, and special characters must be balanced".to_string(),
                 ),
                 line_number,
               });
-                        }
                     }
                 }
 
@@ -1029,6 +1023,14 @@ impl MockValidator {
     fn mocks_may_overlap(mock1: &MockDefinition, mock2: &MockDefinition) -> bool {
         // If they have different scopes, they can't overlap
         if mock1.scope != mock2.scope {
+            return false;
+        }
+
+        // A `once` mock is written to be shadowed: it answers, retires, and
+        // hands the request to whatever stands behind it. Reporting that as an
+        // accidental overlap would flag every sequence — including the ones
+        // `mock convert` builds from a recording — as something to go and fix.
+        if mock1.once || mock2.once {
             return false;
         }
 

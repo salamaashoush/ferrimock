@@ -629,6 +629,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -660,6 +661,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -839,6 +841,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -877,6 +880,7 @@ mod tests {
                 description: None,
                 priority: 99,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -940,6 +944,7 @@ mod tests {
             description: None,
             priority: 100,
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {
@@ -1003,6 +1008,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -1035,6 +1041,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -1083,6 +1090,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -1115,6 +1123,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -1166,6 +1175,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -1199,6 +1209,7 @@ mod tests {
                 description: None,
                 priority: 100,
                 enabled: true,
+                once: false,
                 scope: None,
                 vars: None,
                 match_config: Some(MatchConfig {
@@ -1251,6 +1262,7 @@ mod tests {
             description: None,
             priority: 100,
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {
@@ -1285,6 +1297,7 @@ mod tests {
             description: None,
             priority: 100,
             enabled: true,
+            once: false,
             scope: None,
             vars: None,
             match_config: Some(MatchConfig {
