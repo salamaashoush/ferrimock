@@ -34,8 +34,10 @@ pub struct FerrimockConfig {
 }
 
 /// Parse a config file from disk. Detects format from extension.
-pub fn parse_config_file(path: &str) -> Result<FerrimockConfig, crate::FerrimockError> {
-    let path = std::path::Path::new(path);
+pub fn parse_config_file(
+    path: impl AsRef<std::path::Path>,
+) -> Result<FerrimockConfig, crate::FerrimockError> {
+    let path = path.as_ref();
     crate::mp_ensure!(path.exists(), "Config file not found: {}", path.display());
 
     let content = std::fs::read_to_string(path)?;

@@ -2,10 +2,11 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use std::path::PathBuf;
 
 /// Parse a ferrimock config file (YAML or JSON). Detects format from extension.
 #[napi]
-pub fn parse_config_file(file_path: String) -> Result<serde_json::Value> {
+pub fn parse_config_file(file_path: PathBuf) -> Result<serde_json::Value> {
     let config = ferrimock::services::config::parse_config_file(&file_path)
         .map_err(|e| Error::from_reason(e.to_string()))?;
     serde_json::to_value(&config).map_err(|e| Error::from_reason(e.to_string()))

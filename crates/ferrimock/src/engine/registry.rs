@@ -468,7 +468,10 @@ impl MockRegistry {
     /// Scans the given directory for mock definition files and loads all mock definitions.
     /// Also scans for scenario files in the scenarios subdirectory.
     /// Returns the number of mocks loaded.
-    pub async fn load_from_directory(&self, dir_path: &str) -> crate::Result<usize> {
+    pub async fn load_from_directory(
+        &self,
+        dir_path: impl AsRef<std::path::Path>,
+    ) -> crate::Result<usize> {
         self.load_from_directory_with(dir_path, DirLoadOptions::default())
             .await
     }
@@ -478,27 +481,27 @@ impl MockRegistry {
     /// `load_scripts: false` silently leaves `.js`/`.mjs` files to another
     /// runtime — the NAPI addon uses it because Node loads script mocks
     /// itself (V8), so the embedded engine must not double-load them.
+    // Takes `AsRef<Path>` rather than `&str` so a caller holding a real path —
+    // the NAPI addon does — never has to round-trip it through UTF-8.
     pub async fn load_from_directory_with(
         &self,
-        dir_path: &str,
+        dir_path: impl AsRef<std::path::Path>,
         options: DirLoadOptions,
     ) -> crate::Result<usize> {
-        use std::path::Path;
-
-        let path = Path::new(dir_path);
+        let path = dir_path.as_ref();
 
         if !path.exists() {
             return Ok(0); // Directory doesn't exist, no mocks to load
         }
 
         if !path.is_dir() {
-            return Err(crate::mp_err!("{dir_path} is not a directory"));
+            return Err(crate::mp_err!("{} is not a directory", path.display()));
         }
 
         // Read directory entries
         let mut entries = tokio::fs::read_dir(path)
             .await
-            .map_err(|e| crate::mp_err!("Failed to read directory {dir_path}: {e}"))?;
+            .map_err(|e| crate::mp_err!("Failed to read directory {}: {e}", path.display()))?;
 
         // Collect all mock collection files (JSON, YAML), HAR files, and scripts
         let mut collection_files = Vec::new();
@@ -528,8 +531,9 @@ impl MockRegistry {
         #[cfg(not(feature = "scripting"))]
         if !script_files.is_empty() {
             eprintln!(
-                "Warning: {} script mock file(s) in {dir_path} ignored (build with the `scripting` feature to load .js/.mjs mocks)",
-                script_files.len()
+                "Warning: {} script mock file(s) in {} ignored (build with the `scripting` feature to load .js/.mjs mocks)",
+                script_files.len(),
+                path.display()
             );
             script_files.clear();
         }

@@ -11,6 +11,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Scope tag for handlers registered via `use()` so `resetRuntimeHandlers`
@@ -198,7 +199,7 @@ impl FerrimockServer {
     /// @param dirPath - Path to a directory containing mock definition files.
     /// @returns Number of mocks loaded.
     #[napi]
-    pub async fn load_mocks(&self, dir_path: String) -> Result<u32> {
+    pub async fn load_mocks(&self, dir_path: PathBuf) -> Result<u32> {
         // Scripts stay with the JS side: ferrimock's loader runs
         // .js/.mjs mock files on V8 in this same process.
         let options = ferrimock::engine::registry::DirLoadOptions {
@@ -219,8 +220,8 @@ impl FerrimockServer {
     /// @param filePath - Path to a .yaml, .yml, .json, or .har file.
     /// @returns Number of mocks loaded.
     #[napi]
-    pub async fn load_mock_file(&self, file_path: String) -> Result<u32> {
-        let path = std::path::Path::new(&file_path);
+    pub async fn load_mock_file(&self, file_path: PathBuf) -> Result<u32> {
+        let path = file_path.as_path();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let count = if ext == "har" {
