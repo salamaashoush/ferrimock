@@ -9,3 +9,7 @@ bun.lock
 dist/
 # CLI platform packages assembled at release time (npm-shim/scripts/prepare.mjs)
 crates/ferrimock-cli/npm-shim/npm/
+
+# Benchmark runs: machine-specific numbers, and they record the directory
+# they ran in. Keep them local.
+benchmarks/results/
