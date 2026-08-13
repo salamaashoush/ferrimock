@@ -54,6 +54,24 @@ pub enum MockAction {
     },
 }
 
+/// Whether an exact pattern that carries a query string matches this request
+/// line, comparing path and query separately so nothing is allocated.
+///
+/// A pattern with no query is not considered here: [`MockMatcher::matches_url`]
+/// has already tested every pattern against the bare path.
+fn exact_matches_line(pattern: &crate::types::UrlPattern, path: &str, query: &str) -> bool {
+    match pattern {
+        crate::types::UrlPattern::Exact(spelling) => {
+            spelling
+                .split_once('?')
+                .is_some_and(|(pattern_path, pattern_query)| {
+                    pattern_path == path && pattern_query == query
+                })
+        }
+        _ => false,
+    }
+}
+
 /// Calculate cache hash directly from method and path bytes.
 /// Avoids String allocation by hashing the borrowed data directly.
 #[inline]
@@ -454,16 +472,42 @@ impl MockMatcher {
             return true;
         }
 
-        if query.is_none() && href_headers.is_none() {
+        let Some(q) = query else {
+            return href_headers.is_some()
+                && Self::matches_url_fallbacks(mock, path, query, href_headers, scheme);
+        };
+
+        // An exact pattern carrying the query it was recorded with is settled
+        // by comparing the two halves, with nothing allocated. A converted
+        // recording is almost entirely these, so leaving it to the fallback
+        // below cost a request line per candidate mock — hundreds per request.
+        if mock
+            .request
+            .url_patterns
+            .iter()
+            .any(|pattern| exact_matches_line(pattern, path, q))
+        {
+            return true;
+        }
+
+        // Every pattern was exact and none of them matched, so there is no
+        // spelling of this request line left for the fallback to try.
+        if href_headers.is_none()
+            && mock
+                .request
+                .url_patterns
+                .iter()
+                .all(|pattern| matches!(pattern, crate::types::UrlPattern::Exact(_)))
+        {
             return false;
         }
         Self::matches_url_fallbacks(mock, path, query, href_headers, scheme)
     }
 
     /// The rare continuations of [`Self::matches_url`], kept out of the
-    /// per-candidate hot loop: full `path?query` matching (exact patterns
-    /// recorded with query strings) and `HrefRegex` reconstructions built
-    /// from the handshake's Host header.
+    /// per-candidate hot loop: `path?query` matching for the patterns that
+    /// have to see a whole request line (glob, regex, prefix, suffix), and
+    /// `HrefRegex` reconstructions built from the handshake's Host header.
     #[cold]
     fn matches_url_fallbacks(
         mock: &MockDefinition,
@@ -472,14 +516,16 @@ impl MockMatcher {
         href_headers: Option<&HeaderMap>,
         scheme: Option<&str>,
     ) -> bool {
-        if let Some(q) = query
-            && mock
+        if let Some(q) = query {
+            let line = format!("{path}?{q}");
+            if mock
                 .request
                 .url_patterns
                 .iter()
-                .any(|pattern| pattern.matches(&format!("{path}?{q}")))
-        {
-            return true;
+                .any(|pattern| pattern.matches(&line))
+            {
+                return true;
+            }
         }
 
         if let Some(host) = href_headers
