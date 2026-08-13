@@ -296,10 +296,14 @@ fn build_dispatch(
 
             match tsfn.call_async(bridge_event).await {
                 Ok(promise) => promise.await.map_err(|e| {
-                    ferrimock::FerrimockError::msg(format!("ws dispatch callback failed: {e}"))
+                    ferrimock::FerrimockError::msg(format!(
+                        "ws dispatch callback failed: {}",
+                        crate::handler_bridge::js_error_message(&e)
+                    ))
                 }),
                 Err(e) => Err(ferrimock::FerrimockError::msg(format!(
-                    "ws dispatch ThreadsafeFunction call failed: {e}"
+                    "ws dispatch ThreadsafeFunction call failed: {}",
+                    crate::handler_bridge::js_error_message(&e)
                 ))),
             }
         })

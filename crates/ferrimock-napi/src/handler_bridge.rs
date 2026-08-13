@@ -20,6 +20,34 @@ use std::sync::Arc;
 
 /// TSFN type: handler receives the resolver-info class for its kind,
 /// returns Promise<response>.
+/// A JS exception's own message, without napi's status prefix.
+///
+/// `Display` on a `napi::Error` renders as `"GenericFailure, boom"` — the
+/// status is an internal classification that means nothing to whoever wrote the
+/// handler, and it ends up in the response body a user reads. The `cause` chain
+/// survives the thread hop since napi 3.10.2, so it is worth carrying too.
+pub(crate) fn js_error_message(err: &napi::Error) -> String {
+    let mut message = if err.reason.is_empty() {
+        err.status.as_ref().to_string()
+    } else {
+        err.reason.clone()
+    };
+
+    let mut cause = err.cause.as_deref();
+    while let Some(next) = cause {
+        let text = if next.reason.is_empty() {
+            next.status.as_ref()
+        } else {
+            next.reason.as_str()
+        };
+        message.push_str(": ");
+        message.push_str(text);
+        cause = next.cause.as_deref();
+    }
+
+    message
+}
+
 pub type HandlerCallbackTsfn = napi::threadsafe_function::ThreadsafeFunction<
     ResolverArg,
     Promise<Option<HandlerResponse>>,
@@ -80,7 +108,12 @@ pub fn js_to_handler_bridge<Arg: JsValuesTupleIntoVec>(
         Box::pin(async move {
             let arg = ResolverArg::new(kind, ctx, None);
 
-            match tsfn.call_async(arg).await {
+            // `call_async_catch`, not `call_async`: a handler that throws
+            // synchronously (rather than returning a rejected promise) leaves
+            // `call_async`'s oneshot cancelled, so the thrown message is lost
+            // and the caller sees only "oneshot canceled". `call_async_catch`
+            // converts the JS throw into an `Err` carrying the exception.
+            match tsfn.call_async_catch(arg).await {
                 Ok(promise) => match promise.await {
                     Ok(Some(resp)) => {
                         let dynamic = DynamicResponse::from(resp);
@@ -104,11 +137,13 @@ pub fn js_to_handler_bridge<Arg: JsValuesTupleIntoVec>(
                     // next matching mock (the serve loop retries).
                     Ok(None) => Ok(DynamicResponse::fallthrough()),
                     Err(e) => Err(ferrimock::FerrimockError::msg(format!(
-                        "JS handler error: {e}"
+                        "JS handler error: {}",
+                        js_error_message(&e)
                     ))),
                 },
                 Err(e) => Err(ferrimock::FerrimockError::msg(format!(
-                    "ThreadsafeFunction call error: {e}"
+                    "ThreadsafeFunction call error: {}",
+                    js_error_message(&e)
                 ))),
             }
         })

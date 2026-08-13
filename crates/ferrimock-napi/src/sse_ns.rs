@@ -126,11 +126,13 @@ pub fn sse(
                     // or the consumer disconnects.
                     Ok(_) => Ok(()),
                     Err(e) => Err(ferrimock::FerrimockError::msg(format!(
-                        "sse resolver failed: {e}"
+                        "sse resolver failed: {}",
+                        crate::handler_bridge::js_error_message(&e)
                     ))),
                 },
                 Err(e) => Err(ferrimock::FerrimockError::msg(format!(
-                    "sse ThreadsafeFunction call failed: {e}"
+                    "sse ThreadsafeFunction call failed: {}",
+                    crate::handler_bridge::js_error_message(&e)
                 ))),
             }
         })
