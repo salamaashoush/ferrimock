@@ -55,6 +55,26 @@ mocks:
     url: "^/api/users/\\d+$"
 ```
 
+### One-shot mocks
+
+`once: true` retires a mock as soon as it matches, so the next request for the same thing falls through to the mock
+behind it. Chaining them replays a sequence: the endpoint answers differently each time, and the last mock -- the one
+without `once` -- answers from then on.
+
+```yaml
+mocks:
+- id: job-pending
+  once: true
+  match: { url: "/api/jobs/7" }
+  response: { status: 200, body: '{"state":"pending"}' }
+
+- id: job-done # answers the second request and every one after it
+  match: { url: "/api/jobs/7" }
+  response: { status: 200, body: '{"state":"done"}' }
+```
+
+This is what `mock convert` builds when a recording answered the same request more than one way.
+
 ## URL Patterns
 
 Auto-detected by pattern:
@@ -1027,10 +1047,26 @@ domains, or `--extra-domains staging.example.com` to add additional domains to t
 `server`, `x-envoy-*`, `alt-svc`) are removed. Content headers like `content-type` are preserved.
 
 **Query param sanitization** -- Sensitive query parameters (`access_token`, `api_key`, `token`) are stripped from URLs.
+Surviving parameters keep the exact spelling they were recorded with, percent-encoding included: a mock has to match the
+request it was made from, and rebuilding the query from decoded pairs turns `cursor=eyJwIjoxfQ%3D%3D` into
+`cursor=eyJwIjoxfQ==`, which no longer matches anything. When a credential is removed from the middle of a query, the
+parameters around it move out of the URL and into `match.query` matchers, so the mock ignores the token rather than
+demanding a request without one.
 
 **Body extraction** -- With `--extract-bodies`, large response bodies (>100KB or binary content types) are saved to
 separate files in a `bodies/` directory rather than inlined in the YAML/JSON. Adjust the threshold with
 `--body-threshold-kb`.
+
+**Specificity ranking** -- A recording of a bare endpoint gets a lower `priority` than one that pins a query. An exact
+pattern naming no query still matches a request that carries one, so without this a recording of `/collaborators` would
+answer every `/collaborators?sortColumn=...` call recorded beside it.
+
+**Ordered replay of repeated requests** -- A trace records a conversation, not a table: the same call is answered
+differently as the session moves on -- a listing before and after an upload, a job that is pending and then done. Where
+a recording answered one request several ways, the mocks for it are chained with `once`, so replaying hands them back in
+the order they were recorded and the last one keeps answering afterwards. Repeats that were answered identically are
+left as a single mock. Set `sequence_repeated_requests: false` in `HarLoadOptions` to get the old behaviour, where the
+first recording answers every time and the rest are unreachable.
 
 ```bash
 # Basic: import HAR to clean mock collection
@@ -1041,6 +1077,9 @@ ferrimock mock convert traffic.har mocks.yaml --all-domains
 
 # Keep absolute URLs, extract large bodies
 ferrimock mock convert traffic.har mocks.yaml --absolute-urls --extract-bodies
+
+# Answer every repeat with the first recording, rather than replaying in order
+ferrimock mock convert traffic.har mocks.yaml --flatten-repeats
 
 # Full raw import (no filtering or normalization)
 ferrimock mock convert traffic.har mocks.yaml \

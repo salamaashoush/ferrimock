@@ -317,6 +317,11 @@ pub enum MockAction {
         /// Body size threshold in KB for extraction (default: 100)
         #[arg(long, value_name = "KB", default_value = "100")]
         body_threshold_kb: usize,
+
+        /// Answer every repeat of a request with the first recording of it,
+        /// instead of replaying the recorded answers in order
+        #[arg(long)]
+        flatten_repeats: bool,
     },
 
     /// Export mock collection to HAR format

@@ -259,10 +259,44 @@ async fn test_priority_assignment() {
     let loader = HarLoader::new();
     let mocks = loader.convert_har_to_mocks(har).await.unwrap();
 
-    // Priority should decrease for later entries
+    // Priority ranks how much of the request line a mock pins, not when it was
+    // recorded: these three address different endpoints and none outranks the
+    // others. Recording order is the registry's tiebreak, not a priority.
     assert_eq!(mocks[0].priority, 100);
-    assert_eq!(mocks[1].priority, 99);
-    assert_eq!(mocks[2].priority, 98);
+    assert_eq!(mocks[1].priority, 100);
+    assert_eq!(mocks[2].priority, 100);
+}
+
+/// A recording that pins a query is more specific than one that does not, and
+/// must be tried first — an exact pattern naming no query still matches a
+/// request that carries one.
+#[tokio::test]
+async fn test_priority_ranks_query_recordings_above_bare_ones() {
+    let har = Har {
+        log: Spec::V1_2(v1_2::Log {
+            creator: v1_2::Creator {
+                name: "test".to_string(),
+                version: "1.0".to_string(),
+                comment: None,
+            },
+            browser: None,
+            pages: None,
+            entries: vec![
+                create_test_entry("GET", "https://api.example.com/items", 200),
+                create_test_entry("GET", "https://api.example.com/items?sort=name", 200),
+            ],
+            comment: None,
+        }),
+    };
+
+    let mocks = HarLoader::new().convert_har_to_mocks(har).await.unwrap();
+
+    assert!(
+        mocks[1].priority > mocks[0].priority,
+        "the parameterised recording must outrank the bare one: {} vs {}",
+        mocks[1].priority,
+        mocks[0].priority
+    );
 }
 
 #[tokio::test]
@@ -1677,11 +1711,14 @@ async fn test_priority_large_number_of_entries() {
     let mocks = loader.convert_har_to_mocks(har).await.unwrap();
 
     assert_eq!(mocks.len(), 150);
-    assert_eq!(mocks[0].priority, 100);
-    assert_eq!(mocks[1].priority, 99);
-    assert_eq!(mocks[99].priority, 1);
-    assert_eq!(mocks[100].priority, 0); // Wraps to 0
-    assert_eq!(mocks[149].priority, 0); // All after 100 are 0
+    // Ranking by recording order used to run out at the hundredth entry and
+    // collapse every later mock onto priority zero. Specificity does not run
+    // out, so a long recording ranks the same way at its end as at its start.
+    assert!(
+        mocks.iter().all(|m| m.priority == mocks[0].priority),
+        "every bare-path recording ranks alike, however long the recording"
+    );
+    assert!(mocks[149].priority > 0);
 }
 
 // ============================================================================
@@ -1898,4 +1935,400 @@ async fn test_ambiguous_websocket_pairing_folds_into_connect_sequence() {
     assert!(yaml.contains("pong-2"), "{yaml}");
     // Inter-frame delay between the two server frames (1751364001.1 - 1751364000.1).
     assert!(yaml.contains("1000ms"), "{yaml}");
+}
+
+/// A recording emitted by a real browser tool must load through
+/// [`ferrimock::config::parse_har`].
+///
+/// The `har` crate tags its `Spec` enum on `version`, and an internally tagged
+/// enum cannot be deserialized once `serde_json/arbitrary_precision` is on —
+/// which ferrimock's bundler dependencies force. `parse_har` carries the
+/// fallback that reads the log directly; callers that reach for
+/// `serde_json::from_str::<har::Har>` instead reject every HAR they are given.
+#[tokio::test]
+async fn a_browser_recording_parses_through_parse_har() {
+    // Shaped like Playwright's output: no `pages`, and entries carrying only
+    // the fields the spec requires.
+    let har = r#"{
+      "log": {
+        "version": "1.2",
+        "creator": { "name": "Playwright", "version": "1.46.1" },
+        "browser": { "name": "chromium", "version": "128.0.6613.18" },
+        "entries": [
+          {
+            "startedDateTime": "2026-08-13T10:00:00.000Z",
+            "time": 14.29,
+            "request": {
+              "method": "GET",
+              "url": "http://localhost:3000/api/folders/0",
+              "httpVersion": "HTTP/1.1",
+              "cookies": [],
+              "headers": [],
+              "queryString": [{ "name": "format", "value": "minimal" }],
+              "headersSize": -1,
+              "bodySize": 0
+            },
+            "response": {
+              "status": 200,
+              "statusText": "OK",
+              "httpVersion": "HTTP/1.1",
+              "cookies": [],
+              "headers": [],
+              "content": { "size": 13, "mimeType": "application/json", "text": "{\"ok\":true}" },
+              "redirectURL": "",
+              "headersSize": -1,
+              "bodySize": 13
+            },
+            "cache": {},
+            "timings": { "send": -1, "wait": -1, "receive": 14.29 }
+          }
+        ]
+      }
+    }"#;
+
+    let parsed = ferrimock::config::parse_har(har).expect("a real browser HAR must parse");
+    let har::Spec::V1_2(log) = parsed.log else {
+        panic!("expected a 1.2 log");
+    };
+    assert_eq!(log.entries.len(), 1);
+    assert_eq!(log.creator.name, "Playwright");
+}
+
+/// A request the browser aborted has no response to replay, and must not
+/// become a mock.
+///
+/// Playwright records such an entry with `status: -1`. Casting that to `u16`
+/// yields 65535, which no server accepts — and because an invalid status is a
+/// load-time error, one aborted request would take every other mock in the
+/// file down with it.
+#[tokio::test]
+async fn an_aborted_request_is_dropped_rather_than_poisoning_the_collection() {
+    let har = r#"{
+      "log": {
+        "version": "1.2",
+        "creator": { "name": "Playwright", "version": "1.46.1" },
+        "entries": [
+          {
+            "startedDateTime": "2026-08-13T10:00:00.000Z",
+            "time": 5.0,
+            "request": { "method": "GET", "url": "http://localhost:3000/api/ok",
+              "httpVersion": "HTTP/1.1", "cookies": [], "headers": [], "queryString": [],
+              "headersSize": -1, "bodySize": 0 },
+            "response": { "status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1",
+              "cookies": [], "headers": [],
+              "content": { "size": 2, "mimeType": "application/json", "text": "{}" },
+              "redirectURL": "", "headersSize": -1, "bodySize": 2 },
+            "cache": {},
+            "timings": { "send": -1, "wait": -1, "receive": 5.0 }
+          },
+          {
+            "startedDateTime": "2026-08-13T10:00:01.000Z",
+            "time": 1.0,
+            "request": { "method": "GET", "url": "http://localhost:3000/api/aborted",
+              "httpVersion": "HTTP/1.1", "cookies": [], "headers": [], "queryString": [],
+              "headersSize": -1, "bodySize": 0 },
+            "response": { "status": -1, "statusText": "", "httpVersion": "",
+              "cookies": [], "headers": [],
+              "content": { "size": 0, "mimeType": "x-unknown" },
+              "redirectURL": "", "headersSize": -1, "bodySize": 0 },
+            "cache": {},
+            "timings": { "send": -1, "wait": -1, "receive": -1 }
+          }
+        ]
+      }
+    }"#;
+
+    let har = ferrimock::config::parse_har(har).expect("parses");
+    let mocks = ferrimock::config::HarLoader::new()
+        .convert_har_to_mocks(har)
+        .await
+        .expect("converts");
+
+    assert_eq!(mocks.len(), 1, "the aborted entry must not become a mock");
+    let status = mocks[0]
+        .response_config
+        .as_ref()
+        .and_then(ferrimock::config::ResponseConfig::status);
+    assert_eq!(status, Some(200));
+
+    // The surviving collection has to actually load, which is the whole point.
+    let registry = ferrimock::engine::MockRegistry::new();
+    for mock in mocks {
+        let definition = mock
+            .into_mock_definition()
+            .await
+            .expect("a converted mock must be loadable");
+        registry.add_mock(definition);
+    }
+    assert_eq!(registry.get_all_mocks().len(), 1);
+}
+
+/// Every GraphQL operation posts to the same endpoint, so a mock matched on URL
+/// alone answers whichever one happens to win — returning another query's data
+/// instead of missing, which is the harder failure to notice.
+#[tokio::test]
+async fn graphql_entries_are_matched_on_their_operation() {
+    let entry = |op: &str, data: &str| {
+        format!(
+            r#"{{
+            "startedDateTime": "2026-08-13T10:00:00.000Z", "time": 5.0,
+            "request": {{ "method": "POST", "url": "http://localhost:3000/api/graphql",
+              "httpVersion": "HTTP/1.1", "cookies": [], "headers": [], "queryString": [],
+              "postData": {{ "mimeType": "application/json",
+                "text": "{{\"operationName\":\"{op}\",\"query\":\"query {op} {{ x }}\"}}" }},
+              "headersSize": -1, "bodySize": 0 }},
+            "response": {{ "status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1",
+              "cookies": [], "headers": [],
+              "content": {{ "size": 4, "mimeType": "application/json", "text": "{data}" }},
+              "redirectURL": "", "headersSize": -1, "bodySize": 4 }},
+            "cache": {{}}, "timings": {{ "send": -1, "wait": -1, "receive": 5.0 }} }}"#
+        )
+    };
+    let har = format!(
+        r#"{{ "log": {{ "version": "1.2",
+          "creator": {{ "name": "Playwright", "version": "1.46.1" }},
+          "entries": [{}, {}] }} }}"#,
+        entry("ListItems", "{\\\"a\\\":1}"),
+        entry("GetItem", "{\\\"b\\\":2}")
+    );
+
+    let parsed = ferrimock::config::parse_har(&har).expect("parses");
+    let mocks = ferrimock::config::HarLoader::new()
+        .convert_har_to_mocks(parsed)
+        .await
+        .expect("converts");
+    assert_eq!(mocks.len(), 2);
+
+    let registry = ferrimock::engine::MockRegistry::new();
+    for mock in mocks {
+        registry.add_mock(mock.into_mock_definition().await.expect("loadable"));
+    }
+    let matcher = ferrimock::engine::MockMatcher::new(registry);
+
+    let ask = |op: &str| {
+        let body = format!(r#"{{"operationName":"{op}","query":"query {op} {{ x }}"}}"#);
+        matcher
+            .find_match(
+                &http::Method::POST,
+                "/api/graphql",
+                None,
+                &http::HeaderMap::new(),
+                Some(body.as_bytes()),
+            )
+            .map(|m| m.mock.id.to_string())
+    };
+
+    let first = ask("ListItems").expect("ListItems must match something");
+    let second = ask("GetItem").expect("GetItem must match something");
+    assert_ne!(
+        first, second,
+        "two operations on one endpoint must not collapse onto the same mock"
+    );
+}
+
+/// Build a one-entry HAR fragment. `body` is written into the response text
+/// verbatim, so callers escape their own JSON.
+fn har_entry(method: &str, url: &str, status: i64, body: &str) -> String {
+    format!(
+        r#"{{
+        "startedDateTime": "2026-08-13T10:00:00.000Z", "time": 5.0,
+        "request": {{ "method": "{method}", "url": "{url}",
+          "httpVersion": "HTTP/1.1", "cookies": [], "headers": [], "queryString": [],
+          "headersSize": -1, "bodySize": 0 }},
+        "response": {{ "status": {status}, "statusText": "OK", "httpVersion": "HTTP/1.1",
+          "cookies": [], "headers": [],
+          "content": {{ "size": 4, "mimeType": "application/json", "text": "{body}" }},
+          "redirectURL": "", "headersSize": -1, "bodySize": 4 }},
+        "cache": {{}}, "timings": {{ "send": -1, "wait": -1, "receive": 5.0 }} }}"#
+    )
+}
+
+fn har_of(entries: &[String]) -> String {
+    format!(
+        r#"{{ "log": {{ "version": "1.2",
+      "creator": {{ "name": "Playwright", "version": "1.46.1" }},
+      "entries": [{}] }} }}"#,
+        entries.join(",")
+    )
+}
+
+async fn load(har: &str) -> ferrimock::engine::MockMatcher {
+    let parsed = ferrimock::config::parse_har(har).expect("parses");
+    let mocks = ferrimock::config::HarLoader::new()
+        .convert_har_to_mocks(parsed)
+        .await
+        .expect("converts");
+    let registry = ferrimock::engine::MockRegistry::new();
+    for mock in mocks {
+        registry.add_mock(mock.into_mock_definition().await.expect("loadable"));
+    }
+    ferrimock::engine::MockMatcher::new(registry)
+}
+
+fn served(matcher: &ferrimock::engine::MockMatcher, path: &str, query: Option<&str>) -> String {
+    let found = matcher
+        .find_match(
+            &http::Method::GET,
+            path,
+            query,
+            &http::HeaderMap::new(),
+            None,
+        )
+        .unwrap_or_else(|| panic!("{path}?{} matched nothing", query.unwrap_or("")));
+    match &found.mock.response.body {
+        ferrimock::types::BodySource::Inline(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => panic!("unexpected body source: {other:?}"),
+    }
+}
+
+/// A recorded request must match the mock made from it. Rebuilding the query
+/// from decoded pairs breaks that: the percent-encoding is lost and the mock
+/// silently stops matching the traffic it was recorded from.
+#[tokio::test]
+async fn a_recorded_query_keeps_its_encoding() {
+    let url =
+        "http://localhost:3000/api/activity?cursor=eyJwIjoxfQ%3D%3D%2CeyJwIjoyfQ%3D%3D&pageSize=6";
+    let matcher = load(&har_of(&[har_entry("GET", url, 200, "{\\\"page\\\":2}")])).await;
+
+    assert_eq!(
+        served(
+            &matcher,
+            "/api/activity",
+            Some("cursor=eyJwIjoxfQ%3D%3D%2CeyJwIjoyfQ%3D%3D&pageSize=6"),
+        ),
+        "{\"page\":2}"
+    );
+}
+
+/// A parameter written without a value must not grow one.
+#[tokio::test]
+async fn a_valueless_query_parameter_is_left_alone() {
+    let url = "http://localhost:3000/api/links?folder_id=1&marker";
+    let matcher = load(&har_of(&[har_entry("GET", url, 200, "{\\\"ok\\\":true}")])).await;
+
+    assert_eq!(
+        served(&matcher, "/api/links", Some("folder_id=1&marker"),),
+        "{\"ok\":true}"
+    );
+}
+
+/// Redacting a credential must not make the mock unmatchable by the request it
+/// was recorded from: the surviving parameters move into matchers, which ignore
+/// the token rather than demanding its absence.
+#[tokio::test]
+async fn a_redacted_credential_does_not_strand_the_mock() {
+    let url = "http://localhost:3000/api/files?fields=name&access_token=secret123";
+    let matcher = load(&har_of(&[har_entry("GET", url, 200, "{\\\"n\\\":1}")])).await;
+
+    assert_eq!(
+        served(
+            &matcher,
+            "/api/files",
+            Some("fields=name&access_token=secret123")
+        ),
+        "{\"n\":1}",
+        "the recorded request still carries its token"
+    );
+    assert_eq!(
+        served(&matcher, "/api/files", Some("fields=name")),
+        "{\"n\":1}",
+        "and the same call without one is the same call"
+    );
+
+    let mocks = ferrimock::config::HarLoader::new()
+        .convert_har_to_mocks(
+            ferrimock::config::parse_har(&har_of(&[har_entry("GET", url, 200, "{}")]))
+                .expect("parses"),
+        )
+        .await
+        .expect("converts");
+    let urls = &mocks[0].match_config.as_ref().expect("match config").urls;
+    assert!(
+        !urls[0].contains("secret123"),
+        "the credential must not survive into the mock: {urls:?}"
+    );
+}
+
+/// A recording of the bare endpoint must not answer the parameterised calls
+/// recorded beside it. An exact pattern naming no query matches a request that
+/// carries one, so without ranking by specificity the bare recording — being
+/// earlier — wins every tie.
+#[tokio::test]
+async fn a_bare_recording_does_not_swallow_the_parameterised_ones() {
+    let base = "http://localhost:3000/api/members";
+    let matcher = load(&har_of(&[
+        har_entry("GET", base, 200, "{\\\"sort\\\":\\\"none\\\"}"),
+        har_entry(
+            "GET",
+            &format!("{base}?sortColumn=name"),
+            200,
+            "{\\\"sort\\\":\\\"name\\\"}",
+        ),
+        har_entry(
+            "GET",
+            &format!("{base}?sortColumn=email"),
+            200,
+            "{\\\"sort\\\":\\\"email\\\"}",
+        ),
+    ]))
+    .await;
+
+    let path = "/api/members";
+    assert_eq!(
+        served(&matcher, path, Some("sortColumn=name")),
+        "{\"sort\":\"name\"}"
+    );
+    assert_eq!(
+        served(&matcher, path, Some("sortColumn=email")),
+        "{\"sort\":\"email\"}"
+    );
+    assert_eq!(
+        served(&matcher, path, None),
+        "{\"sort\":\"none\"}",
+        "the bare call still gets the bare recording"
+    );
+}
+
+/// A trace records a conversation: the same call answered differently as the
+/// session moves on. Replaying it must hand those answers back in order, not
+/// repeat the first one and leave the rest unreachable.
+#[tokio::test]
+async fn a_request_recorded_several_times_replays_in_order() {
+    let url = "http://localhost:3000/api/jobs/7";
+    let matcher = load(&har_of(&[
+        har_entry("GET", url, 200, "{\\\"state\\\":\\\"pending\\\"}"),
+        har_entry("GET", url, 200, "{\\\"state\\\":\\\"running\\\"}"),
+        har_entry("GET", url, 200, "{\\\"state\\\":\\\"done\\\"}"),
+    ]))
+    .await;
+
+    let path = "/api/jobs/7";
+    assert_eq!(served(&matcher, path, None), "{\"state\":\"pending\"}");
+    assert_eq!(served(&matcher, path, None), "{\"state\":\"running\"}");
+    assert_eq!(served(&matcher, path, None), "{\"state\":\"done\"}");
+    assert_eq!(
+        served(&matcher, path, None),
+        "{\"state\":\"done\"}",
+        "the last recording keeps answering once the sequence is spent"
+    );
+}
+
+/// Repeats that were answered identically are left as one live mock: retiring
+/// them would churn registry state to no visible effect.
+#[tokio::test]
+async fn identical_repeats_are_not_sequenced() {
+    let url = "http://localhost:3000/api/health";
+    let har = har_of(&[
+        har_entry("GET", url, 200, "{\\\"ok\\\":true}"),
+        har_entry("GET", url, 200, "{\\\"ok\\\":true}"),
+    ]);
+    let mocks = ferrimock::config::HarLoader::new()
+        .convert_har_to_mocks(ferrimock::config::parse_har(&har).expect("parses"))
+        .await
+        .expect("converts");
+
+    assert!(
+        mocks.iter().all(|m| !m.once),
+        "nothing to sequence when every answer is the same"
+    );
 }

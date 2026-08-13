@@ -105,6 +105,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             keep_infra_headers,
             extract_bodies,
             body_threshold_kb,
+            flatten_repeats,
         } => {
             convert::convert_har(convert::ConvertHarOptions {
                 input,
@@ -121,6 +122,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                 strip_infrastructure_headers: !keep_infra_headers,
                 extract_bodies,
                 body_threshold_kb,
+                sequence_repeated_requests: !flatten_repeats,
             })
             .await
         }

@@ -11,11 +11,12 @@ use crate::Result;
 use crate::error::Context;
 use har::{Har, Spec, v1_2};
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use url::Url;
+use url::{Url, form_urlencoded};
 
-use super::{MatchConfig, MockConfig, ResponseConfig};
+use super::{GraphQLMatchConfig, MatchConfig, MockConfig, ResponseConfig};
 
 /// Parse HAR text robustly under `serde_json/arbitrary_precision`.
 ///
@@ -45,6 +46,42 @@ pub fn parse_har(content: &str) -> Result<Har> {
 
 /// Default body size threshold for extraction (100 KB)
 const DEFAULT_BODY_SIZE_THRESHOLD: usize = 100 * 1024;
+
+/// Priority of a mock that pins the whole request line, query included. Ties
+/// among these fall back to recording order, which is what replays a repeated
+/// request in sequence.
+const QUERY_MATCH_PRIORITY: u32 = 200;
+
+/// Priority of a mock recorded from a bare path, which also answers requests
+/// that carry a query no recording pinned.
+const PATH_MATCH_PRIORITY: u32 = 100;
+
+/// The GraphQL operation a recorded request carries, if it is one.
+///
+/// Every operation POSTs to the same endpoint, so a mock matched on URL alone
+/// answers whichever operation happens to win — silently returning another
+/// query's data rather than missing, which is the harder failure to notice.
+fn graphql_operation(entry: &v1_2::Entries) -> Option<String> {
+    let text = entry.request.post_data.as_ref()?.text.as_ref()?;
+    let body: serde_json::Value = serde_json::from_str(text).ok()?;
+    // A batch posts an array; those route as a whole and are left to match on
+    // URL, since no single operation name describes the request.
+    let object = body.as_object()?;
+    object.get("query")?.as_str()?;
+    let name = object.get("operationName")?.as_str()?;
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Narrow a recorded status to a real HTTP one.
+///
+/// Returns `None` for anything outside the HTTP range, which is how browser
+/// tools spell "this request never completed" — Playwright writes `-1`, and an
+/// `as` cast would turn that into 65535.
+fn http_status(recorded: i64) -> Option<u16> {
+    u16::try_from(recorded)
+        .ok()
+        .filter(|s| (100..=599).contains(s))
+}
 
 /// Determines whether a hostname should be included when loading HAR files.
 ///
@@ -107,6 +144,152 @@ fn is_sensitive_query_param(name: &str) -> bool {
     )
 }
 
+/// A recorded request line reduced to what a mock matches on.
+struct UrlMatch {
+    /// Everything before the query string.
+    base: String,
+    /// The query to match as part of the URL, as recorded.
+    query: Option<String>,
+    /// Query parameters to match one by one, used when the recorded query
+    /// cannot be matched whole because a credential was removed from it.
+    pinned: FxHashMap<String, String>,
+}
+
+impl UrlMatch {
+    fn into_request_line(self) -> String {
+        match self.query {
+            Some(query) => format!("{}?{}", self.base, query),
+            None => self.base,
+        }
+    }
+}
+
+fn split_request_line(raw_url: &str) -> (String, Option<String>) {
+    let without_fragment = raw_url.split('#').next().unwrap_or(raw_url);
+    match without_fragment.split_once('?') {
+        Some((base, query)) => (base.to_string(), Some(query.to_string())),
+        None => (without_fragment.to_string(), None),
+    }
+}
+
+/// Restate a query string as one matcher per parameter.
+///
+/// Returns None when doing so would change what the query means:
+/// [`QueryMatcher`](crate::types::QueryMatcher) compares decoded values, holds
+/// one value per name, and never sees a parameter written without `=`, so a
+/// query with a repeat, a valueless parameter, or a value that is not valid
+/// UTF-8 once decoded has no faithful matcher form.
+fn pin_query(query: &str) -> Option<FxHashMap<String, String>> {
+    let mut pinned = FxHashMap::default();
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (name, value) = pair.split_once('=')?;
+        let name = urlencoding::decode(name).ok()?.into_owned();
+        let value = urlencoding::decode(value).ok()?.into_owned();
+        if pinned.insert(name, value).is_some() {
+            return None;
+        }
+    }
+    Some(pinned)
+}
+
+/// What a mock matches on, as one comparable value.
+///
+/// Two recordings with the same key are indistinguishable to the matcher: no
+/// request can select one over the other.
+type MatchKey = (
+    Vec<String>,
+    Vec<String>,
+    Option<String>,
+    Vec<(String, String)>,
+);
+
+/// The match key of a converted recording, or None when the mock says something
+/// this cannot compare — in which case it is left out of every group and never
+/// sequenced, which is the safe way to be unsure.
+fn match_key(mock: &MockConfig) -> Option<MatchKey> {
+    let m = mock.match_config.as_ref()?;
+    let graphql = match m.graphql.as_ref() {
+        None => None,
+        Some(GraphQLMatchConfig::Simple(operation)) => Some(operation.clone()),
+        Some(_) => return None,
+    };
+    let mut pinned: Vec<(String, String)> = m
+        .query
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    pinned.sort_unstable();
+    Some((m.methods.clone(), m.urls.clone(), graphql, pinned))
+}
+
+/// Whether two recordings of the same request were answered the same way.
+fn same_answer(a: &MockConfig, b: &MockConfig) -> bool {
+    match (a.response_config.as_ref(), b.response_config.as_ref()) {
+        (
+            Some(ResponseConfig::Structured {
+                status: sa,
+                body: ba,
+                file: fa,
+                ..
+            }),
+            Some(ResponseConfig::Structured {
+                status: sb,
+                body: bb,
+                file: fb,
+                ..
+            }),
+        ) => sa == sb && ba == bb && fa == fb,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// Replay a request that was recorded several times in the order it was
+/// answered, by retiring each mock as it is used.
+///
+/// A trace records a conversation, not a table: the same call can be answered
+/// differently as the session moves on — a list before and after an upload, a
+/// job that is pending and then done. Left alone, every one of those requests
+/// is answered by whichever recording came first and the rest are dead weight.
+/// Chaining them with `once` hands them back in the order they were recorded,
+/// and the final one keeps answering afterwards.
+///
+/// Recordings that were answered identically are left alone: sequencing them
+/// would retire mocks to no visible effect.
+fn sequence_repeated_requests(mocks: &mut [MockConfig]) {
+    let mut groups: std::collections::HashMap<MatchKey, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (index, mock) in mocks.iter().enumerate() {
+        if let Some(key) = match_key(mock) {
+            groups.entry(key).or_default().push(index);
+        }
+    }
+
+    for indices in groups.values() {
+        let Some((&last, rest)) = indices.split_last() else {
+            continue;
+        };
+        if rest.is_empty() || rest.iter().all(|&i| same_answer(&mocks[i], &mocks[last])) {
+            continue;
+        }
+        for &i in rest {
+            mocks[i].once = true;
+        }
+    }
+}
+
+/// Whether a raw `name=value` pair names a sensitive parameter.
+///
+/// The name is decoded before the test so an encoded spelling cannot smuggle a
+/// credential past it; the pair itself stays untouched.
+fn is_sensitive_pair(pair: &str) -> bool {
+    let raw_name = pair.split('=').next().unwrap_or(pair);
+    match form_urlencoded::parse(raw_name.as_bytes()).next() {
+        Some((name, _)) => is_sensitive_query_param(&name),
+        None => false,
+    }
+}
+
 /// Check if a response body should be extracted to a file rather than inlined
 fn should_use_file_body(body: &str, content_type: Option<&str>, threshold: usize) -> bool {
     if body.len() > threshold {
@@ -154,6 +337,10 @@ pub struct HarLoadOptions {
     pub strip_infrastructure_headers: bool,
     /// Remove access_token, api_key from query strings (default: true)
     pub strip_sensitive_query_params: bool,
+    /// Replay a request recorded several times with differing answers in the
+    /// order it was answered, rather than always giving back the first
+    /// (default: true)
+    pub sequence_repeated_requests: bool,
     /// Directory for extracted body files (None = inline all bodies)
     pub body_output_dir: Option<PathBuf>,
     /// Size threshold for body extraction (default: 100KB)
@@ -172,6 +359,7 @@ impl Default for HarLoadOptions {
             strip_sensitive_headers: true,
             strip_infrastructure_headers: true,
             strip_sensitive_query_params: true,
+            sequence_repeated_requests: true,
             body_output_dir: None,
             body_size_threshold: DEFAULT_BODY_SIZE_THRESHOLD,
         }
@@ -195,6 +383,10 @@ impl std::fmt::Debug for HarLoadOptions {
             .field(
                 "strip_sensitive_query_params",
                 &self.strip_sensitive_query_params,
+            )
+            .field(
+                "sequence_repeated_requests",
+                &self.sequence_repeated_requests,
             )
             .field("body_output_dir", &self.body_output_dir)
             .field("body_size_threshold", &self.body_size_threshold)
@@ -261,6 +453,10 @@ impl HarLoader {
             }
         }
 
+        if self.options.sequence_repeated_requests {
+            sequence_repeated_requests(&mut mocks);
+        }
+
         Ok(mocks)
     }
 
@@ -271,9 +467,17 @@ impl HarLoader {
             return true;
         }
 
+        // An entry that never received a response cannot be replayed. Browser
+        // tools record an aborted or cancelled request with a status outside
+        // the HTTP range (Playwright writes `-1`), and carrying one through
+        // produces a mock no server would accept — which, being a load-time
+        // error, takes every other mock in the file down with it.
+        let Some(status) = http_status(entry.response.status) else {
+            return true;
+        };
+
         // Skip redirects
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        if self.options.exclude_redirects && (300..400).contains(&(entry.response.status as u16)) {
+        if self.options.exclude_redirects && (300..400).contains(&status) {
             return true;
         }
 
@@ -288,80 +492,97 @@ impl HarLoader {
     /// Normalize a URL: convert absolute to relative, strip sensitive query params.
     /// Returns None if the domain is filtered out.
     fn normalize_url(&self, raw_url: &str) -> Option<String> {
-        // Try parsing as an absolute URL
-        if let Ok(parsed) = Url::parse(raw_url) {
-            if let Some(host) = parsed.host_str() {
-                // Filter by domain if a filter is configured
-                if let Some(ref filter) = self.options.domain_filter
-                    && !filter.is_allowed(host)
-                {
-                    return None;
-                }
-
-                if self.options.normalize_urls {
-                    // Build relative path with filtered query params
-                    let path = parsed.path();
-                    let query = self.filter_query_params(parsed.query_pairs());
-                    if query.is_empty() {
-                        return Some(path.to_string());
-                    }
-                    return Some(format!("{path}?{query}"));
-                }
-            }
-
-            // Not normalizing, but still filter query params if enabled
-            if self.options.strip_sensitive_query_params {
-                let query = self.filter_query_params(parsed.query_pairs());
-                let base = raw_url
-                    .get(..raw_url.find('?').unwrap_or(raw_url.len()))
-                    .unwrap_or(raw_url);
-                if query.is_empty() {
-                    return Some(base.to_string());
-                }
-                return Some(format!("{base}?{query}"));
-            }
-
-            return Some(raw_url.to_string());
-        }
-
-        // Already a relative URL - just handle query param stripping
-        if self.options.strip_sensitive_query_params
-            && let Some(query_start) = raw_url.find('?')
-        {
-            let path = raw_url.get(..query_start).unwrap_or(raw_url);
-            let query_str = raw_url.get(query_start + 1..).unwrap_or("");
-            let filtered: Vec<String> = query_str
-                .split('&')
-                .filter(|pair| {
-                    let name = pair.split('=').next().unwrap_or("");
-                    !is_sensitive_query_param(name)
-                })
-                .map(std::string::ToString::to_string)
-                .collect();
-            if filtered.is_empty() {
-                return Some(path.to_string());
-            }
-            return Some(format!("{}?{}", path, filtered.join("&")));
-        }
-
-        Some(raw_url.to_string())
+        Some(self.url_match(raw_url)?.into_request_line())
     }
 
-    /// Filter query parameters, removing sensitive ones
-    fn filter_query_params<'a, I>(&self, pairs: I) -> String
-    where
-        I: Iterator<Item = (std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>,
-    {
-        if !self.options.strip_sensitive_query_params {
-            let all: Vec<String> = pairs.map(|(k, v)| format!("{k}={v}")).collect();
-            return all.join("&");
+    /// Reduce a recorded request line to what the mock should match on.
+    ///
+    /// Returns None if the domain is filtered out.
+    fn url_match(&self, raw_url: &str) -> Option<UrlMatch> {
+        let (base, raw_query) = if let Ok(parsed) = Url::parse(raw_url)
+            && let Some(host) = parsed.host_str()
+        {
+            if let Some(ref filter) = self.options.domain_filter
+                && !filter.is_allowed(host)
+            {
+                return None;
+            }
+            if self.options.normalize_urls {
+                // `Url::path` and `Url::query` both hand back the string as it
+                // was written, which is what keeps the pattern comparable with
+                // the request line a server later receives.
+                (
+                    parsed.path().to_string(),
+                    parsed.query().map(str::to_string),
+                )
+            } else {
+                split_request_line(raw_url)
+            }
+        } else {
+            split_request_line(raw_url)
+        };
+
+        let Some(raw_query) = raw_query else {
+            return Some(UrlMatch {
+                base,
+                query: None,
+                pinned: FxHashMap::default(),
+            });
+        };
+
+        let kept = self.filter_query_string(&raw_query);
+        // Nothing was dropped, so the recorded request line still describes
+        // itself and matching it whole is exact.
+        if kept == raw_query {
+            return Some(UrlMatch {
+                base,
+                query: (!raw_query.is_empty()).then_some(raw_query),
+                pinned: FxHashMap::default(),
+            });
         }
 
-        let filtered: Vec<String> = pairs
-            .filter(|(k, _)| !is_sensitive_query_param(k))
-            .map(|(k, v)| format!("{k}={v}"))
+        // A credential was dropped from the middle of the query. Keeping the
+        // remainder in the pattern would demand a request whose query is
+        // exactly the redacted one — which the recorded request, still
+        // carrying its token, is not. Pinning the survivors individually says
+        // what the recording actually established and ignores the credential.
+        match pin_query(&kept) {
+            Some(pinned) => Some(UrlMatch {
+                base,
+                query: None,
+                pinned,
+            }),
+            // The remainder cannot be stated as matchers without changing its
+            // meaning, so the redacted request line stays — narrower than the
+            // recording, never wider.
+            None => Some(UrlMatch {
+                base,
+                query: (!kept.is_empty()).then(|| kept.into_owned()),
+                pinned: FxHashMap::default(),
+            }),
+        }
+    }
+
+    /// Drop sensitive parameters from a raw query string, leaving every
+    /// surviving pair byte-for-byte as it was recorded.
+    ///
+    /// Reassembling the query from a decoded pair list corrupts it: a recorded
+    /// `cursor=eyJwIjoxfQ%3D%3D` comes back as `cursor=eyJwIjoxfQ==`, a `%2C`
+    /// separator becomes a literal comma, and a valueless `marker` grows an
+    /// `=`. The mock then fails to match the very request it was recorded from.
+    /// Whole pairs are removed here, never rewritten.
+    fn filter_query_string<'a>(&self, raw_query: &'a str) -> Cow<'a, str> {
+        if !self.options.strip_sensitive_query_params {
+            return Cow::Borrowed(raw_query);
+        }
+        if !raw_query.split('&').any(is_sensitive_pair) {
+            return Cow::Borrowed(raw_query);
+        }
+        let kept: Vec<&str> = raw_query
+            .split('&')
+            .filter(|pair| !is_sensitive_pair(pair))
             .collect();
-        filtered.join("&")
+        Cow::Owned(kept.join("&"))
     }
 
     /// Convert a HAR entry to a mock definition. Returns None if the entry's
@@ -379,13 +600,22 @@ impl HarLoader {
             return Ok(None);
         }
 
-        // Normalize the URL (may return None if domain is filtered)
-        let Some(normalized_url) = self.normalize_url(&entry.request.url) else {
+        // Reduce the request line to a matcher (None if domain is filtered)
+        let Some(url_match) = self.url_match(&entry.request.url) else {
             return Ok(None);
         };
-
-        // Use exact matching with normalized URL
-        let url_pattern = format!("exact:{normalized_url}");
+        let pinned_query = url_match.pinned.clone();
+        // An exact pattern that names no query still matches a request that
+        // carries one, so a recording of the bare endpoint would answer every
+        // parameterised call to it — and, being recorded earlier, would win the
+        // tie against the mocks recorded for those calls. Ranking by how much
+        // of the request line a mock pins puts the specific ones first.
+        let priority = if url_match.query.is_some() || !url_match.pinned.is_empty() {
+            QUERY_MATCH_PRIORITY
+        } else {
+            PATH_MATCH_PRIORITY
+        };
+        let url_pattern = format!("exact:{}", url_match.into_request_line());
 
         // Convert headers, stripping based on options
         let headers: FxHashMap<String, String> = entry
@@ -423,8 +653,7 @@ impl HarLoader {
         Ok(Some(MockConfig {
             id: mock_id.into(),
             description: None,
-            #[allow(clippy::cast_possible_truncation)]
-            priority: 100u32.saturating_sub(index as u32),
+            priority,
             enabled: true,
             once: false,
             scope: None,
@@ -435,14 +664,15 @@ impl HarLoader {
                 url: None,
                 urls: vec![url_pattern],
                 headers: FxHashMap::default(),
-                query: FxHashMap::default(),
+                query: pinned_query,
                 body: FxHashMap::default(),
-                graphql: None,
+                graphql: graphql_operation(entry).map(GraphQLMatchConfig::Simple),
             }),
             request: None,
             response_config: Some(ResponseConfig::Structured {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                status: Some(entry.response.status as u16),
+                // Entries without a usable status are filtered out by
+                // `should_skip_entry`, so this only ever narrows a real one.
+                status: http_status(entry.response.status),
                 headers,
                 body: body_value,
                 template: None,
@@ -1019,15 +1249,22 @@ mod tests {
         );
     }
 
+    /// Redacting a credential leaves a query the recorded request does not
+    /// have, so the survivors move out of the URL and into matchers, which
+    /// ignore the token instead of demanding its absence.
     #[test]
     fn test_normalize_url_strips_access_token() {
         let loader = HarLoader::new();
+        let matched = loader
+            .url_match("https://api.example.com/v2/users/me?access_token=SECRET&fields=name")
+            .expect("not filtered");
+
         assert_eq!(
-            loader.normalize_url(
-                "https://api.example.com/v2/users/me?access_token=SECRET&fields=name"
-            ),
-            Some("/v2/users/me?fields=name".to_string())
+            matched.pinned.get("fields").map(String::as_str),
+            Some("name")
         );
+        assert!(!matched.pinned.contains_key("access_token"));
+        assert_eq!(matched.into_request_line(), "/v2/users/me");
     }
 
     #[test]
@@ -1113,7 +1350,7 @@ mod tests {
         assert!(!loader.should_strip_header("content-type"));
         assert!(!loader.should_strip_header("content-length"));
         assert!(!loader.should_strip_header("x-request-id"));
-        assert!(!loader.should_strip_header("x-request-id"));
+        assert!(!loader.should_strip_header("x-correlation-id"));
     }
 
     #[test]
@@ -1311,9 +1548,12 @@ mod tests {
         assert_eq!(mocks.len(), 1);
         let mock = &mocks[0];
 
-        // URL should be relative and access_token stripped
+        // URL relative, access_token gone, and the parameter it was recorded
+        // alongside pinned separately so the recorded request still matches.
         let mc = mock.match_config.as_ref().unwrap();
-        assert_eq!(mc.urls[0], "exact:/v2/users/me?fields=name");
+        assert_eq!(mc.urls[0], "exact:/v2/users/me");
+        assert_eq!(mc.query.get("fields").map(String::as_str), Some("name"));
+        assert!(!mc.query.contains_key("access_token"));
 
         // Sensitive and infrastructure headers should be stripped
         let rc = mock.response_config.as_ref().unwrap();

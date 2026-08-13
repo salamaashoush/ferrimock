@@ -21,6 +21,7 @@ pub struct ConvertHarOptions {
     pub strip_infrastructure_headers: bool,
     pub extract_bodies: bool,
     pub body_threshold_kb: usize,
+    pub sequence_repeated_requests: bool,
 }
 
 pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
@@ -68,6 +69,7 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
         strip_sensitive_headers: opts.strip_sensitive_headers,
         strip_infrastructure_headers: opts.strip_infrastructure_headers,
         strip_sensitive_query_params: opts.strip_sensitive_headers,
+        sequence_repeated_requests: opts.sequence_repeated_requests,
         body_output_dir,
         body_size_threshold: opts.body_threshold_kb * 1024,
     };
@@ -78,7 +80,11 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
     let spinner = ui::spinner("Loading HAR file...");
     let har = {
         let content = tokio::fs::read_to_string(&opts.input).await?;
-        serde_json::from_str::<har::Har>(&content).context("Failed to parse HAR file")?
+        // Not `serde_json::from_str::<har::Har>`: the strict spec type rejects
+        // recordings real tools emit, and `parse_har` carries the fallback that
+        // reads them (and reports what actually failed when it cannot).
+        ferrimock::config::parse_har(&content)
+            .with_context(|| format!("Failed to parse HAR file: {}", opts.input))?
     };
     let mocks = loader
         .convert_har_to_mocks(har)
