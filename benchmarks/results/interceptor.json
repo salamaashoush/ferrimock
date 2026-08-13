@@ -1,0 +1,64 @@
+{
+  "meta": {
+    "iterations": 20000,
+    "warmup": 3000,
+    "repeats": 5,
+    "node": "v26.3.0"
+  },
+  "libraries": {
+    "ferrimock": {
+      "static": {
+        "bestUs": 19.95,
+        "medianUs": 20.34,
+        "opsPerSec": 50122
+      },
+      "path-param": {
+        "bestUs": 21.85,
+        "medianUs": 22.13,
+        "opsPerSec": 45772
+      },
+      "post-json": {
+        "bestUs": 26.82,
+        "medianUs": 28.05,
+        "opsPerSec": 37290
+      },
+      "fallthrough": {
+        "bestUs": 47.77,
+        "medianUs": 49.58,
+        "opsPerSec": 20933
+      },
+      "graphql": {
+        "bestUs": 26.83,
+        "medianUs": 29.09,
+        "opsPerSec": 37278
+      }
+    },
+    "msw": {
+      "static": {
+        "bestUs": 26.99,
+        "medianUs": 27.03,
+        "opsPerSec": 37053
+      },
+      "path-param": {
+        "bestUs": 29.57,
+        "medianUs": 31.23,
+        "opsPerSec": 33815
+      },
+      "post-json": {
+        "bestUs": 31.31,
+        "medianUs": 33.31,
+        "opsPerSec": 31934
+      },
+      "fallthrough": {
+        "bestUs": 39.26,
+        "medianUs": 41.31,
+        "opsPerSec": 25472
+      },
+      "graphql": {
+        "bestUs": 35.12,
+        "medianUs": 39.31,
+        "opsPerSec": 28476
+      }
+    }
+  }
+}

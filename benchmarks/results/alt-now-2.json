@@ -1,0 +1,23 @@
+{
+  "root": "<run-dir>",
+  "iterations": 15000,
+  "repeats": 3,
+  "cases": {
+    "static": {
+      "bestUs": 23.45,
+      "medianUs": 26.01
+    },
+    "path-param": {
+      "bestUs": 26.45,
+      "medianUs": 26.77
+    },
+    "fallthrough": {
+      "bestUs": 58.68,
+      "medianUs": 61.01
+    },
+    "graphql": {
+      "bestUs": 30.89,
+      "medianUs": 33.05
+    }
+  }
+}

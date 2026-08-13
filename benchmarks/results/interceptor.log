@@ -1,0 +1,26 @@
+
+=== Ferrimock ===
+  ferrimock static         19.95us/req  (median 20.34us)
+  ferrimock path-param     21.85us/req  (median 22.13us)
+  ferrimock post-json      26.82us/req  (median 28.05us)
+  ferrimock fallthrough    47.77us/req  (median 49.58us)
+  ferrimock graphql        26.83us/req  (median 29.09us)
+
+=== MSW ===
+  msw        static         26.99us/req  (median 27.03us)
+  msw        path-param     29.57us/req  (median 31.23us)
+  msw        post-json      31.31us/req  (median 33.31us)
+  msw        fallthrough    39.26us/req  (median 41.31us)
+  msw        graphql        35.12us/req  (median 39.31us)
+
+wrote <run-dir>
+
+Per-request cost of a mocked fetch(), lower is better.
+
+| Scenario | Ferrimock | MSW | Speedup |
+| --- | ---: | ---: | ---: |
+| Static JSON | 19.95 us | 26.99 us | 1.35x |
+| Path param | 21.85 us | 29.57 us | 1.35x |
+| POST + parse body | 26.82 us | 31.31 us | 1.17x |
+| Fall-through (3 handlers deep) | 47.77 us | 39.26 us | 0.82x |
+| GraphQL query by name | 26.83 us | 35.12 us | 1.31x |

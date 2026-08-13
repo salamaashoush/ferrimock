@@ -1,0 +1,25 @@
+pass 1/3 done
+pass 2/3 done
+pass 3/3 done
+
+{
+  "runtime": "node",
+  "passes": 3,
+  "report": {
+    "static": {
+      "ferrimockUs": 36.94,
+      "mswUs": 55.22,
+      "ratio": 1.49
+    },
+    "params": {
+      "ferrimockUs": 38.62,
+      "mswUs": 53.63,
+      "ratio": 1.39
+    },
+    "fake": {
+      "ferrimockUs": 38.22,
+      "mswUs": 65.81,
+      "ratio": 1.72
+    }
+  }
+}

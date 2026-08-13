@@ -1,0 +1,76 @@
+mocks:
+  - id: static-json
+    match:
+      methods: ["GET"]
+      url: "/api/static"
+    response:
+      status: 200
+      headers:
+        content-type: "application/json"
+      body: '{"id":1,"name":"John Smith","email":"john@example.com","active":true}'
+
+  - id: path-param
+    match:
+      methods: ["GET"]
+      url: "/api/users/:id"
+    response:
+      status: 200
+      headers:
+        content-type: "application/json"
+      template: '{"id":"{{ captures.id }}","name":"John Smith","active":true}'
+
+  - id: dynamic-fake
+    match:
+      methods: ["GET"]
+      url: "/api/users/:id/profile"
+    response:
+      status: 200
+      headers:
+        content-type: "application/json"
+      template: |-
+        {"id":"{{ captures.id }}","name":"{{ fake_name() }}","email":"{{ fake_email() }}","uuid":"{{ fake_uuid() }}","city":"{{ fake_city() }}"}
+
+  - id: list-20
+    match:
+      methods: ["GET"]
+      url: "/api/list"
+    response:
+      status: 200
+      headers:
+        content-type: "application/json"
+      template: |-
+        {"items":[{% for i in range(end=20) %}{"id":{{ i }},"name":"{{ fake_name() }}","email":"{{ fake_email() }}"}{% if not loop.last %},{% endif %}{% endfor %}]}
+
+  - id: post-echo
+    match:
+      methods: ["POST"]
+      url: "/api/echo"
+    response:
+      status: 201
+      headers:
+        content-type: "application/json"
+      template: '{"received":{{ body_json | json_encode }},"ok":true}'
+
+  - id: conditional-admin
+    priority: 200
+    match:
+      methods: ["GET"]
+      url: "/api/whoami"
+      headers:
+        authorization: "~^Bearer admin-.+"
+    response:
+      status: 200
+      headers:
+        content-type: "application/json"
+      body: '{"role":"admin"}'
+
+  - id: conditional-user
+    priority: 100
+    match:
+      methods: ["GET"]
+      url: "/api/whoami"
+    response:
+      status: 200
+      headers:
+        content-type: "application/json"
+      body: '{"role":"user"}'

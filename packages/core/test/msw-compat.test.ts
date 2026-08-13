@@ -620,6 +620,8 @@ describe("performance: Ferrimock vs MSW", () => {
   });
 
   it("prints summary", () => {
-    console.log("\n  === Ferrimock vs MSW: Full API Parity, 3-4x Faster ===");
+    // Speed claims belong to benchmarks/fair.mjs, which measures each library
+    // in its own process. This file covers API parity only.
+    console.log("\n  === Ferrimock vs MSW: full API parity ===");
   });
 });

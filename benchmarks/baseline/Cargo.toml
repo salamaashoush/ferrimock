@@ -1,0 +1,18 @@
+[package]
+name = "bench-baseline"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Reference floor: the fastest a trivial axum handler answers on this machine.
+# Every mock server in the suite is built on the same stack, so this row shows
+# how much of a result is the tool and how much is the host.
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[workspace]

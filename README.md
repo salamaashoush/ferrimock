@@ -1,23 +1,44 @@
 # Ferrimock
 
-High-performance HTTP mocking engine for Node.js, powered by Rust. Drop-in replacement for MSW with 3-4x better performance.
+High-performance HTTP mocking engine for Node.js, powered by Rust. Drop-in replacement for MSW, 1.1-1.7x faster on the interception path and far cheaper to run as a standalone server.
 
 ## Why Ferrimock?
 
-- **3-4x faster than MSW** -- Rust mock matching engine + NAPI FunctionRef optimization
+- **Faster than MSW** -- 1.4-1.7x on node, 1.1-1.5x on bun; Rust matching engine + NAPI FunctionRef optimization ([method](#performance))
 - **MSW drop-in API** -- `setupServer`, `http.get()`, `HttpResponse.json()`, `graphql.link()`, `server.use()`, lifecycle events
 - **Declarative mocks** -- YAML/JSON/HAR files with Tera templates and 115+ fake data generators
 - **Zero-config interceptor** -- Patches `fetch`, `XMLHttpRequest`, and `http.ClientRequest`, works with any test runner
 
 ## Performance
 
-| Mode | Ferrimock | MSW | Speedup |
-|------|---------|-----|---------|
-| Declarative (inline) | 9us | N/A | Rust-only, no JS crossing |
-| Template + fake data | 8us | N/A | Rust Tera engine + fake generators |
-| JS handler (static) | 15us | 37us | **2.5x** |
-| JS handler + fake data | 18us | 46us | **2.6x** |
-| Full interceptor flow | 13us | 35us | **2.7x** |
+Cost of one mocked `fetch()`, `setupServer` against `setupServer` — the drop-in
+path, in-process, no sockets on either side. Lower is better.
+
+**node 22.22.2**, msw 2.13.2:
+
+| Scenario | Ferrimock | MSW | Speedup |
+|---|---:|---:|---:|
+| Static JSON | 36.9us | 55.2us | **1.49x** |
+| Path params | 38.6us | 53.6us | **1.39x** |
+| Handler + fake data (`fake.*` vs faker.js) | 38.2us | 65.8us | **1.72x** |
+
+**bun 1.4.0**, msw 2.13.2 — bun narrows the gap by making MSW's interception
+cheaper, not by slowing ferrimock down:
+
+| Scenario | Ferrimock | MSW | Speedup |
+|---|---:|---:|---:|
+| Static JSON | 24.8us | 29.0us | **1.17x** |
+| Path params | 26.5us | 30.0us | **1.13x** |
+| Handler + fake data | 25.9us | 38.0us | **1.47x** |
+
+Server mode (a real axum server over real TCP) costs 82-104us per request on the
+same machine. That is a different shape of work from an interceptor and is not
+comparable with the tables above, or with MSW, which has no server mode.
+
+Reproduce: `cd benchmarks && node fair.mjs` (add `BENCH_RUNTIME=node` for node).
+Each library is measured in its own process, alternating which runs first —
+loading two fetch interceptors into one process penalises whichever runs second
+by up to 8x, which is enough on its own to manufacture any result you like.
 
 ## Quick Start
 
@@ -250,6 +271,17 @@ http.get('/api/real', () => passthrough())
 const realResponse = await fetch(bypass('http://real-api.com/data'))
 ```
 
+### Verifying What Ran
+
+Every match is counted with no setup — including declarative mocks, which have no
+resolver to hold a spy.
+
+```ts
+server.matchCount('get-user')   // 3
+server.matchCounts()            // [{ mockId: 'get-user', count: 3 }]
+server.resetMatchCounts()
+```
+
 ### Server Methods
 
 ```ts
@@ -293,6 +325,20 @@ fake.creditCard()   // '4111111111111111'
 fake.jwt()          // 'eyJhbGciOiJIUzI1NiJ9...'
 fake.sentence()     // 'The quick brown fox...'
 // ... 100+ more
+```
+
+Seed the generators to make a run reproducible — same values, same order, every
+machine. Templates get one stream per mock id, so a mock's response is stable no
+matter how requests to other mocks interleave.
+
+```ts
+fake.setSeed(42)
+fake.resetSeedStreams()  // replay from the top, e.g. in beforeEach
+fake.setSeed(null)       // back to entropy
+```
+
+```bash
+ferrimock mock serve mocks/ --seed 42     # or FERRIMOCK_SEED=42
 ```
 
 ## Packages

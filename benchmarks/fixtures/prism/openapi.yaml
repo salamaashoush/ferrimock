@@ -1,0 +1,86 @@
+openapi: 3.0.3
+info:
+  title: Benchmark API
+  version: 1.0.0
+paths:
+  /api/static:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              example: { id: 1, name: John Smith, email: john@example.com, active: true }
+  /api/users/{id}:
+    get:
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              example: { id: "1", name: John Smith, active: true }
+  /api/users/{id}/profile:
+    get:
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  email: { type: string, format: email }
+                  uuid: { type: string, format: uuid }
+                  city: { type: string }
+  /api/list:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    minItems: 20
+                    maxItems: 20
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        email: { type: string, format: email }
+  /api/echo:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              example: { received: {}, ok: true }
+  /api/whoami:
+    get:
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              example: { role: user }

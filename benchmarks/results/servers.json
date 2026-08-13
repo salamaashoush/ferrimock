@@ -1,0 +1,99 @@
+{
+  "meta": {
+    "duration": "3s",
+    "connections": 50,
+    "warmup": "500ms",
+    "platform": "darwin arm64",
+    "node": "v22.22.2"
+  },
+  "tools": [
+    {
+      "id": "mockoon",
+      "label": "Mockoon CLI",
+      "kind": "native",
+      "scenarios": {
+        "static": {
+          "rps": 2345,
+          "p50Ms": 20.314,
+          "p95Ms": 29.984,
+          "p99Ms": 35.423,
+          "successRate": 100,
+          "total": 6992,
+          "unloaded": {
+            "p50Ms": 3.015,
+            "p99Ms": 5.067,
+            "rps": 320
+          }
+        },
+        "path-param": {
+          "rps": 2497,
+          "p50Ms": 18.487,
+          "p95Ms": 29.656,
+          "p99Ms": 46.536,
+          "successRate": 100,
+          "total": 7448,
+          "unloaded": {
+            "p50Ms": 3.358,
+            "p99Ms": 7.703,
+            "rps": 282
+          }
+        },
+        "dynamic": {
+          "rps": 827,
+          "p50Ms": 57.042,
+          "p95Ms": 89.319,
+          "p99Ms": 130.864,
+          "successRate": 100,
+          "total": 2436,
+          "unloaded": {
+            "p50Ms": 5.261,
+            "p99Ms": 12.074,
+            "rps": 174
+          }
+        },
+        "list-20": {
+          "rps": 920,
+          "p50Ms": 48.496,
+          "p95Ms": 87.269,
+          "p99Ms": 145.299,
+          "successRate": 100,
+          "total": 2711,
+          "unloaded": {
+            "p50Ms": 3.408,
+            "p99Ms": 5.657,
+            "rps": 284
+          }
+        },
+        "conditional": {
+          "rps": 1889,
+          "p50Ms": 25.199,
+          "p95Ms": 40.158,
+          "p99Ms": 53.402,
+          "successRate": 100,
+          "total": 5623,
+          "unloaded": {
+            "p50Ms": 3.063,
+            "p99Ms": 5.394,
+            "rps": 316
+          }
+        },
+        "post-echo": {
+          "rps": 2374,
+          "p50Ms": 19.873,
+          "p95Ms": 29.776,
+          "p99Ms": 43.186,
+          "successRate": 100,
+          "total": 7083,
+          "unloaded": {
+            "p50Ms": 3.126,
+            "p99Ms": 4.894,
+            "rps": 309
+          }
+        }
+      },
+      "startupMs": 842,
+      "idleRssMib": 116.8,
+      "loadedRssMib": 297.7
+    }
+  ]
+}

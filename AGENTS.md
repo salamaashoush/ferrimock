@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Ferrimock is a high-performance HTTP mocking engine for Node.js, powered by Rust via NAPI. It provides an MSW-compatible API that is 3-4x faster than MSW, plus declarative YAML/JSON mocks with Tera template rendering and 115+ fake data generators.
+Ferrimock is a high-performance HTTP mocking engine for Node.js, powered by Rust via NAPI. It provides an MSW-compatible API that is 1.1-1.7x faster than MSW on the interception path (see Benchmarking), plus declarative YAML/JSON mocks with Tera template rendering and 115+ fake data generators.
 
 ## Workspace Structure
 
@@ -14,11 +14,25 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 
 **ferrimock** (library) -- Core mock engine:
 - `types` - Core types: RequestContext, URL patterns, matchers, body sources, HandlerFn
-- `config` - Mock configuration parsing (YAML/JSON), HAR file loading
+- `config` - Mock configuration parsing (YAML/JSON), HAR file loading.
+  `network_error: true` desugars to the marker-header template the server and the
+  interceptor already honour — faults add no runtime path
 - `engine` - MockRegistry, MockMatcher, validation, scopes, call tracking
+- `engine::registry` match counting - every match increments a monotonic per-mock
+  counter (always on, one relaxed add). `match_count`/`verify` are the assertion
+  surface; `get_call_count` is the *retained* call-tracking buffer and plateaus at
+  its window, so never assert on it
+- `engine::diagnostics` - `MockMatcher::explain()`: per-criterion match reports and
+  ranked near misses. Evaluates through the matcher's own predicates — never
+  reimplement matching logic in a renderer (the CLI used to, and drifted)
 - `handler` - MSW-style handler builder API (http::get, graphql::query, etc.)
 - `template` - Tera template rendering with 115+ fake data functions
 - `fake_data` - Fake data generators: names, emails, UUIDs, images, PDFs
+- `fake_data::rng` - Seedable random source behind every generator, template
+  function and filter. Unseeded it delegates to `rand::rng()`; seeded, draws come
+  from a thread-scoped stream (installed per mock id by `template::renderer`) or
+  a process-wide stream. Generators must never call `rand::rng()` directly —
+  that bypasses `--seed`.
 - `consolidator` - Smart mock consolidation with pattern detection
 - `graphql` - GraphQL introspection parsing and mock generation
 - `server` - HTTP server utilities: hot reload, graceful shutdown
@@ -85,7 +99,7 @@ Flow:
    - Declarative mock: response already built in Rust
    - Handler mock: `FunctionRef::borrow_back()` + `Function::call()` (~1us direct napi_call_function)
    - Async handlers: detected via `napi_is_promise`, chained with `PromiseRaw::then()`
-4. Result: JS handler calls are 3-4x faster than MSW
+4. Result: JS handler calls are 1.1-1.7x faster than MSW, depending on runtime and scenario
 
 Key files:
 - `handler_bridge.rs` - TSFN (server mode) + FunctionRef (interceptor mode)
@@ -155,6 +169,19 @@ Implemented (MSW and web-standard naming only; no aliases):
 
 Not covered (by design): `setupWorker` (browser service worker; the engine is a
 native addon).
+
+## Benchmarking
+
+Never measure ferrimock and another interceptor in the same process. Whichever
+loads second is penalised — MSW measures 28.9us alone and 232.5us when it follows
+ferrimock, an 8x swing decided by ordering alone. Cross-library numbers come from
+`benchmarks/fair.mjs`, which runs each library in its own process and alternates
+which goes first. `packages/core/test/comparison.test.ts` measures ferrimock only,
+for the same reason.
+
+Warm both arms identically, and never quote a server-mode figure (real TCP)
+against an interceptor's (in-process). The README's original "3-4x faster than
+MSW" came from breaking both rules at once.
 
 ## Code Standards
 

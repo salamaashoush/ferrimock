@@ -1,0 +1,77 @@
+{
+  "mappings": [
+    {
+      "name": "static-json",
+      "request": { "method": "GET", "url": "/api/static" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"id\":1,\"name\":\"John Smith\",\"email\":\"john@example.com\",\"active\":true}"
+      }
+    },
+    {
+      "name": "path-param",
+      "request": { "method": "GET", "urlPathPattern": "/api/users/([^/]+)" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"id\":\"{{request.pathSegments.[2]}}\",\"name\":\"John Smith\",\"active\":true}",
+        "transformers": ["response-template"]
+      }
+    },
+    {
+      "name": "dynamic-fake",
+      "request": { "method": "GET", "urlPathPattern": "/api/users/([^/]+)/profile" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"id\":\"{{request.pathSegments.[2]}}\",\"name\":\"{{randomValue type='ALPHANUMERIC' length=12}}\",\"email\":\"{{randomValue type='ALPHANUMERIC' length=8}}@example.com\",\"uuid\":\"{{randomValue type='UUID'}}\",\"city\":\"{{randomValue type='ALPHANUMERIC' length=10}}\"}",
+        "transformers": ["response-template"]
+      }
+    },
+    {
+      "name": "list-20",
+      "request": { "method": "GET", "url": "/api/list" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"items\":[{{#each (range 0 19)}}{\"id\":{{this}},\"name\":\"{{randomValue type='ALPHANUMERIC' length=12}}\",\"email\":\"{{randomValue type='ALPHANUMERIC' length=8}}@example.com\"}{{#unless @last}},{{/unless}}{{/each}}]}",
+        "transformers": ["response-template"]
+      }
+    },
+    {
+      "name": "post-echo",
+      "request": { "method": "POST", "url": "/api/echo" },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"received\":{{{request.body}}},\"ok\":true}",
+        "transformers": ["response-template"]
+      }
+    },
+    {
+      "name": "conditional-admin",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "url": "/api/whoami",
+        "headers": { "Authorization": { "matches": "^Bearer admin-.+" } }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"role\":\"admin\"}"
+      }
+    },
+    {
+      "name": "conditional-user",
+      "priority": 2,
+      "request": { "method": "GET", "url": "/api/whoami" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"role\":\"user\"}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+with-admin c=1: 209 rps, p50 4.40ms
+with-admin c=10: 388 rps, p50 13.65ms
+with-admin c=50: 319 rps, p50 107.13ms
+no-admin c=1: 187 rps, p50 4.50ms
+no-admin c=10: 1541 rps, p50 5.84ms
+no-admin c=50: 2677 rps, p50 18.00ms

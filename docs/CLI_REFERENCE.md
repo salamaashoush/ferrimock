@@ -23,7 +23,24 @@ ferrimock [OPTIONS] [COMMAND]
 --log-format <FORMAT>   pretty, json (default: pretty)
 --quiet                 Only warnings/errors
 --verbose               Debug output
+--seed <N>              Seed fake data so runs are reproducible (env: FERRIMOCK_SEED)
 ```
+
+### Reproducible runs
+
+`--seed` pins every fake-data generator, template function and filter, so the
+same command produces the same bytes on every run and every machine:
+
+```bash
+ferrimock fake data name -n 3 --seed 42     # same three names every time
+ferrimock mock serve mocks/ --seed 42       # same responses every run
+FERRIMOCK_SEED=42 ferrimock mock test -m GET /api/users/1 --render
+```
+
+Each mock draws from its own derived stream, so a response stays stable no
+matter which worker thread serves it or how requests to other mocks interleave.
+Successive calls to one mock still differ — a seed pins the sequence, it does
+not freeze the value.
 
 ## Command Quick Reference
 
@@ -123,7 +140,7 @@ ferrimock mock test -m POST /api/users \
 # With request body
 ferrimock mock test -m POST /api/users --body '{"name": "John"}'
 
-# Debug mode showing why mocks matched/didn't match
+# Debug mode: per-criterion verdicts for every mock, plus the closest miss
 ferrimock mock test -m GET /api/users/123 --debug
 ```
 
@@ -146,7 +163,11 @@ Alias: `mock sv`
 --enable-render-endpoint    Enable POST /__mock/render endpoint
 -v, --verbose               Enable verbose request logging
 -o, --open                  Open browser to server URL
+--no-explain                Omit the near-miss explanation from 404 responses
 ```
+
+Unmatched requests answer with the closest mocks and the criterion that rejected each one — see
+[Why Didn't My Mock Match?](MOCK_ENGINE.md).
 
 **Examples:**
 
@@ -170,6 +191,8 @@ ferrimock mock serve --mocks ./mocks/api/
 | ---------------- | ------ | ------------------------------ |
 | `/*`             | ANY    | Mock matching (all paths)      |
 | `/__mock/status` | GET    | Server status and info         |
+| `/__mock/calls`  | GET    | Match count per mock           |
+| `/__mock/calls`  | DELETE | Reset match counts             |
 | `/__mock/render` | POST   | Render template (if enabled)   |
 | `/__mock/list`   | GET    | List loaded mocks (if enabled) |
 

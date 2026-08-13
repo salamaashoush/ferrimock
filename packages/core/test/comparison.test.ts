@@ -1,93 +1,101 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { FerrimockServer, http, HttpResponse, fake } from "@ferrimock/node";
-import { setupServer } from "msw/node";
-import { http as mswHttp, HttpResponse as mswHttpResponse } from "msw";
-import { faker } from "@faker-js/faker";
+/**
+ * Ferrimock performance smoke.
+ *
+ * This file measures ferrimock ONLY. It deliberately does not benchmark MSW.
+ *
+ * Loading two fetch interceptors into one process penalises whichever runs
+ * second — measured at 8x for MSW when it followed ferrimock — so any
+ * cross-library number produced in a single process is an artifact of test
+ * ordering, not of either library. The published comparison therefore runs each
+ * library in its own process, alternating which goes first:
+ *
+ *   cd benchmarks && node fair.mjs                  # bun
+ *   cd benchmarks && BENCH_RUNTIME=node node fair.mjs
+ *
+ * The two groups below are also kept apart on purpose. Interception has no
+ * sockets; server mode is a real axum server over real TCP. They are not
+ * comparable with each other, and server-mode figures must never be quoted
+ * against an interceptor's.
+ */
 
-const N = 2000;
-const WARMUP = 100;
+import { describe, it, expect, afterAll } from "bun:test";
+import { FerrimockServer, fake } from "@ferrimock/node";
+import { http, HttpResponse, setupServer } from "../src/index.js";
 
-function bench(label: string, rps: number, usPerReq: number) {
-  console.log(`  ${label.padEnd(45)} ${rps.toFixed(0).padStart(7)} req/s  (${usPerReq.toFixed(0)}us/req)`);
+const N = Number(process.env.BENCH_N ?? 2000);
+const WARMUP = Number(process.env.BENCH_WARMUP ?? 500);
+const REPEATS = Number(process.env.BENCH_REPEATS ?? 3);
+
+type Row = { label: string; usPerReq: number; rps: number };
+const interception: Row[] = [];
+const serverMode: Row[] = [];
+
+/**
+ * Time `N` requests, `REPEATS` times, and keep the fastest run — the minimum is
+ * the least GC- and scheduler-contaminated estimate of steady-state cost.
+ */
+async function measure(label: string, request: () => Promise<unknown>): Promise<Row> {
+  for (let i = 0; i < WARMUP; i++) await request();
+
+  let bestUs = Number.POSITIVE_INFINITY;
+  for (let repeat = 0; repeat < REPEATS; repeat++) {
+    const start = performance.now();
+    for (let i = 0; i < N; i++) await request();
+    const usPerReq = ((performance.now() - start) / N) * 1000;
+    if (usPerReq < bestUs) bestUs = usPerReq;
+  }
+
+  return { label, usPerReq: bestUs, rps: 1e6 / bestUs };
 }
 
-// ===== MSW Benchmarks =====
+const get = (url: string) => async () => {
+  const res = await fetch(url);
+  await res.arrayBuffer();
+};
 
-describe("MSW vs Ferrimock comparison", () => {
-  // -- MSW: static JSON --
-  it("MSW - static JSON handler", async () => {
+describe("Interception (in-process, no sockets)", () => {
+  it("static JSON", async () => {
     const server = setupServer(
-      mswHttp.get("http://127.0.0.1:9999/api/bench", () => {
-        return mswHttpResponse.json({ id: "123", name: "John", source: "msw" });
-      })
+      http.get("http://bench.test/api/bench", () =>
+        HttpResponse.json({ id: "123", name: "John" }),
+      ),
     );
-    server.listen({ onUnhandledRequest: "bypass" });
-
-    // MSW intercepts fetch, so we need a real target to intercept
-    // MSW doesn't actually start a server -- it intercepts at the network level
-    // We need to measure just the interception overhead
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) {
-      await fetch("http://127.0.0.1:9999/api/bench");
-    }
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("MSW: static JSON (intercept)", rps, usPerReq);
-
+    server.listen({ onUnhandledRequest: "error" });
+    interception.push(await measure("Static JSON", get("http://bench.test/api/bench")));
     server.close();
+
+    expect(interception.at(-1)!.usPerReq).toBeGreaterThan(0);
   });
 
-  // -- MSW: handler with faker.js --
-  it("MSW - handler with faker.js", async () => {
+  it("handler with :params", async () => {
     const server = setupServer(
-      mswHttp.get("http://127.0.0.1:9999/api/bench", () => {
-        return mswHttpResponse.json({
-          id: faker.string.uuid(),
-          name: faker.person.fullName(),
-          email: faker.internet.email(),
-          source: "msw+faker",
-        });
-      })
+      http.get("http://bench.test/api/users/:id", ({ params }) =>
+        HttpResponse.json({ id: params.id, name: "John" }),
+      ),
     );
-    server.listen({ onUnhandledRequest: "bypass" });
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) {
-      await fetch("http://127.0.0.1:9999/api/bench");
-    }
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("MSW: handler + faker.js", rps, usPerReq);
-
+    server.listen({ onUnhandledRequest: "error" });
+    interception.push(await measure("Path params", get("http://bench.test/api/users/42")));
     server.close();
+
+    expect(interception.at(-1)!.usPerReq).toBeGreaterThan(0);
   });
 
-  // -- MSW: handler with params --
-  it("MSW - handler with path params", async () => {
+  it("handler generating fake data", async () => {
     const server = setupServer(
-      mswHttp.get("http://127.0.0.1:9999/api/users/:id", ({ params }) => {
-        return mswHttpResponse.json({ id: params.id, name: "John" });
-      })
+      http.get("http://bench.test/api/bench", () =>
+        HttpResponse.json({ id: fake.uuid(), name: fake.name(), email: fake.email() }),
+      ),
     );
-    server.listen({ onUnhandledRequest: "bypass" });
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) {
-      await fetch("http://127.0.0.1:9999/api/users/42");
-    }
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("MSW: handler with :params", rps, usPerReq);
-
+    server.listen({ onUnhandledRequest: "error" });
+    interception.push(await measure("Handler + fake data", get("http://bench.test/api/bench")));
     server.close();
-  });
 
-  // -- Ferrimock: static declarative --
-  it("Ferrimock - static declarative mock", async () => {
+    expect(interception.at(-1)!.usPerReq).toBeGreaterThan(0);
+  });
+});
+
+describe("Server mode (real axum server, real TCP)", () => {
+  it("static declarative mock", async () => {
     const server = new FerrimockServer();
     await server.addMock({
       id: "bench-static",
@@ -95,24 +103,17 @@ describe("MSW vs Ferrimock comparison", () => {
       response: {
         status: 200,
         headers: { "content-type": "application/json" },
-        body: '{"id":"123","name":"John","source":"ferrimock-static"}',
+        body: '{"id":"123","name":"John"}',
       },
     });
     const url = await server.listen();
-    for (let i = 0; i < WARMUP; i++) await fetch(`${url}/api/bench`);
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) await fetch(`${url}/api/bench`);
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("Ferrimock: static declarative", rps, usPerReq);
-
+    serverMode.push(await measure("Declarative (pure Rust)", get(`${url}/api/bench`)));
     await server.close();
+
+    expect(serverMode.at(-1)!.usPerReq).toBeGreaterThan(0);
   });
 
-  // -- Ferrimock: Tera template with fake data --
-  it("Ferrimock - declarative template with fake data", async () => {
+  it("template with Rust fake data", async () => {
     const server = new FerrimockServer();
     await server.addMock({
       id: "bench-template",
@@ -121,124 +122,47 @@ describe("MSW vs Ferrimock comparison", () => {
         status: 200,
         headers: { "content-type": "application/json" },
         template:
-          '{"id":"{{ fake_uuid() }}","name":"{{ fake_name() }}","email":"{{ fake_email() }}","source":"ferrimock-template"}',
+          '{"id":"{{ fake_uuid() }}","name":"{{ fake_name() }}","email":"{{ fake_email() }}"}',
       },
     });
     const url = await server.listen();
-    for (let i = 0; i < WARMUP; i++) await fetch(`${url}/api/bench`);
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) await fetch(`${url}/api/bench`);
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("Ferrimock: template + Rust fake data", rps, usPerReq);
-
+    serverMode.push(await measure("Template + Rust fake data", get(`${url}/api/bench`)));
     await server.close();
+
+    expect(serverMode.at(-1)!.usPerReq).toBeGreaterThan(0);
   });
 
-  // -- Ferrimock: JS handler static --
-  it("Ferrimock - JS handler static response", async () => {
-    const server = new FerrimockServer();
-    server.useHandlers([
-      http.get("/api/bench", async () =>
-        HttpResponse.json({ id: "123", name: "John", source: "ferrimock-handler" })
-      ),
-    ]);
-    const url = await server.listen();
-    for (let i = 0; i < WARMUP; i++) await fetch(`${url}/api/bench`);
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) await fetch(`${url}/api/bench`);
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("Ferrimock: JS handler (static)", rps, usPerReq);
-
-    await server.close();
-  });
-
-  // -- Ferrimock: JS handler with fake namespace --
-  it("Ferrimock - JS handler with fake.*", async () => {
-    const server = new FerrimockServer();
-    server.useHandlers([
-      http.get("/api/bench", async () =>
-        HttpResponse.json({
-          id: fake.uuid(),
-          name: fake.name(),
-          email: fake.email(),
-          source: "ferrimock-handler+fake",
-        })
-      ),
-    ]);
-    const url = await server.listen();
-    for (let i = 0; i < WARMUP; i++) await fetch(`${url}/api/bench`);
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) await fetch(`${url}/api/bench`);
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("Ferrimock: JS handler + fake.* (NAPI)", rps, usPerReq);
-
-    await server.close();
-  });
-
-  // -- Ferrimock: JS handler with faker.js (pure JS) --
-  it("Ferrimock - JS handler with faker.js", async () => {
-    const server = new FerrimockServer();
-    server.useHandlers([
-      http.get("/api/bench", async () =>
-        HttpResponse.json({
-          id: faker.string.uuid(),
-          name: faker.person.fullName(),
-          email: faker.internet.email(),
-          source: "ferrimock-handler+fakerjs",
-        })
-      ),
-    ]);
-    const url = await server.listen();
-    for (let i = 0; i < WARMUP; i++) await fetch(`${url}/api/bench`);
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) await fetch(`${url}/api/bench`);
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("Ferrimock: JS handler + faker.js (pure JS)", rps, usPerReq);
-
-    await server.close();
-  });
-
-  // -- Ferrimock: JS handler with params --
-  it("Ferrimock - JS handler with :params", async () => {
+  it("JS handler over NAPI", async () => {
     const server = new FerrimockServer();
     server.useHandlers([
       http.get("/api/users/:id", async (req) =>
-        HttpResponse.json({ id: req.params.id, name: "John" })
+        HttpResponse.json({ id: req.params.id, name: "John" }),
       ),
     ]);
     const url = await server.listen();
-    for (let i = 0; i < WARMUP; i++) await fetch(`${url}/api/users/42`);
-
-    const start = performance.now();
-    for (let i = 0; i < N; i++) await fetch(`${url}/api/users/42`);
-    const elapsed = performance.now() - start;
-    const rps = (N / elapsed) * 1000;
-    const usPerReq = (elapsed / N) * 1000;
-    bench("Ferrimock: JS handler with :params", rps, usPerReq);
-
+    serverMode.push(await measure("JS handler over NAPI", get(`${url}/api/users/42`)));
     await server.close();
-  });
 
-  // -- Summary --
-  it("prints summary", () => {
-    console.log("\n  === Summary ===");
-    console.log("  MSW intercepts fetch at the network level (no real HTTP).");
-    console.log("  Ferrimock runs a real HTTP server (axum) with actual TCP connections.");
-    console.log("  Ferrimock declarative mocks are pure Rust (no JS overhead).");
-    console.log("  Ferrimock templates use Tera engine in Rust (no JS overhead).");
-    console.log("  fake.* uses Rust generators via NAPI (~1us per call).");
-    console.log("  faker.js is pure JavaScript.");
+    expect(serverMode.at(-1)!.usPerReq).toBeGreaterThan(0);
   });
+});
+
+afterAll(() => {
+  const runtime = typeof Bun !== "undefined" ? `bun ${Bun.version}` : `node ${process.version}`;
+  const print = (title: string, rows: Row[]) => {
+    console.log(`\n  === ${title} (${runtime}, best of ${REPEATS} x ${N}) ===`);
+    for (const row of rows) {
+      console.log(
+        `  ${row.label.padEnd(28)} ${`${row.usPerReq.toFixed(1)}us`.padStart(10)}  ${row.rps.toFixed(0).padStart(7)} req/s`,
+      );
+    }
+  };
+
+  print("Interception (in-process)", interception);
+  print("Server mode (real TCP)", serverMode);
+  console.log(
+    "\n  These two groups are not comparable with each other, and neither is\n" +
+      "  comparable with a number measured in a process that also loaded MSW.\n" +
+      "  For ferrimock vs MSW see benchmarks/fair.mjs.\n",
+  );
 });

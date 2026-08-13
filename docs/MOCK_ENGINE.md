@@ -743,6 +743,251 @@ mocks:
 
 See `mocks/examples/` for complete examples.
 
+## Faults
+
+`delay` slows a response down; `network_error` drops the connection instead of answering. Headers commit, then the
+body stream errors, so the caller sees a transport failure — `fetch` raises `TypeError`, curl reports an aborted
+transfer.
+
+```yaml
+- id: boom
+  match:
+    methods: ["GET"]
+    url: "/api/flaky"
+  network_error: true
+
+- id: slow-boom
+  match:
+    methods: ["GET"]
+    url: "/api/timeout"
+  delay: "2s"          # fail slowly
+  network_error: true
+```
+
+`network_error` is exclusive with `response`, `patch`, `sse`, `ws`, and request transforms — the connection drops, so
+there is no response to shape.
+
+Flakiness needs no dedicated feature: branch on `get_random`.
+
+```yaml
+- id: flaky
+  match: { methods: ["GET"], url: "/api/orders" }
+  response:
+    template: |-
+      {%- if get_random(start=0, end=100) < 30 -%}
+      {"status": 503, "body": {"error": "upstream unavailable"}}
+      {%- else -%}
+      {"status": 200, "body": {"ok": true}}
+      {%- endif -%}
+```
+
+Pin the flakiness with `--seed` when you need the same failures every run.
+
+## Stateful Scenarios
+
+State lives in the persistence store, so a mock can answer differently per call without a separate scenario
+mechanism. A template that emits `{status, headers, body}` controls the whole response.
+
+```yaml
+- id: order-lifecycle
+  match: { methods: ["GET"], url: "/api/order" }
+  response:
+    template: |-
+      {%- set n = store_incr(key="order.calls") -%}
+      {%- if n == 1 -%}
+      {"status": 201, "headers": {"x-state": "created"}, "body": {"state": "created"}}
+      {%- elif n == 2 -%}
+      {"status": 200, "headers": {"x-state": "processing"}, "body": {"state": "processing"}}
+      {%- else -%}
+      {"status": 410, "headers": {"x-state": "done"}, "body": {"state": "done"}}
+      {%- endif -%}
+```
+
+`store_get`, `store_set`, `store_incr`, `store_decr`, `store_set_nx`, `store_get_or_set`, `store_has`, `store_del`,
+`store_keys`, `store_ttl` and `store_clear` are all available in templates; `GET /__ferrimock/store` inspects the
+state and `DELETE /__ferrimock/store` resets it between tests.
+
+## Verifying What Ran
+
+Every match is counted — no setup, no spy inside a resolver, and it works for declarative mocks that have no
+resolver at all.
+
+```rust
+use ferrimock::engine::registry::Expected;
+
+registry.match_count("get-user");                       // 3
+registry.verify("get-user", Expected::Exactly(3))?;     // Ok(3)
+registry.verify("get-post", Expected::Never)?;          // Ok(0)
+registry.reset_match_counts();                          // between tests
+```
+
+A failed verification names the mock, the expectation and the reality — and says so when the id matches no
+registered mock, which otherwise reads as an innocent `expected 1, got 0`:
+
+```text
+mock "get-usr" expected to serve exactly 1 request(s), served 0 (no mock is registered with that id)
+```
+
+Over HTTP:
+
+| Endpoint | Method | Description |
+| -------- | ------ | ----------- |
+| `/__ferrimock/calls` | GET | Counts for every mock that served a request, busiest first |
+| `/__ferrimock/calls` | DELETE | Reset all counts |
+| `/__ferrimock/calls/{id}` | GET | One mock's count |
+| `/__ferrimock/calls/{id}?times=2` | GET | Verify; answers 409 when it fails, so CI can assert on the status alone |
+
+`?at_least=`, `?at_most=` and `?never=true` are also accepted. The standalone `mock serve` exposes the same counts at
+`/__mock/calls`, and `/__mock/list` carries a `match_count` per mock.
+
+From Node:
+
+```ts
+server.matchCount('get-user')   // 3
+server.matchCounts()            // [{ mockId: 'get-user', count: 3 }]
+server.resetMatchCounts()
+server.listHandlers()           // each entry carries matchCount
+```
+
+Note: counting happens where a mock is *served*. The Node interceptor's WebSocket lane dispatches a connection to
+every matching `ws` handler by design and is deliberately side-effect free, so those do not count.
+
+## Why Didn't My Mock Match?
+
+The engine can replay a request against every mock and report the verdict criterion by criterion. Criteria are
+evaluated through the same predicates the hot path uses, so an explanation can never disagree with a real match.
+
+```bash
+ferrimock mock test -m GET /api/users/123 --debug
+```
+
+```text
+Mock: accept-json (priority: 200)
+  ✗ NO MATCH
+  [+] method matches GET
+  [+] url matches exact "/api/users/123"
+  [-] header accept expected regex "application/json", got (absent)
+
+Closest: accept-json (priority 200): header accept expected regex "application/json", got (absent)
+```
+
+A consumed `once` mock shows as `[disabled]` with every criterion still passing — the usual cause of "it worked the
+first time".
+
+The standalone server puts the same explanation in its 404 body:
+
+```json
+{
+  "error": "No matching mock found",
+  "method": "GET",
+  "path": "/api/secure/data",
+  "explanation": "GET /api/secure/data matched no mock; closest: bearer-token-auth (priority 200): header authorization expected regex \"^Bearer\\s+...\", got (absent)",
+  "nearMisses": [{ "mockId": "bearer-token-auth", "priority": 200, "enabled": true, "failed": ["..."] }]
+}
+```
+
+Pass `--no-explain` to `mock serve` to drop it. Explaining a miss walks the whole registry, so embedders get it only
+on request:
+
+```rust
+let matcher = MockMatcher::new(registry);
+matcher.set_explain_unmatched(true);
+
+// Or build the report directly — never consumes a `once` mock, records a
+// call, or touches the match cache.
+let report = matcher.explain(&Method::GET, "/api/users/1", None, &headers, None);
+println!("{}", report.summary());
+for attempt in report.near_misses(3) {
+    println!("{attempt}");
+}
+```
+
+## Coverage And Unmatched Requests
+
+Match counts answer "did this mock run". Two run-level reports answer the questions a replayed corpus actually raises:
+which of the loaded mocks never ran, and which requests the corpus could not serve at all.
+
+```rust
+let coverage = registry.coverage();
+coverage.percent_covered();     // 76.19
+coverage.served;                // busiest first
+coverage.unused;                // highest priority first, each naming its source_file
+```
+
+`coverage()` reports the mocks currently registered, so counts left behind by a mock that was removed — a hot reload, a
+dropped scope — do not appear: a coverage report names files a reader can go and fix. A consumed `once` mock reads as
+served with `enabled: false`, which is what separates it from one that never ran.
+
+Unmatched requests are accumulated only when asked for, because a proxy that forwards misses upstream would otherwise
+pay an allocation on every request:
+
+```rust
+matcher.set_track_unmatched(true);
+
+let report = registry.unmatched_requests();
+report.requests;    // distinct request lines, most frequent first
+report.total;       // every miss, including any not retained
+report.dropped;     // non-zero means `requests` is an undercount
+registry.reset_unmatched();
+```
+
+Repeats of one request line fold into a single entry with a `count`, so a replay run polling a missing endpoint does not
+bury the rest. The query string is part of the line: a changed query is the usual difference between a hit and a miss.
+Past 1000 distinct lines further misses are counted but not retained, and `dropped` says how many.
+
+Entries carry no explanation. Mocks reload, so a stored one goes stale — post a line back to `/inspect` to find out why
+it missed, and get an answer that reflects the corpus as it is now.
+
+Over HTTP:
+
+| Endpoint | Method | Description |
+| -------- | ------ | ----------- |
+| `/__ferrimock/coverage` | GET | Served and unused mocks, with `totalMocks` and `percentCovered` |
+| `/__ferrimock/unmatched` | GET | Request lines that matched nothing, most frequent first |
+| `/__ferrimock/unmatched` | DELETE | Forget them, to scope the next report to one test |
+
+`mock serve` exposes the same two at `/__mock/coverage` and `/__mock/unmatched`, and tracks unmatched requests from the
+start — nothing sits downstream of a standalone server, so every miss there is a real one.
+
+## What To Widen
+
+A mock recorded from one URL matches that URL. The next run asks for a different id, misses, and the corpus has to be
+re-recorded. Cross-referencing the two reports above says which mocks were *one generalization* away from serving a
+miss:
+
+```rust
+let unmatched = registry.unmatched_requests();
+for s in ferrimock::engine::suggest(&matcher, &unmatched.requests) {
+    println!("{} ({:?}): {} -> {}  [{} requests]",
+        s.mock_id, s.source_file, s.current, s.proposed, s.request_count);
+}
+```
+
+```text
+get-user (mocks/users.yaml): /api/users/123 -> /api/users/:id  [47 requests]
+folder-items (mocks/folders.yaml): format=full -> format=<any>  [12 requests]
+```
+
+Over HTTP at `/__ferrimock/suggestions` (and `/__mock/suggestions` on `mock serve`), which also returns `uncovered` —
+the request lines no widening reaches, so they need a new mock rather than an edit.
+
+Proposals are ordered by how many requests each recovers, so the first line is the single edit that buys the most.
+
+**What is deliberately not suggested.** The report is only useful if applying it works, so a proposal is made only when
+one criterion rejected the request and widening it is safe:
+
+- A request rejected on *two* criteria gets nothing — widening the url while the query still rejects it would be a
+  half-fix reported as a fix.
+- A **method** mismatch is never proposed. Serving `POST` from a mock recorded for `GET` changes what the mock means.
+- **Headers** and **bodies** are never proposed against: the unmatched log keeps request lines, not payloads, so those
+  rejections cannot be re-evaluated. Post the line to `/inspect` instead.
+- A **disabled** mock is skipped — re-enabling it is the fix, and coverage already reports it as disabled.
+- `/folder/0` is **not** a widening of `/folder/0/items`. Two paths that differ structurally address different
+  endpoints, and pointing a reader at the wrong file is worse than saying nothing.
+
+Only pinned values are widened: a query matcher already spelled as a regex, `present` or `absent` is left alone, since
+each was written to discriminate and relaxing it would break what the mock exists for.
+
 ## Recording & Playback
 
 ```bash

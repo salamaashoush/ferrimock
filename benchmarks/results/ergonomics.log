@@ -1,0 +1,27 @@
+Lines of config to serve the same seven endpoints (non-empty, non-comment).
+
+| Ferrimock | Mockoon CLI | Prism (OpenAPI) | json-server |
+| ---: | ---: | ---: | ---: |
+| 70 | 63 | 86 | 7 |
+
+Scenario support, probed against each running server.
+
+| Scenario | Ferrimock | Mockoon CLI | Prism (OpenAPI) | json-server |
+| --- | :---: | :---: | :---: | :---: |
+| Static JSON body | yes | yes | yes | yes |
+| Path param in body | yes | yes | no | yes |
+| Generated fake data (5 fields) | yes | yes | no | no |
+| 20-item generated list | yes | yes | yes | no |
+| Header-conditional route | yes | yes | no | no |
+| POST with JSON body echo | yes | no | no | no |
+
+Capabilities outside the benchmark's reach (declared, with sources).
+
+| Capability | Ferrimock | Mockoon CLI | Prism (OpenAPI) | json-server |
+| --- | --- | --- | --- | --- |
+| Record real traffic to mocks | yes — HAR import + `mock convert` | yes — proxy mode with recording | partial — `prism proxy` validates, does not persist mocks | no |
+| Assert which mocks ran | yes — always-on counts, `verify()`, `/calls` | no | no | no |
+| Explain why a request did not match | yes — per-criterion near misses in the 404 and `mock test --debug` | partial — request logs show the request, not the failed criterion | yes — spec validation errors | no |
+| Deterministic generated data | yes — `--seed` | no — faker is unseeded per request | yes — `--seed` (dynamic mode only) | n/a — static file |
+| Runs without a runtime dependency | yes — single static binary | needs Node | needs Node | needs Node |
+| Browser (service worker) mocking | no — native addon, no `setupWorker` | n/a — standalone server | n/a — standalone server | n/a — standalone server |
