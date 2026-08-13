@@ -315,8 +315,12 @@ export class FerrimockInterceptor {
       }
     }
 
-    let excludeIds: string[] | null = null;
-    for (;;) {
+    // No fall-through loop here: the native resolver walks the whole candidate
+    // chain on the JS thread and returns the first real response, or null when
+    // every candidate fell through. Looping on this side cost a full
+    // `matchRequest` round trip per level — measured at ~28us against the
+    // ~90ns the repeated matching itself takes.
+    {
       const match = await this.server.matchRequest(
         method,
         path,
@@ -324,14 +328,10 @@ export class FerrimockInterceptor {
         headers ?? null,
         body ?? null,
         requestId ?? null,
-        excludeIds
+        null
       );
       if (!match) {
         return { kind: "unhandled" };
-      }
-      if (match.fallthrough) {
-        (excludeIds ??= []).push(match.mockId);
-        continue;
       }
       this.usedMockIds.add(match.mockId);
       if (match.headers[PASSTHROUGH_HEADER] === "1") {

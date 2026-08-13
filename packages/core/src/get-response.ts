@@ -56,8 +56,11 @@ export async function getResponse(
     headers[key] = value;
   });
 
-  let excludeIds: string[] | null = null;
-  for (;;) {
+  // No fall-through loop here: the native resolver walks the whole candidate
+  // chain on the JS thread and returns the first real response, or null when
+  // every candidate fell through. Looping on this side cost a full
+  // `matchRequest` round trip per level.
+  {
     const match = await server.matchRequest(
       request.method,
       url.pathname,
@@ -65,14 +68,10 @@ export async function getResponse(
       headers,
       body ?? null,
       null,
-      excludeIds
+      null
     );
     if (!match) {
       return undefined;
-    }
-    if (match.fallthrough) {
-      (excludeIds ??= []).push(match.mockId);
-      continue;
     }
     if (match.headers[PASSTHROUGH_HEADER] === "1") {
       return undefined;

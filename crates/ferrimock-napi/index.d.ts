@@ -390,6 +390,9 @@ export interface MatchedResponse {
   /**
    * Set when a handler returned null/undefined: re-match with this
    * mock's ID excluded (MSW fall-through).
+   * Legacy wire field. The native resolver now walks the whole fall-through
+   * chain itself, so a caller never sees a fall-through marker and this is
+   * always absent.
    */
   fallthrough?: boolean
 }

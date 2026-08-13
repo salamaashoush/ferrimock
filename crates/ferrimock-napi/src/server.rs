@@ -582,48 +582,55 @@ impl FerrimockServer {
 
                 let body_bytes = body.as_deref();
 
-                let mock_match = matcher.find_match_excluding(
-                    &http_method,
-                    &path,
-                    query.as_deref(),
-                    &header_map,
-                    body_bytes,
-                    exclude_ids.as_deref().unwrap_or(&[]),
-                );
+                // Collect the whole fall-through chain in this one pass. Only a
+                // handler can fall through, so the walk stops at the first
+                // declarative candidate — nothing after it is ever reachable,
+                // and generating responses for candidates that never run would
+                // charge every single-match request for the rare deep chain.
+                let mut exclude: Vec<String> = exclude_ids.clone().unwrap_or_default();
+                let mut candidates: Vec<Candidate> = Vec::new();
 
-                let Some(mock_match) = mock_match else {
-                    return Ok(MatchPhaseResult::NoMatch);
-                };
-
-                let mock_def = &mock_match.mock;
-                let captures = mock_match.captures;
-                let is_handler = matches!(&mock_def.response.body, BodySource::Handler(_));
-
-                if is_handler {
-                    // Handler mock — build context, defer handler call to JS thread
-                    let mut context = RequestContext::from_request_for_handler(
-                        method.as_str(),
+                loop {
+                    let Some(mock_match) = matcher.find_match_excluding(
+                        &http_method,
                         &path,
                         query.as_deref(),
                         &header_map,
                         body_bytes,
-                    );
-                    context.captures = captures;
-                    Ok(MatchPhaseResult::HandlerMatch {
-                        mock_id: mock_def.id.to_string(),
-                        status: mock_def.response.status,
-                        def_headers: mock_def.response.headers.clone(),
-                        context,
-                        kind: if mock_def.request.graphql_matcher.is_some() {
-                            HandlerKind::GraphQL
-                        } else {
-                            HandlerKind::Http
-                        },
-                        once: mock_def.once,
-                        request_id,
-                    })
-                } else {
-                    // Declarative — generate response fully on tokio
+                        &exclude,
+                    ) else {
+                        break;
+                    };
+
+                    let mock_def = &mock_match.mock;
+                    let captures = mock_match.captures;
+
+                    if matches!(&mock_def.response.body, BodySource::Handler(_)) {
+                        let mut context = RequestContext::from_request_for_handler(
+                            method.as_str(),
+                            &path,
+                            query.as_deref(),
+                            &header_map,
+                            body_bytes,
+                        );
+                        context.captures = captures;
+                        exclude.push(mock_def.id.to_string());
+                        candidates.push(Candidate::Handler(Box::new(HandlerCandidate {
+                            mock_id: mock_def.id.to_string(),
+                            status: mock_def.response.status,
+                            def_headers: mock_def.response.headers.clone(),
+                            context,
+                            kind: if mock_def.request.graphql_matcher.is_some() {
+                                HandlerKind::GraphQL
+                            } else {
+                                HandlerKind::Http
+                            },
+                            once: mock_def.once,
+                        })));
+                        continue;
+                    }
+
+                    // Declarative — generate on tokio and end the chain.
                     let dynamic = mock_def
                         .response
                         .generate_dynamic(
@@ -640,131 +647,178 @@ impl FerrimockServer {
                             Error::from_reason(format!("Response generation failed: {e}"))
                         })?;
 
-                    Ok(MatchPhaseResult::DeclarativeResponse(
-                        build_matched_response(
-                            &mock_def.id,
-                            mock_def.response.status,
-                            &mock_def.response.headers,
-                            dynamic,
-                        ),
-                    ))
+                    candidates.push(Candidate::Declarative(Box::new(build_matched_response(
+                        &mock_def.id,
+                        mock_def.response.status,
+                        &mock_def.response.headers,
+                        dynamic,
+                    ))));
+                    break;
                 }
+
+                if candidates.is_empty() {
+                    return Ok(MatchPhaseResult::NoMatch);
+                }
+
+                Ok(MatchPhaseResult::Chain {
+                    candidates,
+                    request_id,
+                })
             },
             // === Phase 2: Deferred resolver on JS thread ===
             move |env, result| -> Result<MaybePromise> {
                 match result {
-                    MatchPhaseResult::NoMatch => Ok(MaybePromise::resolved(env, None)?),
-                    MatchPhaseResult::DeclarativeResponse(resp) => {
-                        Ok(MaybePromise::resolved(env, Some(resp))?)
-                    }
-                    MatchPhaseResult::HandlerMatch {
-                        mock_id,
-                        status: default_status,
-                        def_headers,
-                        context,
-                        kind,
-                        once,
+                    MatchPhaseResult::NoMatch => MaybePromise::resolved(env, None),
+                    MatchPhaseResult::Chain {
+                        candidates,
                         request_id,
-                    } => {
-                        let refs = handler_refs
-                            .read()
-                            .map_err(|e| Error::from_reason(e.to_string()))?;
-                        let fn_ref = refs.get(&mock_id).ok_or_else(|| {
-                            Error::from_reason(format!("No FunctionRef for handler: {mock_id}"))
-                        })?;
-
-                        // Direct napi_call_function via FunctionRef — ~1us vs ~22us TSFN
-                        let func = fn_ref.borrow_back(env)?;
-                        let req = ResolverArg::new(kind, context, request_id);
-                        let raw_result: Unknown = func.call(req)?;
-
-                        // Check if the handler returned a Promise (async handler)
-                        let mut is_promise = false;
-                        #[allow(unsafe_code)]
-                        unsafe {
-                            napi::sys::napi_is_promise(
-                                env.raw(),
-                                raw_result.raw(),
-                                &mut is_promise,
-                            );
-                        }
-
-                        if is_promise {
-                            // Async handler — chain .then() to convert the resolved value.
-                            // napi_resolve_deferred with a Promise auto-flattens per JS spec.
-                            #[allow(unsafe_code)]
-                            let promise_raw: PromiseRaw<
-                                '_,
-                                Option<HandlerResponse>,
-                            > = unsafe {
-                                FromNapiValue::from_napi_value(env.raw(), raw_result.raw())?
-                            };
-                            let chained = promise_raw.then(move |ctx| {
-                                Ok(Some(resolve_handler_response(
-                                    &mock_id,
-                                    default_status,
-                                    &def_headers,
-                                    ctx.value,
-                                    once,
-                                    &resolver_matcher,
-                                )))
-                            })?;
-                            Ok(MaybePromise(chained.value().value))
-                        } else {
-                            // Sync handler — extract directly, no Promise overhead
-                            #[allow(unsafe_code)]
-                            let resp: Option<HandlerResponse> = unsafe {
-                                FromNapiValue::from_napi_value(env.raw(), raw_result.raw())?
-                            };
-                            Ok(MaybePromise::resolved(
-                                env,
-                                Some(resolve_handler_response(
-                                    &mock_id,
-                                    default_status,
-                                    &def_headers,
-                                    resp,
-                                    once,
-                                    &resolver_matcher,
-                                )),
-                            )?)
-                        }
-                    }
+                    } => run_chain(
+                        env,
+                        candidates,
+                        0,
+                        &handler_refs,
+                        &resolver_matcher,
+                        request_id.as_deref(),
+                    ),
                 }
             },
         )
     }
 }
 
-/// Convert a handler's return value into the wire response. `None`
-/// (null/undefined) is MSW fall-through: the caller re-matches with this
-/// mock excluded, and a consumed `once` is undone since the handler was
-/// not used.
-fn resolve_handler_response(
-    mock_id: &str,
-    default_status: http::StatusCode,
-    def_headers: &FxHashMap<String, String>,
-    resp: Option<HandlerResponse>,
-    once: bool,
+/// Walk the fall-through chain on the JS thread.
+///
+/// The loop lives here rather than in the JS interceptor because every hop
+/// back to JS costs a full `matchRequest` round trip — NAPI marshalling plus a
+/// tokio spawn — while the matching it repeats costs under 100ns. Keeping the
+/// walk on this side turns a chain of any depth into one crossing.
+///
+/// Recurses through `then` for async handlers: a returned promise flattens per
+/// the JS spec, so the caller still sees a single promise regardless of how
+/// many candidates were tried or which of them were async.
+fn run_chain(
+    env: &Env,
+    mut candidates: Vec<Candidate>,
+    start: usize,
+    handler_refs: &Arc<std::sync::RwLock<HashMap<String, Arc<HandlerFnRef>>>>,
     matcher: &MockMatcher,
-) -> MatchedResponse {
-    match resp {
-        Some(js_resp) => {
-            build_matched_response(mock_id, default_status, def_headers, js_resp.into())
-        }
-        None => {
-            if once {
-                matcher.reenable_mock(mock_id);
+    request_id: Option<&str>,
+) -> Result<MaybePromise> {
+    let mut index = start;
+
+    while index < candidates.len() {
+        let candidate = std::mem::replace(&mut candidates[index], Candidate::Consumed);
+
+        let handler = match candidate {
+            Candidate::Declarative(resp) => return MaybePromise::resolved(env, Some(*resp)),
+            Candidate::Consumed => {
+                return Err(Error::from_reason("fall-through candidate visited twice"));
             }
-            MatchedResponse {
-                status: 0,
-                status_text: None,
-                headers: HashMap::new(),
-                body: Uint8Array::from(Vec::new()),
-                mock_id: mock_id.to_string(),
-                fallthrough: Some(true),
+            Candidate::Handler(handler) => *handler,
+        };
+        let HandlerCandidate {
+            mock_id,
+            status: default_status,
+            def_headers,
+            context,
+            kind,
+            once,
+        } = handler;
+
+        let raw_result = {
+            let refs = handler_refs
+                .read()
+                .map_err(|e| Error::from_reason(e.to_string()))?;
+            let fn_ref = refs.get(&mock_id).ok_or_else(|| {
+                Error::from_reason(format!("No FunctionRef for handler: {mock_id}"))
+            })?;
+            // Direct napi_call_function via FunctionRef — ~1us vs ~22us TSFN
+            let func = fn_ref.borrow_back(env)?;
+            let req = ResolverArg::new(kind, context, request_id.map(ToString::to_string));
+            let raw: Unknown = func.call(req)?;
+            raw
+        };
+
+        let mut is_promise = false;
+        #[allow(unsafe_code)]
+        unsafe {
+            napi::sys::napi_is_promise(env.raw(), raw_result.raw(), &mut is_promise);
+        }
+
+        if is_promise {
+            // Async handler: the rest of the chain has to continue inside the
+            // continuation, since the fall-through verdict is not known yet.
+            #[allow(unsafe_code)]
+            let promise_raw: PromiseRaw<'_, Option<HandlerResponse>> =
+                unsafe { FromNapiValue::from_napi_value(env.raw(), raw_result.raw())? };
+
+            let handler_refs = Arc::clone(handler_refs);
+            let matcher = matcher.clone();
+            let request_id = request_id.map(ToString::to_string);
+            let next = index + 1;
+
+            let chained = promise_raw.then(move |ctx| match ctx.value {
+                Some(js_resp) => Ok(MaybePromise::resolved(
+                    &ctx.env,
+                    Some(build_matched_response(
+                        &mock_id,
+                        default_status,
+                        &def_headers,
+                        js_resp.into(),
+                    )),
+                )?),
+                None => {
+                    // MSW does not count a handler as used when it falls
+                    // through, so a consumed `once` is given back.
+                    if once {
+                        matcher.reenable_mock(&mock_id);
+                    }
+                    if next < candidates.len() {
+                        run_chain(
+                            &ctx.env,
+                            candidates,
+                            next,
+                            &handler_refs,
+                            &matcher,
+                            request_id.as_deref(),
+                        )
+                    } else {
+                        MaybePromise::resolved(&ctx.env, None)
+                    }
+                }
+            })?;
+
+            return Ok(MaybePromise(chained.value().value));
+        }
+
+        // Sync handler — extract directly, no Promise overhead.
+        #[allow(unsafe_code)]
+        let resp: Option<HandlerResponse> =
+            unsafe { FromNapiValue::from_napi_value(env.raw(), raw_result.raw())? };
+
+        match resp {
+            Some(js_resp) => {
+                return MaybePromise::resolved(
+                    env,
+                    Some(build_matched_response(
+                        &mock_id,
+                        default_status,
+                        &def_headers,
+                        js_resp.into(),
+                    )),
+                );
+            }
+            None => {
+                if once {
+                    matcher.reenable_mock(&mock_id);
+                }
+                index += 1;
             }
         }
     }
+
+    // Every candidate fell through: unhandled, exactly as if nothing matched.
+    MaybePromise::resolved(env, None)
 }
 
 /// Handler info returned by `listHandlers()`.
@@ -814,6 +868,9 @@ pub struct MatchedResponse {
     pub mock_id: String,
     /// Set when a handler returned null/undefined: re-match with this
     /// mock's ID excluded (MSW fall-through).
+    /// Legacy wire field. The native resolver now walks the whole fall-through
+    /// chain itself, so a caller never sees a fall-through marker and this is
+    /// always absent.
     pub fallthrough: Option<bool>,
 }
 
@@ -851,16 +908,34 @@ impl MaybePromise {
 #[allow(clippy::large_enum_variant)]
 enum MatchPhaseResult {
     NoMatch,
-    DeclarativeResponse(MatchedResponse),
-    HandlerMatch {
-        mock_id: String,
-        status: http::StatusCode,
-        def_headers: FxHashMap<String, String>,
-        context: RequestContext,
-        kind: HandlerKind,
-        once: bool,
+    /// Every candidate for this request, in match order. Handlers may fall
+    /// through to the next; a declarative response cannot, so it is always
+    /// last when present.
+    Chain {
+        candidates: Vec<Candidate>,
         request_id: Option<String>,
     },
+}
+
+/// A handler candidate's payload, boxed so the chain vector stays small.
+struct HandlerCandidate {
+    mock_id: String,
+    status: http::StatusCode,
+    def_headers: FxHashMap<String, String>,
+    context: RequestContext,
+    kind: HandlerKind,
+    once: bool,
+}
+
+/// One link in the fall-through chain. Both payloads are boxed: the common
+/// chain is a single element, and the vector is moved into an async
+/// continuation on every hop.
+enum Candidate {
+    Handler(Box<HandlerCandidate>),
+    Declarative(Box<MatchedResponse>),
+    /// Left behind when a candidate is taken out of the chain, so a bug that
+    /// revisits one is reported instead of silently re-running a handler.
+    Consumed,
 }
 
 /// Build a MatchedResponse from a DynamicResponse + mock metadata.
