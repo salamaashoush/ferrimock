@@ -92,6 +92,13 @@ pub struct MatchAttempt {
     pub outcomes: Vec<CriterionOutcome>,
     /// URL captures, populated only when every criterion passed.
     pub captures: rustc_hash::FxHashMap<String, String>,
+    /// How many leading path segments this mock's URL shares with the request.
+    ///
+    /// Ranking near misses on failure counts alone leaves every mock in a real
+    /// corpus tied — they all reject the request on its URL and nothing else —
+    /// so the "closest" one would be whichever happened to be registered first.
+    /// Naming an unrelated mock is worse than naming none.
+    pub shared_path_segments: usize,
 }
 
 impl MatchAttempt {
@@ -149,7 +156,12 @@ impl MatchReport {
     }
 
     /// The mocks that came closest, best first: fewest failed criteria, then
-    /// most satisfied, then highest priority. Only non-matching mocks appear.
+    /// most satisfied, then most path in common with the request, then highest
+    /// priority. Only non-matching mocks appear.
+    ///
+    /// Path overlap decides before priority because in a real corpus every mock
+    /// rejects a missed request on its URL alone, leaving the earlier keys tied
+    /// across the whole registry.
     #[must_use]
     pub fn near_misses(&self, limit: usize) -> Vec<&MatchAttempt> {
         let mut candidates: Vec<&MatchAttempt> =
@@ -158,6 +170,7 @@ impl MatchReport {
             (
                 a.failures().count(),
                 std::cmp::Reverse(a.passed_count()),
+                std::cmp::Reverse(a.shared_path_segments),
                 std::cmp::Reverse(a.priority),
             )
         });
@@ -444,6 +457,38 @@ impl MockMatcher {
             enabled: mock.enabled,
             outcomes,
             captures,
+            shared_path_segments: shared_path_segments(mock, path),
         }
     }
+}
+
+/// The most leading path segments any of a mock's URL patterns shares with the
+/// request. Patterns are compared on their literal text, which is what makes
+/// `/api/activity` rank above `/api/app-version`
+/// for a request to `/api/activity?cursor=…`.
+fn shared_path_segments(mock: &MockDefinition, path: &str) -> usize {
+    mock.request
+        .url_patterns
+        .iter()
+        .map(|pattern| {
+            let literal = match pattern {
+                UrlPattern::Exact(s) | UrlPattern::Prefix(s) | UrlPattern::Suffix(s) => s.as_str(),
+                UrlPattern::Regex(re) | UrlPattern::HrefRegex(re) => re.as_str(),
+                UrlPattern::Glob(g) => g.glob().glob(),
+            };
+            // A recorded pattern may carry the query it was captured with; only
+            // the path takes part in the comparison.
+            let literal_path = literal.split('?').next().unwrap_or(literal);
+            common_segments(literal_path, path)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+fn common_segments(a: &str, b: &str) -> usize {
+    a.trim_start_matches('/')
+        .split('/')
+        .zip(b.trim_start_matches('/').split('/'))
+        .take_while(|(x, y)| x == y)
+        .count()
 }

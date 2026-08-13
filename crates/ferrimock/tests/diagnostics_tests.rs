@@ -226,3 +226,68 @@ fn empty_registry_says_so() {
     assert!(report.attempts.is_empty());
     assert!(report.summary().contains("registry is empty"));
 }
+
+/// In a real corpus every mock rejects a missed request on its URL and nothing
+/// else, so failure counts tie across the whole registry. The closest mock has
+/// to be decided on path overlap, or the report names whichever was registered
+/// first — which is how a diagnosis becomes a misdirection.
+#[test]
+fn near_misses_rank_by_shared_path_not_registration_order() {
+    let registry = MockRegistry::new();
+    // Registered first, and sharing only the two leading segments.
+    registry.add_mock(mock(
+        "app-version",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::Exact("/api/app-version".into())],
+        smallvec![],
+        smallvec![],
+        None,
+    ));
+    registry.add_mock(mock(
+        "current-user",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::Exact("/api/current-user".into())],
+        smallvec![],
+        smallvec![],
+        None,
+    ));
+    // The one actually addressing this endpoint, recorded with a different
+    // query, registered last and with no priority advantage.
+    registry.add_mock(mock(
+        "recents",
+        100,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::Exact("/api/activity?cursor=&pageSize=6".into())],
+        smallvec![],
+        smallvec![],
+        None,
+    ));
+
+    let matcher = MockMatcher::new(registry);
+    let report = matcher.explain(
+        &Method::GET,
+        "/api/activity",
+        Some("cursor=abc&pageSize=6"),
+        &HeaderMap::new(),
+        None,
+    );
+
+    assert!(
+        report.matched().is_none(),
+        "the query differs, so it misses"
+    );
+    let closest = report.near_misses(1);
+    assert_eq!(
+        closest[0].mock_id,
+        "recents",
+        "the mock for this endpoint must rank above unrelated siblings, got {:?}",
+        report
+            .near_misses(3)
+            .iter()
+            .map(|a| &a.mock_id)
+            .collect::<Vec<_>>()
+    );
+    assert!(report.summary().contains("recents"), "{}", report.summary());
+}
