@@ -1162,9 +1162,14 @@ impl DynamicResponse {
     /// (status/headers/body fields), extracts them. Otherwise returns the
     /// original string as-is without a wasteful parse→re-serialize round-trip.
     pub fn from_rendered_string(rendered: String) -> Self {
+        // Trim before the shape check: a template whose `{% if %}` blocks leave
+        // a leading newline still renders a structured response, and silently
+        // serving it as a plain body would drop the status and headers.
+        let trimmed = rendered.trim();
+
         // Quick check: only attempt JSON parse if it looks like a JSON object
-        if rendered.starts_with('{')
-            && let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&rendered)
+        if trimmed.starts_with('{')
+            && let Ok(json_value) = serde_json::from_str::<serde_json::Value>(trimmed)
         {
             if let Some(obj) = json_value.as_object() {
                 let has_status = obj.contains_key("status");
@@ -1836,5 +1841,40 @@ mod tests {
             segments,
             vec![PathSegment::Key("items".to_string()), PathSegment::Index(0)]
         );
+    }
+    #[test]
+    fn structured_response_survives_template_whitespace() {
+        // `{% if %}` blocks leave a leading newline; the status and headers
+        // must still apply instead of the JSON being served as a plain body.
+        let rendered = "\n  {\"status\": 201, \"headers\": {\"x-state\": \"created\"}, \"body\": {\"ok\": true}}\n";
+        let response = DynamicResponse::from_rendered_string(rendered.to_string());
+
+        assert_eq!(response.status, Some(http::StatusCode::CREATED));
+        assert_eq!(
+            response
+                .headers
+                .as_ref()
+                .and_then(|h| h.get("x-state"))
+                .map(String::as_str),
+            Some("created")
+        );
+    }
+
+    #[test]
+    fn plain_body_keeps_its_original_bytes() {
+        let rendered = "  hello  ";
+        let response = DynamicResponse::from_rendered_string(rendered.to_string());
+
+        assert!(response.status.is_none());
+        assert_eq!(response.body.as_ref(), rendered.as_bytes());
+    }
+
+    #[test]
+    fn unstructured_json_body_is_not_reserialized() {
+        let rendered = "\n{\"name\": \"John\"}\n";
+        let response = DynamicResponse::from_rendered_string(rendered.to_string());
+
+        assert!(response.status.is_none());
+        assert_eq!(response.body.as_ref(), rendered.as_bytes());
     }
 }
