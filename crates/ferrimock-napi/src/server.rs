@@ -353,9 +353,39 @@ impl FerrimockServer {
                         .map(|_| "websocket".to_string()),
                     pattern,
                     header,
+                    match_count: u32::try_from(self.registry.match_count(m.id.as_str()))
+                        .unwrap_or(u32::MAX),
                 }
             })
             .collect()
+    }
+
+    /// Requests a mock has served since the last reset.
+    ///
+    /// Counting is always on — unlike MSW, asserting a handler ran needs no
+    /// spy inside the resolver, and it works for declarative mocks too.
+    #[napi]
+    pub fn match_count(&self, id: String) -> u32 {
+        u32::try_from(self.registry.match_count(&id)).unwrap_or(u32::MAX)
+    }
+
+    /// Every mock that has served a request, busiest first.
+    #[napi]
+    pub fn match_counts(&self) -> Vec<MockMatchCount> {
+        self.registry
+            .match_counts()
+            .into_iter()
+            .map(|(mock_id, count)| MockMatchCount {
+                mock_id,
+                count: u32::try_from(count).unwrap_or(u32::MAX),
+            })
+            .collect()
+    }
+
+    /// Reset every match count — call between tests.
+    #[napi]
+    pub fn reset_match_counts(&self) {
+        self.registry.reset_match_counts();
     }
 
     /// Every WebSocket mock matching a connection handshake, in
@@ -751,6 +781,15 @@ pub struct HandlerInfo {
     /// MSW's `info.header` display ("GET /users/:id",
     /// "query GetUser (origin: *)").
     pub header: Option<String>,
+    /// Requests this handler has served since the last reset.
+    pub match_count: u32,
+}
+
+/// One mock's match count.
+#[napi(object)]
+pub struct MockMatchCount {
+    pub mock_id: String,
+    pub count: u32,
 }
 
 /// One WebSocket mock matched by `matchWsConnections`.

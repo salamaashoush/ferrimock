@@ -2,11 +2,9 @@
 
 use super::MockApiState;
 use super::types::{CallTrackingStatus, RecordingStatus, ScopeStatus, StatusResponse};
-use crate::consolidator::ConsolidatorOptions;
-use crate::engine::MockRecorderConsolidationExt;
-use crate::recorder::{MockRecorder, RecordingFormat};
+use crate::recorder::RecordingFormat;
+use crate::server::ConsolidateOptions;
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use std::sync::Arc;
 
 /// Get mock system status
 ///
@@ -255,30 +253,21 @@ pub async fn start_recording(
     State(app_state): State<MockApiState>,
     axum::Json(options): axum::Json<RecordingOptions>,
 ) -> impl IntoResponse {
-    // Start recording inline
-    let result: crate::Result<String> = async {
-        let mut recorder_guard = app_state.mock.mock_recorder.write().await;
-        if recorder_guard.is_some() {
-            return Err(crate::mp_err!("Recording is already in progress"));
-        }
-        let session = options
-            .session
-            .unwrap_or_else(|| chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string());
-        let recording_format = match options.format.as_deref() {
-            Some("yaml") => RecordingFormat::Yaml,
-            Some("har") => RecordingFormat::Har,
-            _ => RecordingFormat::Json,
-        };
-        let output_dir = app_state
-            .config
-            .recordings_dir
-            .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from("recordings"));
-        let recorder = MockRecorder::with_format(&session, output_dir, recording_format);
-        *recorder_guard = Some(Arc::new(recorder));
-        Ok(session)
-    }
-    .await;
+    let recording_format = match options.format.as_deref() {
+        Some("yaml") => RecordingFormat::Yaml,
+        Some("har") => RecordingFormat::Har,
+        _ => RecordingFormat::Json,
+    };
+    let output_dir = app_state
+        .config
+        .recordings_dir
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from("recordings"));
+
+    let result = app_state
+        .mock
+        .start_recording(output_dir, options.session, recording_format)
+        .await;
 
     match result {
         Ok(session_name) => {
@@ -318,49 +307,39 @@ pub async fn stop_recording(
     State(app_state): State<MockApiState>,
     axum::Json(options): axum::Json<RecordingOptions>,
 ) -> impl IntoResponse {
-    // Take the recorder out of the shared state
-    let mut recorder_guard = app_state.mock.mock_recorder.write().await;
-    let Some(recorder) = recorder_guard.take() else {
-        let mut response = serde_json::Map::new();
-        response.insert("success".to_string(), serde_json::Value::Bool(false));
-        response.insert(
-            "error".to_string(),
-            serde_json::Value::String("No recording in progress".to_string()),
-        );
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::Value::Object(response)),
-        )
-            .into_response();
-    };
-    drop(recorder_guard);
-
-    let should_consolidate = options.consolidate.unwrap_or(false);
-
-    if should_consolidate {
-        // Use finalize_and_consolidate: finalizes, backs up original if requested, then consolidates
-        let consolidator_opts = ConsolidatorOptions {
+    let consolidate = options
+        .consolidate
+        .unwrap_or(false)
+        .then(|| ConsolidateOptions {
             enable_templates: options.enable_templates.unwrap_or(true),
-            min_pattern_threshold: options.min_pattern.unwrap_or(3),
-            ..ConsolidatorOptions::default()
-        };
-        let keep_original = options.keep_original.unwrap_or(false);
+            keep_original: options.keep_original.unwrap_or(false),
+            min_pattern: options.min_pattern.unwrap_or(3),
+        });
 
-        match recorder
-            .finalize_and_consolidate(consolidator_opts, keep_original)
-            .await
-        {
-            Ok((file_path, stats)) => {
-                let mut response = serde_json::Map::new();
-                response.insert("success".to_string(), serde_json::Value::Bool(true));
-                response.insert(
-                    "message".to_string(),
-                    serde_json::Value::String("Recording stopped and consolidated".to_string()),
-                );
+    let result = app_state.mock.stop_recording(consolidate).await;
+
+    match result {
+        Ok(stopped) => {
+            let mut response = serde_json::Map::new();
+            response.insert("success".to_string(), serde_json::Value::Bool(true));
+            response.insert(
+                "message".to_string(),
+                serde_json::Value::String(
+                    if stopped.consolidation_stats.is_some() {
+                        "Recording stopped and consolidated"
+                    } else {
+                        "Recording stopped"
+                    }
+                    .to_string(),
+                ),
+            );
+            if let Some(path) = stopped.file_path {
                 response.insert(
                     "file".to_string(),
-                    serde_json::Value::String(file_path.display().to_string()),
+                    serde_json::Value::String(path.display().to_string()),
                 );
+            }
+            if let Some(stats) = stopped.consolidation_stats {
                 let mut stats_obj = serde_json::Map::new();
                 stats_obj.insert(
                     "original_count".to_string(),
@@ -380,44 +359,21 @@ pub async fn stop_recording(
                     "consolidation".to_string(),
                     serde_json::Value::Object(stats_obj),
                 );
-                (StatusCode::OK, Json(serde_json::Value::Object(response))).into_response()
             }
-            Err(e) => {
-                let mut response = serde_json::Map::new();
-                response.insert("success".to_string(), serde_json::Value::Bool(false));
-                response.insert(
-                    "error".to_string(),
-                    serde_json::Value::String(format!("Failed to stop recording: {e}")),
-                );
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::Value::Object(response)),
-                )
-                    .into_response()
-            }
+            (StatusCode::OK, Json(serde_json::Value::Object(response))).into_response()
         }
-    } else {
-        // Just finalize without consolidation
-        if let Err(e) = recorder.finalize_file().await {
+        Err(e) => {
             let mut response = serde_json::Map::new();
             response.insert("success".to_string(), serde_json::Value::Bool(false));
             response.insert(
                 "error".to_string(),
-                serde_json::Value::String(format!("Failed to finalize: {e}")),
+                serde_json::Value::String(e.to_string()),
             );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
+            (
+                StatusCode::BAD_REQUEST,
                 Json(serde_json::Value::Object(response)),
             )
-                .into_response();
+                .into_response()
         }
-
-        let mut response = serde_json::Map::new();
-        response.insert("success".to_string(), serde_json::Value::Bool(true));
-        response.insert(
-            "message".to_string(),
-            serde_json::Value::String("Recording stopped".to_string()),
-        );
-        (StatusCode::OK, Json(serde_json::Value::Object(response))).into_response()
     }
 }

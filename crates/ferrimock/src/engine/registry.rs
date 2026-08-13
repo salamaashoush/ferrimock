@@ -173,6 +173,20 @@ pub struct MockRegistry {
     enabled: Arc<AtomicBool>,
     /// Call tracking per mock ID (enabled per-mock to prevent memory leaks)
     call_tracking: Arc<DashMap<LeanString, VecDeque<MockCall>>>,
+    /// Monotonic match count per mock ID. Always on: one relaxed increment per
+    /// match, and one `u64` per mock that has ever matched. Unlike
+    /// [`MockRegistry::get_call_count`] this is a true total, so assertions
+    /// stay correct past the call-tracking window.
+    match_counts: Arc<DashMap<LeanString, AtomicU64>>,
+    /// Requests that matched no mock, folded by request line. Only populated
+    /// when the matcher is tracking misses.
+    unmatched: Arc<DashMap<String, UnmatchedRequest>>,
+    /// Every miss, including ones past the distinct-line cap.
+    unmatched_total: Arc<AtomicU64>,
+    /// Misses whose line was counted but not retained.
+    unmatched_dropped: Arc<AtomicU64>,
+    /// Distinct unmatched request lines retained before dropping new ones.
+    max_unmatched: usize,
     /// Maximum calls to track per mock (prevent memory leak)
     max_tracked_calls: usize,
     /// Persistence store for stateful mock scenarios
@@ -214,6 +228,169 @@ pub struct MockRegistry {
     script_host: Arc<crate::scripting::ScriptHost>,
 }
 
+/// How many distinct unmatched request lines are retained before new ones are
+/// counted but not kept.
+const DEFAULT_MAX_UNMATCHED: usize = 1000;
+
+fn request_line(method: &str, path: &str, query: Option<&str>) -> String {
+    match query {
+        Some(q) if !q.is_empty() => format!("{method} {path}?{q}"),
+        _ => format!("{method} {path}"),
+    }
+}
+
+/// One mock's line in a [`CoverageReport`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MockCoverage {
+    /// Mock id.
+    pub mock_id: String,
+    /// Requests it served since the last reset.
+    pub count: u64,
+    /// Match priority.
+    pub priority: u32,
+    /// Whether the mock is still enabled. A `once` mock that fired reads as
+    /// served but disabled; one that never fired but is disabled was never
+    /// eligible in the first place.
+    pub enabled: bool,
+    /// File the mock was loaded from, so an unused entry names what to fix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
+}
+
+/// Which of the loaded mocks actually ran.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoverageReport {
+    /// Mocks that served at least one request, busiest first.
+    pub served: Vec<MockCoverage>,
+    /// Mocks that served none, highest priority first.
+    pub unused: Vec<MockCoverage>,
+    /// Requests served across every listed mock.
+    pub total_matches: u64,
+}
+
+impl CoverageReport {
+    /// How many mocks are loaded.
+    #[must_use]
+    pub fn total_mocks(&self) -> usize {
+        self.served.len() + self.unused.len()
+    }
+
+    /// Share of loaded mocks that served at least one request, 0-100. An empty
+    /// registry covers nothing, so it reports 0 rather than a vacuous 100.
+    #[must_use]
+    pub fn percent_covered(&self) -> f64 {
+        let total = self.total_mocks();
+        if total == 0 {
+            return 0.0;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        {
+            (self.served.len() as f64) * 100.0 / (total as f64)
+        }
+    }
+}
+
+/// A request line that matched no mock, with how often it was seen.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmatchedRequest {
+    /// HTTP method.
+    pub method: String,
+    /// Request path.
+    pub path: String,
+    /// Query string, when the request carried one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    /// How many times this exact line missed.
+    pub count: u64,
+    /// When it first missed.
+    pub first_seen: DateTime<Utc>,
+    /// When it last missed.
+    pub last_seen: DateTime<Utc>,
+}
+
+/// Every request the registry could not serve.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmatchedReport {
+    /// Distinct request lines, most frequent first.
+    pub requests: Vec<UnmatchedRequest>,
+    /// Total misses, including any not retained.
+    pub total: u64,
+    /// Misses whose request line was not retained because the distinct-line
+    /// cap was reached. Non-zero means `requests` is an undercount.
+    pub dropped: u64,
+}
+
+/// How many times a mock was expected to serve a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expected {
+    /// Served exactly this many times.
+    Exactly(u64),
+    /// Served at least this many times.
+    AtLeast(u64),
+    /// Served at most this many times.
+    AtMost(u64),
+    /// Never served.
+    Never,
+}
+
+impl Expected {
+    /// Whether an actual count satisfies this expectation.
+    #[must_use]
+    pub const fn satisfied_by(self, actual: u64) -> bool {
+        match self {
+            Self::Exactly(n) => actual == n,
+            Self::AtLeast(n) => actual >= n,
+            Self::AtMost(n) => actual <= n,
+            Self::Never => actual == 0,
+        }
+    }
+}
+
+impl std::fmt::Display for Expected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exactly(n) => write!(f, "exactly {n}"),
+            Self::AtLeast(n) => write!(f, "at least {n}"),
+            Self::AtMost(n) => write!(f, "at most {n}"),
+            Self::Never => f.write_str("never"),
+        }
+    }
+}
+
+/// A failed [`MockRegistry::verify`].
+#[derive(Debug, Clone)]
+pub struct VerifyError {
+    /// The mock being asserted on.
+    pub mock_id: String,
+    /// What the caller expected.
+    pub expected: Expected,
+    /// What actually happened.
+    pub actual: u64,
+    /// Whether a mock with this id is registered at all. A typo in the id
+    /// otherwise reads as "expected 1, got 0".
+    pub known_mock: bool,
+}
+
+impl std::fmt::Display for VerifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "mock \"{}\" expected to serve {} request(s), served {}",
+            self.mock_id, self.expected, self.actual
+        )?;
+        if !self.known_mock {
+            f.write_str(" (no mock is registered with that id)")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for VerifyError {}
+
 impl MockRegistry {
     /// Create a new empty mock registry
     pub fn new() -> Self {
@@ -228,6 +405,11 @@ impl MockRegistry {
             scope_manager: Arc::new(ScopeManager::new()),
             enabled: Arc::new(AtomicBool::new(true)),
             call_tracking: Arc::new(DashMap::new()),
+            match_counts: Arc::new(DashMap::new()),
+            unmatched: Arc::new(DashMap::new()),
+            unmatched_total: Arc::new(AtomicU64::new(0)),
+            unmatched_dropped: Arc::new(AtomicU64::new(0)),
+            max_unmatched: DEFAULT_MAX_UNMATCHED,
             max_tracked_calls: 100, // Default: track up to 100 calls per mock
             persistence_store,
             sorted_mocks_cache: Arc::new(SortedMocksCache::new()),
@@ -1040,9 +1222,193 @@ impl MockRegistry {
             .map(|v| v.value().iter().cloned().collect())
     }
 
-    /// Get the count of calls for a specific mock
+    /// How many recorded calls are currently *retained* for a mock.
+    ///
+    /// Bounded by the tracking window (100 by default), so it stops rising once
+    /// the buffer is full and is zero when tracking was never enabled. For
+    /// assertions use [`MockRegistry::match_count`].
     pub fn get_call_count(&self, mock_id: &str) -> usize {
         self.call_tracking.get(mock_id).map_or(0, |v| v.len())
+    }
+
+    // ===== Match Counting (always on) =====
+
+    /// Record that a mock served a request.
+    pub(crate) fn record_match(&self, mock_id: &str) {
+        if let Some(counter) = self.match_counts.get(mock_id) {
+            counter.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        self.match_counts
+            .entry(mock_id.into())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Total times a mock has served a request since the last reset.
+    pub fn match_count(&self, mock_id: &str) -> u64 {
+        self.match_counts
+            .get(mock_id)
+            .map_or(0, |c| c.load(Ordering::Relaxed))
+    }
+
+    /// Match counts for every mock that has served at least one request.
+    pub fn match_counts(&self) -> Vec<(String, u64)> {
+        let mut counts: Vec<(String, u64)> = self
+            .match_counts
+            .iter()
+            .map(|entry| {
+                (
+                    entry.key().to_string(),
+                    entry.value().load(Ordering::Relaxed),
+                )
+            })
+            .collect();
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        counts
+    }
+
+    /// Requests served across every mock since the last reset.
+    pub fn total_match_count(&self) -> u64 {
+        self.match_counts
+            .iter()
+            .map(|entry| entry.value().load(Ordering::Relaxed))
+            .sum()
+    }
+
+    /// Reset every match count — call between tests.
+    pub fn reset_match_counts(&self) {
+        self.match_counts.clear();
+    }
+
+    /// Assert how many times a mock served a request.
+    ///
+    /// # Errors
+    /// Returns [`VerifyError`] when the actual count does not satisfy `expected`.
+    pub fn verify(&self, mock_id: &str, expected: Expected) -> Result<u64, VerifyError> {
+        let actual = self.match_count(mock_id);
+        if expected.satisfied_by(actual) {
+            Ok(actual)
+        } else {
+            Err(VerifyError {
+                mock_id: mock_id.to_string(),
+                expected,
+                actual,
+                known_mock: self.get_mock(mock_id).is_some(),
+            })
+        }
+    }
+
+    // ===== Coverage =====
+
+    /// Which mocks served a request and which never did.
+    ///
+    /// Reports the mocks currently registered, so counts left behind by a mock
+    /// that was removed (a hot reload, a dropped scope) do not appear — a
+    /// coverage report names files a reader can go and fix.
+    pub fn coverage(&self) -> CoverageReport {
+        let mut served = Vec::new();
+        let mut unused = Vec::new();
+
+        for mock in self.get_all_mocks() {
+            let entry = MockCoverage {
+                mock_id: mock.id.to_string(),
+                count: self.match_count(mock.id.as_str()),
+                priority: mock.priority,
+                enabled: mock.enabled,
+                source_file: mock.source_file.clone(),
+            };
+            if entry.count > 0 {
+                served.push(entry);
+            } else {
+                unused.push(entry);
+            }
+        }
+
+        served.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.mock_id.cmp(&b.mock_id))
+        });
+        unused.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| a.mock_id.cmp(&b.mock_id))
+        });
+
+        let total_matches = served.iter().map(|m| m.count).sum();
+        CoverageReport {
+            served,
+            unused,
+            total_matches,
+        }
+    }
+
+    // ===== Unmatched Requests =====
+
+    /// Record a request that matched no mock, keyed by its request line.
+    ///
+    /// Repeats of the same line fold into one entry: a replay run that polls a
+    /// missing endpoint would otherwise fill the report with one path.
+    pub fn record_unmatched(&self, method: &str, path: &str, query: Option<&str>) {
+        self.unmatched_total.fetch_add(1, Ordering::Relaxed);
+
+        let line = request_line(method, path, query);
+        let now = Utc::now();
+
+        if let Some(mut entry) = self.unmatched.get_mut(&line) {
+            entry.count += 1;
+            entry.last_seen = now;
+            return;
+        }
+
+        // Approximate: a racing insert can overshoot the cap by the number of
+        // threads missing at once. Bounding memory is the point, not exactness.
+        if self.unmatched.len() >= self.max_unmatched {
+            self.unmatched_dropped.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+
+        self.unmatched.insert(
+            line,
+            UnmatchedRequest {
+                method: method.to_string(),
+                path: path.to_string(),
+                query: query.map(ToString::to_string),
+                count: 1,
+                first_seen: now,
+                last_seen: now,
+            },
+        );
+    }
+
+    /// Every distinct request line that matched no mock, most frequent first.
+    ///
+    /// Carries no explanation: mocks reload, so a stored one goes stale. Post a
+    /// line back to the inspector to find out why it missed.
+    pub fn unmatched_requests(&self) -> UnmatchedReport {
+        let mut requests: Vec<UnmatchedRequest> =
+            self.unmatched.iter().map(|e| e.value().clone()).collect();
+        requests.sort_by(|a, b| {
+            b.count
+                .cmp(&a.count)
+                .then_with(|| a.method.cmp(&b.method))
+                .then_with(|| a.path.cmp(&b.path))
+                .then_with(|| a.query.cmp(&b.query))
+        });
+
+        UnmatchedReport {
+            requests,
+            total: self.unmatched_total.load(Ordering::Relaxed),
+            dropped: self.unmatched_dropped.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Forget every unmatched request — call between tests.
+    pub fn reset_unmatched(&self) {
+        self.unmatched.clear();
+        self.unmatched_total.store(0, Ordering::Relaxed);
+        self.unmatched_dropped.store(0, Ordering::Relaxed);
     }
 
     /// Clear all recorded calls for a specific mock (keeps tracking enabled)

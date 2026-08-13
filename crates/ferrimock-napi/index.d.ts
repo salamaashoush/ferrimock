@@ -165,6 +165,17 @@ export declare class FerrimockServer {
    */
   listHandlers(): Array<HandlerInfo>
   /**
+   * Requests a mock has served since the last reset.
+   *
+   * Counting is always on — unlike MSW, asserting a handler ran needs no
+   * spy inside the resolver, and it works for declarative mocks too.
+   */
+  matchCount(id: string): number
+  /** Every mock that has served a request, busiest first. */
+  matchCounts(): Array<MockMatchCount>
+  /** Reset every match count — call between tests. */
+  resetMatchCounts(): void
+  /**
    * Every WebSocket mock matching a connection handshake, in
    * precedence order — the interceptor lane dispatches an intercepted
    * connection to ALL matching `ws` handlers (MSW semantics). No side
@@ -324,6 +335,8 @@ export interface HandlerInfo {
    * "query GetUser (origin: *)").
    */
   header?: string
+  /** Requests this handler has served since the last reset. */
+  matchCount: number
 }
 
 /**
@@ -379,6 +392,12 @@ export interface MatchedResponse {
    * mock's ID excluded (MSW fall-through).
    */
   fallthrough?: boolean
+}
+
+/** One mock's match count. */
+export interface MockMatchCount {
+  mockId: string
+  count: number
 }
 
 /** Parse a ferrimock config file (YAML or JSON). Detects format from extension. */
@@ -454,6 +473,8 @@ export declare namespace fake {
   export function firstName(): string
   export function float(min?: number | undefined | null, max?: number | undefined | null): number
   export function freeEmail(): string
+  /** The active seed, or `null` when generators draw from entropy. */
+  export function getSeed(): number | null
   export function hexColor(): string
   export function industry(): string
   export function ipv4(): string
@@ -484,6 +505,11 @@ export declare namespace fake {
   export function postalCode(): string
   export function price(min?: number | undefined | null, max?: number | undefined | null): number
   export function relativeTime(): string
+  /**
+   * Restart every derived stream without changing the seed — call between
+   * tests so each starts from the same point.
+   */
+  export function resetSeedStreams(): void
   export function resourcePath(): string
   export function rgbColor(): string
   export function searchUrl(): string
@@ -491,6 +517,12 @@ export declare namespace fake {
   export function semver(): string
   export function semverPrerelease(): string
   export function sentence(wordCount?: number | undefined | null): string
+  /**
+   * Seed every generator so a run reproduces byte-for-byte. `null` restores
+   * entropy. Each mock draws from its own derived stream, so responses stay
+   * stable regardless of how requests from other mocks interleave.
+   */
+  export function setSeed(seed?: number | undefined | null): void
   export function sha256(): string
   export function shortHash(): string
   export function slug(): string
@@ -771,6 +803,11 @@ export declare namespace services {
     watch?: boolean
     cors?: boolean
     verbose?: boolean
+    /**
+     * Explain unmatched requests in the 404 body. Defaults to true — this
+     * server is a developer tool, so a miss should say why.
+     */
+    explainUnmatched?: boolean
   }
   export interface JsServeResult {
     port: number

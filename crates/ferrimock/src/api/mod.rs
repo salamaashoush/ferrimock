@@ -11,6 +11,7 @@ mod reload;
 mod status;
 mod store;
 pub mod types;
+pub mod verify;
 
 pub use state::{MockApiConfig, MockApiState};
 
@@ -80,6 +81,18 @@ pub fn create_mock_router_with_prefix(prefix: &str) -> Router<MockApiState> {
             &format!("{p}/scenarios/{{id}}/reset"),
             post(status::reset_scenario),
         )
+        // Match counts / verification
+        .route(&format!("{p}/calls"), get(verify::get_match_counts))
+        .route(&format!("{p}/calls"), delete(verify::reset_match_counts))
+        .route(
+            &format!("{p}/calls/{{id}}"),
+            get(verify::get_mock_match_count),
+        )
+        // Run-level reports
+        .route(&format!("{p}/coverage"), get(verify::get_coverage))
+        .route(&format!("{p}/unmatched"), get(verify::get_unmatched))
+        .route(&format!("{p}/unmatched"), delete(verify::reset_unmatched))
+        .route(&format!("{p}/suggestions"), get(verify::get_suggestions))
         // Persistence store debugging
         .route(&format!("{p}/store"), get(store::get_all_store))
         .route(&format!("{p}/store"), delete(store::clear_store))
