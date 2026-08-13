@@ -568,6 +568,7 @@ mod tests {
             response_config: None,
             patch: None,
             delay: None,
+            network_error: None,
             sse: None,
             ws: None,
         }
@@ -592,6 +593,7 @@ mod tests {
             response_config: None,
             patch: None,
             delay: None,
+            network_error: None,
             sse: None,
             ws: None,
         }

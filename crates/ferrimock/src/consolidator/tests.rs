@@ -32,6 +32,7 @@ fn create_test_mock(id: &str, method: &str, url: &str, response_body: &str) -> M
         }),
         patch: None,
         delay: None,
+        network_error: None,
         sse: None,
         ws: None,
     }
@@ -883,6 +884,7 @@ async fn test_fuzzy_pagination_field_detection() {
             }),
             patch: None,
             delay: None,
+            network_error: None,
             sse: None,
             ws: None,
         },
@@ -910,6 +912,7 @@ async fn test_fuzzy_pagination_field_detection() {
             }),
             patch: None,
             delay: None,
+            network_error: None,
             sse: None,
             ws: None,
         },

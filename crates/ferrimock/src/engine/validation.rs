@@ -612,15 +612,21 @@ impl MockValidator {
                 let has_patch = mock.patch.is_some();
                 let has_delay = mock.delay.is_some();
                 let has_streaming = mock.sse.is_some() || mock.ws.is_some();
-                if !has_request_transforms && !has_patch && !has_delay && !has_streaming {
+                let has_network_error = mock.network_error == Some(true);
+                if !has_request_transforms
+                    && !has_patch
+                    && !has_delay
+                    && !has_streaming
+                    && !has_network_error
+                {
                     errors.push(ValidationError {
                         mock_id: mock_id.clone(),
                         error_type: ErrorType::MissingField,
                         message: "Missing 'response' configuration".to_string(),
                         snippet: None,
                         suggestion: Some(
-                            "Add response, sse, ws, patch, delay, or request transform \
-                             configuration"
+                            "Add response, sse, ws, patch, delay, network_error, or \
+                             request transform configuration"
                                 .to_string(),
                         ),
                         line_number: None,

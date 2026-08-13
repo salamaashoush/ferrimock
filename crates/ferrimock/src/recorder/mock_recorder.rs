@@ -702,6 +702,7 @@ impl MockRecorder {
                 } else {
                     Some(format!("{}ms", interaction.duration.as_millis()))
                 },
+                network_error: None,
                 sse: None,
                 ws: None,
             };
@@ -953,6 +954,7 @@ impl MockRecorder {
                 } else {
                     Some(format!("{}ms", interaction.duration.as_millis()))
                 },
+                network_error: None,
                 sse: None,
                 ws: None,
             };

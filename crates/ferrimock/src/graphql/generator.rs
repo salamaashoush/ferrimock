@@ -246,6 +246,7 @@ impl MockGenerator {
             }),
             patch: None,
             delay: None,
+            network_error: None,
             sse: None,
             ws: None,
         })

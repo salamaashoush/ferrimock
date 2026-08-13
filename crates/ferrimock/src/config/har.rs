@@ -455,6 +455,7 @@ impl HarLoader {
             } else {
                 None
             },
+            network_error: None,
             sse: None,
             ws: None,
         }))
@@ -529,6 +530,7 @@ impl HarLoader {
                 response_config: None,
                 patch: None,
                 delay: None,
+                network_error: None,
                 sse: None,
                 ws: Some(ws),
             });

@@ -318,6 +318,7 @@ async fn test_into_mock_definitions_with_dir() {
             }),
             patch: None,
             delay: None,
+            network_error: None,
             sse: None,
             ws: None,
         }],
@@ -356,6 +357,7 @@ async fn test_mock_config_missing_match() {
         }),
         patch: None,
         delay: None,
+        network_error: None,
         sse: None,
         ws: None,
     };
@@ -393,6 +395,7 @@ async fn test_mock_config_missing_return() {
         response_config: None,
         patch: None,
         delay: None,
+        network_error: None,
         sse: None,
         ws: None,
     };
@@ -1835,6 +1838,7 @@ async fn test_body_file_with_config_dir() {
         }),
         patch: None,
         delay: None,
+        network_error: None,
         sse: None,
         ws: None,
     };
@@ -1876,6 +1880,7 @@ async fn test_body_file_not_found_fallback() {
         }),
         patch: None,
         delay: None,
+        network_error: None,
         sse: None,
         ws: None,
     };

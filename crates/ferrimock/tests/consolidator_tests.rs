@@ -51,6 +51,7 @@ fn create_mock(id: &str, method: &str, url: &str, status: u16, body: &str) -> Mo
         }),
         patch: None,
         delay: None,
+        network_error: None,
         sse: None,
         ws: None,
     }

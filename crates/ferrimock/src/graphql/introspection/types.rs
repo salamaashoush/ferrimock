@@ -103,7 +103,7 @@ pub struct DirectiveIntrospection {
 }
 
 /// Parsed and structured GraphQL schema
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedSchema {
     pub query_type: Option<String>,
     pub mutation_type: Option<String>,
@@ -113,7 +113,7 @@ pub struct ParsedSchema {
 }
 
 /// Type definition after parsing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeDefinition {
     pub kind: TypeKind,
     pub name: String,
@@ -126,7 +126,7 @@ pub struct TypeDefinition {
 }
 
 /// GraphQL type kinds
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeKind {
     Scalar,
     Object,
@@ -168,7 +168,7 @@ impl TypeKind {
 }
 
 /// Field definition after parsing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldDefinition {
     pub name: String,
     pub description: Option<String>,
@@ -179,7 +179,7 @@ pub struct FieldDefinition {
 }
 
 /// Input value (argument or input field) definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputValueDefinition {
     pub name: String,
     pub description: Option<String>,
@@ -188,7 +188,7 @@ pub struct InputValueDefinition {
 }
 
 /// Enum value definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnumValueDefinition {
     pub name: String,
     pub description: Option<String>,
@@ -197,7 +197,7 @@ pub struct EnumValueDefinition {
 }
 
 /// Directive definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectiveDefinition {
     pub name: String,
     pub description: Option<String>,
@@ -206,7 +206,7 @@ pub struct DirectiveDefinition {
 }
 
 /// Type reference with wrappers (NON_NULL, LIST)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeRef {
     /// The innermost type name
     pub name: String,

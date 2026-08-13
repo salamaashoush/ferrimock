@@ -225,6 +225,14 @@ pub struct MockConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delay: Option<String>,
 
+    /// Simulate a dropped connection instead of answering: headers commit,
+    /// then the body stream errors, so the caller sees a transport failure
+    /// (`fetch` raises `TypeError`, curl reports an aborted transfer).
+    /// Combines with `delay` to fail slowly. Exclusive with `response`,
+    /// `patch`, `sse` and `ws`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_error: Option<bool>,
+
     /// Server-Sent Events playback (streaming mock; `response` may only
     /// carry extra headers)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -234,6 +242,30 @@ pub struct MockConfig {
     /// extra headers)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ws: Option<super::streaming::WsConfig>,
+}
+
+/// Written out rather than derived so a constructed mock and a deserialized
+/// one start from the same place: `derive(Default)` would give `priority: 0`
+/// and `enabled: false`, contradicting the serde defaults above.
+impl Default for MockConfig {
+    fn default() -> Self {
+        Self {
+            id: LeanString::default(),
+            description: None,
+            priority: default_priority(),
+            enabled: default_enabled(),
+            scope: None,
+            vars: None,
+            match_config: None,
+            request: None,
+            response_config: None,
+            patch: None,
+            delay: None,
+            network_error: None,
+            sse: None,
+            ws: None,
+        }
+    }
 }
 
 impl MockConfig {
@@ -257,7 +289,39 @@ impl MockConfig {
         let has_request_transforms = self.request.as_ref().is_some_and(|r| !r.is_empty());
 
         // Resolve the response config
-        let response_config = self.response_config;
+        let network_error = self.network_error.unwrap_or(false);
+        let response_config = if network_error {
+            if self.response_config.is_some()
+                || self.patch.is_some()
+                || self.sse.is_some()
+                || self.ws.is_some()
+                || has_request_transforms
+            {
+                return Err(crate::mp_err!(
+                    "`network_error` cannot be combined with `response`, `patch`, \
+                     `sse`, `ws` or request transforms — the connection drops, so \
+                     there is no response to shape"
+                ));
+            }
+            // Desugars to the marker the server and the interceptor already
+            // honour, so no runtime path is special-cased.
+            Some(super::response::ResponseConfig::Structured {
+                status: None,
+                headers: rustc_hash::FxHashMap::default(),
+                body: None,
+                // The marker header is what tears the connection down, so the
+                // status never reaches the wire.
+                template: Some(format!(
+                    r#"{{"headers": {{"{}": "1"}}, "body": ""}}"#,
+                    crate::types::NETWORK_ERROR_HEADER
+                )),
+                file: None,
+                template_file: None,
+                json: Box::new(serde_json::Value::Null),
+            })
+        } else {
+            self.response_config
+        };
 
         // Determine if this is a FullMock or PatchUpstream based on the heuristic:
         // - response.body or response.json set => FullMock
