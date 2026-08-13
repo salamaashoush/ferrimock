@@ -660,14 +660,14 @@ export declare namespace http {
 }
 
 export declare namespace services {
-  export function consolidate(input: JsConsolidateInput): Promise<JsConsolidateResult>
-  export function convert(input: JsConvertInput): Promise<JsConvertResult>
-  export function create(input: JsCreateInput): JsCreateResult
-  export function exportHar(input: JsExportInput): Promise<JsExportResult>
-  export function fakeData(input: JsFakeDataInput): Array<string>
-  export function fakeImage(input: JsFakeImageInput): JsFakeImageResult
-  export function fakePdf(input: JsFakePdfInput): JsFakePdfResult
-  export function format(input: JsFormatInput): JsFormatOutput
+  export function consolidate(input: services.JsConsolidateInput): Promise<services.JsConsolidateResult>
+  export function convert(input: services.JsConvertInput): Promise<services.JsConvertResult>
+  export function create(input: services.JsCreateInput): services.JsCreateResult
+  export function exportHar(input: services.JsExportInput): Promise<services.JsExportResult>
+  export function fakeData(input: services.JsFakeDataInput): Array<string>
+  export function fakeImage(input: services.JsFakeImageInput): services.JsFakeImageResult
+  export function fakePdf(input: services.JsFakePdfInput): services.JsFakePdfResult
+  export function format(input: services.JsFormatInput): services.JsFormatOutput
   export function formatContent(content: string, fileFormat: string): string
   export interface JsConsolidateInput {
     input: string
@@ -768,7 +768,7 @@ export declare namespace services {
     check?: boolean
   }
   export interface JsFormatOutput {
-    files: Array<JsFormatFileResult>
+    files: Array<services.JsFormatFileResult>
     formattedCount: number
     errorCount: number
     unchangedCount: number
@@ -784,7 +784,7 @@ export declare namespace services {
     filter?: string
   }
   export interface JsListOutput {
-    mocks: Array<JsMockSummary>
+    mocks: Array<services.JsMockSummary>
     total: number
   }
   export interface JsMockSummary {
@@ -842,8 +842,8 @@ export declare namespace services {
     isValid: boolean
     totalErrors: number
     totalWarnings: number
-    errors: Array<JsValidationError>
-    warnings: Array<JsValidationError>
+    errors: Array<services.JsValidationError>
+    warnings: Array<services.JsValidationError>
   }
   export interface JsValidationError {
     mockId?: string
@@ -852,20 +852,20 @@ export declare namespace services {
     lineNumber?: number
     suggestion?: string
   }
-  export function list(input: JsListInput): Promise<JsListOutput>
-  export function listGenerators(category?: string | undefined | null, search?: string | undefined | null): Array<JsGeneratorInfo>
-  export function renderTemplate(input: JsTemplateInput): Array<string>
+  export function list(input: services.JsListInput): Promise<services.JsListOutput>
+  export function listGenerators(category?: string | undefined | null, search?: string | undefined | null): Array<services.JsGeneratorInfo>
+  export function renderTemplate(input: services.JsTemplateInput): Array<string>
   /**
    * Start a standalone mock server using the service layer.
    *
    * Returns the URL and port. The server runs until the process exits.
    * For more control (stop/restart), use the FerrimockServer class instead.
    */
-  export function serve(input: JsServeInput): Promise<JsServeResult>
+  export function serve(input: services.JsServeInput): Promise<services.JsServeResult>
   export function show(mockId: string, mocksDir?: string | undefined | null): Promise<any | null>
-  export function testMatch(input: JsTestMatchInput): Promise<any>
-  export function validate(input: JsValidateInput): Promise<JsValidateOutput>
-  export function validateContent(input: JsValidateContentInput): Promise<JsValidateOutput>
+  export function testMatch(input: services.JsTestMatchInput): Promise<any>
+  export function validate(input: services.JsValidateInput): Promise<services.JsValidateOutput>
+  export function validateContent(input: services.JsValidateContentInput): Promise<services.JsValidateOutput>
 }
 
 export declare namespace ws {

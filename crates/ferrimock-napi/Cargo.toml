@@ -12,12 +12,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # NAPI bindings (pinned, not workspace — independent versioning)
-# Pinned below 3.11: napi 3.11+ requires a TypeTag impl that napi-derive 3.5.3
-# does not emit, and napi-derive 3.6.x pulls napi-derive-backend 6.1.2, which
-# generates references to `NativeBorrowScope` that no published napi exports.
-# The macro crate is ahead of the runtime crate; lift this once they line up.
-napi = { version = ">=3.8.4, <3.11", default-features = false, features = ["napi9", "tokio_rt", "async", "serde-json"] }
-napi-derive = { version = ">=3.5.3, <3.6", default-features = false, features = ["type-def"] }
+napi = { version = "3", default-features = false, features = ["napi9", "tokio_rt", "async", "serde-json"] }
+napi-derive = { version = "3", default-features = false, features = ["type-def"] }
 
 # Core ferrimock library. Everything except `scripting`: under Node the JS
 # mock files run on V8 via ferrimock's loader — embedding QuickJS in
