@@ -451,7 +451,10 @@ fn parse_multipart(body: &[u8], boundary: &str) -> Vec<(String, FormValue)> {
 /// Serialize form entries as multipart/form-data. Returns the body and
 /// the boundary used.
 pub fn serialize_multipart(entries: &[(String, FormValue)]) -> (Bytes, String) {
-    let boundary = format!("ferrimockformboundary{:032x}", rand::random::<u128>());
+    let boundary = format!(
+        "ferrimockformboundary{:032x}",
+        rand::RngExt::random::<u128>(&mut crate::fake_data::rng::rng())
+    );
     let mut out = Vec::new();
     for (name, value) in entries {
         out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());

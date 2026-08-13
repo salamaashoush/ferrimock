@@ -1,52 +1,52 @@
 //! Identifiers and codes generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::barcode::en::*;
 use rand::RngExt;
-use uuid::Uuid;
 
 /// Generate a random UUID v4
 pub fn fake_uuid() -> String {
-    Uuid::new_v4().to_string()
+    super::rng::uuid_v4().to_string()
 }
 
 /// Generate a random ISBN
 pub fn fake_isbn() -> String {
-    Isbn().fake()
+    Isbn().fake_with_rng(&mut rng())
 }
 
 /// Generate a random ISBN13
 pub fn fake_isbn13() -> String {
-    Isbn13().fake()
+    Isbn13().fake_with_rng(&mut rng())
 }
 
 /// Generate a random authentication token
 pub fn fake_token() -> String {
-    Uuid::new_v4().to_string().replace('-', "")
+    super::rng::uuid_v4().to_string().replace('-', "")
 }
 
 /// Generate an HTTP ETag value
 pub fn fake_etag() -> String {
-    let version = rand::rng().random_range(0..100);
+    let version = rng().random_range(0..100);
     format!("{version}")
 }
 
 /// Generate a numeric string ID (like database IDs)
 pub fn fake_numeric_id() -> String {
-    let id = rand::rng().random_range(1_000_000_000..=9_999_999_999_999_i64);
+    let id = rng().random_range(1_000_000_000..=9_999_999_999_999_i64);
     id.to_string()
 }
 
 /// Generate a short hash (like Git short SHA)
 pub fn fake_short_hash() -> String {
-    format!("{:x}", rand::rng().random_range(0x0010_0000..=0x00FF_FFFF))
+    format!("{:x}", rng().random_range(0x0010_0000..=0x00FF_FFFF))
 }
 
 /// Generate a full SHA-256 hash
 pub fn fake_sha256() -> String {
     use std::fmt::Write;
     (0..64).fold(String::with_capacity(64), |mut output, _| {
-        let _ = write!(output, "{:x}", rand::rng().random_range(0..16));
+        let _ = write!(output, "{:x}", rng().random_range(0..16));
         output
     })
 }
@@ -55,7 +55,7 @@ pub fn fake_sha256() -> String {
 pub fn fake_sha1() -> String {
     use std::fmt::Write;
     (0..40).fold(String::with_capacity(40), |mut output, _| {
-        let _ = write!(output, "{:x}", rand::rng().random_range(0..16));
+        let _ = write!(output, "{:x}", rng().random_range(0..16));
         output
     })
 }
@@ -64,7 +64,7 @@ pub fn fake_sha1() -> String {
 pub fn fake_md5() -> String {
     use std::fmt::Write;
     (0..32).fold(String::with_capacity(32), |mut output, _| {
-        let _ = write!(output, "{:x}", rand::rng().random_range(0..16));
+        let _ = write!(output, "{:x}", rng().random_range(0..16));
         output
     })
 }
@@ -72,7 +72,7 @@ pub fn fake_md5() -> String {
 /// Generate a base64 encoded string
 pub fn fake_base64() -> String {
     use base64::{Engine as _, engine::general_purpose};
-    let bytes: Vec<u8> = (0..24).map(|_| rand::rng().random_range(0..=255)).collect();
+    let bytes: Vec<u8> = (0..24).map(|_| rng().random_range(0..=255)).collect();
     general_purpose::STANDARD.encode(&bytes)
 }
 

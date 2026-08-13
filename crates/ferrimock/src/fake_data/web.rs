@@ -1,32 +1,32 @@
 //! Web-specific generators (files, MIME types, etc.)
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::lorem::en::Word;
 use rand::RngExt;
 use rand::seq::IndexedRandom;
-use uuid::Uuid;
 
 /// Generate a random boolean value
 pub fn fake_boolean() -> bool {
-    rand::rng().random_bool(0.5)
+    rng().random_bool(0.5)
 }
 
 /// Generate a random filename with extension
 pub fn fake_filename() -> String {
-    let name: String = Word().fake();
+    let name: String = Word().fake_with_rng(&mut rng());
     let exts = ["pdf", "docx", "xlsx", "png", "jpg", "txt", "mp4", "zip"];
-    let ext = exts.choose(&mut rand::rng()).copied().unwrap_or("pdf");
+    let ext = exts.choose(&mut rng()).copied().unwrap_or("pdf");
     format!("{name}.{ext}")
 }
 
 /// Generate a random file size in bytes (min, max)
 pub fn fake_file_size(min: i64, max: i64) -> i64 {
-    rand::rng().random_range(min..=max)
+    rng().random_range(min..=max)
 }
 
 /// Generate a realistic long download URL
 pub fn fake_download_url() -> String {
-    let token = Uuid::new_v4().to_string().replace('-', "");
+    let token = super::rng::uuid_v4().to_string().replace('-', "");
     format!(
         "https://dl.example.com/d/1/{}/?token={}&expires={}",
         token.get(..16).unwrap_or(&token),
@@ -49,7 +49,7 @@ pub fn fake_mime_type() -> String {
         "audio/mpeg",
     ];
     types
-        .choose(&mut rand::rng())
+        .choose(&mut rng())
         .copied()
         .unwrap_or("application/json")
         .to_string()
@@ -61,7 +61,7 @@ pub fn fake_file_extension() -> String {
         "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "jpg", "png", "gif", "mp4",
         "mp3", "zip",
     ];
-    exts.choose(&mut rand::rng())
+    exts.choose(&mut rng())
         .copied()
         .unwrap_or("pdf")
         .to_string()
@@ -80,7 +80,7 @@ pub fn fake_status_message() -> String {
         "Not Found",
     ];
     messages
-        .choose(&mut rand::rng())
+        .choose(&mut rng())
         .copied()
         .unwrap_or("OK")
         .to_string()
@@ -89,7 +89,7 @@ pub fn fake_status_message() -> String {
 /// Generate a random API version string
 pub fn fake_api_version() -> String {
     use rand::RngExt;
-    let mut rng = rand::rng();
+    let mut rng = rng();
     format!(
         "v{}.{}.{}",
         rng.random_range(0..=9),
@@ -101,7 +101,7 @@ pub fn fake_api_version() -> String {
 /// Generate a random semver version string
 pub fn fake_version() -> String {
     use rand::RngExt;
-    let mut rng = rand::rng();
+    let mut rng = rng();
     format!(
         "{}.{}.{}",
         rng.random_range(0..=9),
@@ -112,16 +112,16 @@ pub fn fake_version() -> String {
 
 /// Generate a random hex color code
 pub fn fake_hex_color() -> String {
-    format!("#{:06x}", rand::rng().random_range(0..0x00FF_FFFF))
+    format!("#{:06x}", rng().random_range(0..0x00FF_FFFF))
 }
 
 /// Generate a random RGB color string
 pub fn fake_rgb_color() -> String {
     format!(
         "rgb({}, {}, {})",
-        rand::rng().random_range(0..=255),
-        rand::rng().random_range(0..=255),
-        rand::rng().random_range(0..=255)
+        rng().random_range(0..=255),
+        rng().random_range(0..=255),
+        rng().random_range(0..=255)
     )
 }
 
@@ -135,7 +135,7 @@ pub fn fake_locale() -> String {
         "fi-FI",
     ];
     locales
-        .choose(&mut rand::rng())
+        .choose(&mut rng())
         .copied()
         .unwrap_or("en-US")
         .to_string()
@@ -199,7 +199,7 @@ pub fn fake_timezone() -> String {
         "Africa/Nairobi",
     ];
     timezones
-        .choose(&mut rand::rng())
+        .choose(&mut rng())
         .copied()
         .unwrap_or("America/New_York")
         .to_string()
@@ -207,9 +207,9 @@ pub fn fake_timezone() -> String {
 
 /// Generate a semantic version string
 pub fn fake_semver() -> String {
-    let major = rand::rng().random_range(0..=5);
-    let minor = rand::rng().random_range(0..=20);
-    let patch = rand::rng().random_range(0..=50);
+    let major = rng().random_range(0..=5);
+    let minor = rng().random_range(0..=20);
+    let patch = rng().random_range(0..=50);
     format!("{major}.{minor}.{patch}")
 }
 
@@ -217,24 +217,24 @@ pub fn fake_semver() -> String {
 pub fn fake_semver_prerelease() -> String {
     let base = fake_semver();
     let tags = ["alpha", "beta", "rc"];
-    let tag = tags.choose(&mut rand::rng()).copied().unwrap_or("alpha");
-    let num = rand::rng().random_range(1..=10);
+    let tag = tags.choose(&mut rng()).copied().unwrap_or("alpha");
+    let num = rng().random_range(1..=10);
     format!("{base}-{tag}.{num}")
 }
 
 /// Generate a random digit (0-9)
 pub fn fake_digit() -> i64 {
-    rand::rng().random_range(0..=9)
+    rng().random_range(0..=9)
 }
 
 /// Generate a random integer between min and max (inclusive)
 pub fn fake_number(min: i64, max: i64) -> i64 {
-    rand::rng().random_range(min..=max)
+    rng().random_range(min..=max)
 }
 
 /// Generate a random float between min and max
 pub fn fake_float(min: f64, max: f64) -> f64 {
-    rand::rng().random_range(min..=max)
+    rng().random_range(min..=max)
 }
 
 #[cfg(test)]

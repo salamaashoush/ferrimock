@@ -1,5 +1,6 @@
 //! Date and time generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::chrono::en::*;
 use rand::RngExt;
@@ -8,26 +9,26 @@ use rand::seq::IndexedRandom;
 /// Generate a random date in RFC3339 format
 pub fn fake_date() -> String {
     DateTime()
-        .fake::<chrono::DateTime<chrono::Utc>>()
+        .fake_with_rng::<chrono::DateTime<chrono::Utc>, _>(&mut rng())
         .to_rfc3339()
 }
 
 /// Generate a random time string
 pub fn fake_time() -> String {
-    Time().fake()
+    Time().fake_with_rng(&mut rng())
 }
 
 /// Generate an ISO date (date only, no time)
 pub fn fake_iso_date() -> String {
-    let year = rand::rng().random_range(2020..=2025);
-    let month = rand::rng().random_range(1..=12);
-    let day = rand::rng().random_range(1..=28);
+    let year = rng().random_range(2020..=2025);
+    let month = rng().random_range(1..=12);
+    let day = rng().random_range(1..=28);
     format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// Generate a Unix timestamp
 pub fn fake_unix_timestamp() -> i64 {
-    rand::rng().random_range(1_640_000_000..=1_900_000_000)
+    rng().random_range(1_640_000_000..=1_900_000_000)
 }
 
 /// Generate a relative time string
@@ -41,7 +42,7 @@ pub fn fake_relative_time() -> String {
         "1 month ago",
     ];
     times
-        .choose(&mut rand::rng())
+        .choose(&mut rng())
         .copied()
         .unwrap_or("1 day ago")
         .to_string()

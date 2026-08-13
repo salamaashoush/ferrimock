@@ -1,27 +1,28 @@
 //! Contact information generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::internet::en::*;
 use fake::faker::phone_number::en::*;
 
 /// Generate a random safe email address
 pub fn fake_email() -> String {
-    SafeEmail().fake()
+    SafeEmail().fake_with_rng(&mut rng())
 }
 
 /// Generate a random free email address (gmail, yahoo, etc.)
 pub fn fake_free_email() -> String {
-    FreeEmail().fake()
+    FreeEmail().fake_with_rng(&mut rng())
 }
 
 /// Generate a random phone number
 pub fn fake_phone() -> String {
-    PhoneNumber().fake()
+    PhoneNumber().fake_with_rng(&mut rng())
 }
 
 /// Generate a random cell phone number
 pub fn fake_cell_phone() -> String {
-    CellNumber().fake()
+    CellNumber().fake_with_rng(&mut rng())
 }
 
 #[cfg(test)]

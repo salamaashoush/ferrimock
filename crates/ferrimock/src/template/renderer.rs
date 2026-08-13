@@ -60,6 +60,13 @@ fn build_tera_context(context: &RequestContext) -> Context {
     tera_context
 }
 
+/// Install the seeded stream a render draws its fake data from. Each mock gets
+/// its own stream so responses stay reproducible however requests interleave;
+/// unnamed templates share one. No-op unless a global seed is set.
+fn seed_scope(mock_id: Option<&str>) -> crate::fake_data::rng::SeedScope {
+    crate::fake_data::rng::scope(mock_id.unwrap_or("<anonymous>"))
+}
+
 /// Render a template string with the given request context (uses thread-local engine)
 pub fn render_template(template: &str, context: &RequestContext) -> crate::Result<String> {
     render_template_with_id(template, context, None)
@@ -71,6 +78,7 @@ pub fn render_template_with_id(
     context: &RequestContext,
     mock_id: Option<&str>,
 ) -> crate::Result<String> {
+    let _seeded = seed_scope(mock_id);
     TEMPLATE_ENGINE.with(|engine| {
         let mut engine = engine.borrow_mut();
         let tera_context = build_tera_context(context);
@@ -91,6 +99,7 @@ pub fn render_template_with_hash(
     context: &RequestContext,
     mock_id: Option<&str>,
 ) -> crate::Result<String> {
+    let _seeded = seed_scope(mock_id);
     TEMPLATE_ENGINE.with(|engine| {
         let mut engine = engine.borrow_mut();
         let tera_context = build_tera_context(context);
@@ -116,6 +125,7 @@ pub fn render_patch_template(
     context: &crate::types::PatchContext,
     mock_id: Option<&str>,
 ) -> crate::Result<String> {
+    let _seeded = seed_scope(mock_id);
     TEMPLATE_ENGINE.with(|engine| {
         let mut engine = engine.borrow_mut();
         let mut tera_context = build_tera_context(&context.request);

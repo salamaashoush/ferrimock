@@ -1,36 +1,37 @@
 //! Text and content generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::lorem::en::*;
 
 /// Generate random words (count specified)
 pub fn fake_words(count: usize) -> String {
-    let words: Vec<String> = Words(count..count + 1).fake();
+    let words: Vec<String> = Words(count..count + 1).fake_with_rng(&mut rng());
     words.join(" ")
 }
 
 /// Generate a random sentence with specified word count (default: 5)
 pub fn fake_sentence(word_count: usize) -> String {
     let count = word_count.max(1);
-    let words: Vec<String> = Words(count..count + 1).fake();
+    let words: Vec<String> = Words(count..count + 1).fake_with_rng(&mut rng());
     words.join(" ")
 }
 
 /// Generate a random paragraph with specified sentence count (default: 3)
 pub fn fake_paragraph(sentence_count: usize) -> String {
     let count = sentence_count.max(1);
-    let paragraph: Vec<String> = Sentences(count..count + 1).fake();
+    let paragraph: Vec<String> = Sentences(count..count + 1).fake_with_rng(&mut rng());
     paragraph.join(" ")
 }
 
 /// Generate a random word
 pub fn fake_word() -> String {
-    Word().fake()
+    Word().fake_with_rng(&mut rng())
 }
 
 /// Generate a slug (URL-friendly string)
 pub fn fake_slug() -> String {
-    let words: Vec<String> = Words(3..5).fake();
+    let words: Vec<String> = Words(3..5).fake_with_rng(&mut rng());
     words.join("-").to_lowercase()
 }
 
@@ -39,7 +40,7 @@ pub fn fake_slug() -> String {
 pub fn fake_alphanumeric(length: usize) -> String {
     use rand::seq::IndexedRandom;
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::rng();
+    let mut rng = rng();
 
     (0..length)
         .map(|_| *CHARSET.choose(&mut rng).unwrap_or(&b'a') as char)

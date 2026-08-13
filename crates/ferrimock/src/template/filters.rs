@@ -122,7 +122,7 @@ pub fn random_choice(
         ));
     }
 
-    let index = rand::rng().random_range(0..value.len());
+    let index = crate::fake_data::rng::rng().random_range(0..value.len());
     value
         .get(index)
         .cloned()

@@ -1,36 +1,37 @@
 //! Location and address generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::address::en::*;
 
 /// Generate a random street name
 pub fn fake_street() -> String {
-    StreetName().fake()
+    StreetName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random street address
 pub fn fake_street_address() -> String {
-    StreetSuffix().fake()
+    StreetSuffix().fake_with_rng(&mut rng())
 }
 
 /// Generate a random city name
 pub fn fake_city() -> String {
-    CityName().fake()
+    CityName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random state name
 pub fn fake_state() -> String {
-    StateName().fake()
+    StateName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random state abbreviation
 pub fn fake_state_abbr() -> String {
-    StateAbbr().fake()
+    StateAbbr().fake_with_rng(&mut rng())
 }
 
 /// Generate a random ZIP code
 pub fn fake_zip() -> String {
-    ZipCode().fake()
+    ZipCode().fake_with_rng(&mut rng())
 }
 
 /// Generate a random postal code (alias for fake_zip)
@@ -40,32 +41,32 @@ pub fn fake_postal_code() -> String {
 
 /// Generate a random country name
 pub fn fake_country() -> String {
-    CountryName().fake()
+    CountryName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random country code (US, GB, etc.)
 pub fn fake_country_code() -> String {
-    CountryCode().fake()
+    CountryCode().fake_with_rng(&mut rng())
 }
 
 /// Generate a random latitude
 pub fn fake_latitude() -> String {
-    Latitude().fake::<f64>().to_string()
+    Latitude().fake_with_rng::<f64, _>(&mut rng()).to_string()
 }
 
 /// Generate a random longitude
 pub fn fake_longitude() -> String {
-    Longitude().fake::<f64>().to_string()
+    Longitude().fake_with_rng::<f64, _>(&mut rng()).to_string()
 }
 
 /// Generate a random building number
 pub fn fake_building_number() -> String {
-    BuildingNumber().fake()
+    BuildingNumber().fake_with_rng(&mut rng())
 }
 
 /// Generate a random secondary address (Apt 4, Suite 200, etc.)
 pub fn fake_secondary_address() -> String {
-    SecondaryAddress().fake()
+    SecondaryAddress().fake_with_rng(&mut rng())
 }
 
 #[cfg(test)]

@@ -28,6 +28,7 @@ pub mod identifiers;
 pub mod identity;
 pub mod internet;
 pub mod location;
+pub mod rng;
 pub mod text;
 pub mod web;
 

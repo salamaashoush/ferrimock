@@ -1,43 +1,44 @@
 //! Identity and personal data generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::name::en::*;
 
 /// Generate a random full name
 pub fn fake_name() -> String {
-    Name().fake()
+    Name().fake_with_rng(&mut rng())
 }
 
 /// Generate a random first name
 pub fn fake_first_name() -> String {
-    FirstName().fake()
+    FirstName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random last name
 pub fn fake_last_name() -> String {
-    LastName().fake()
+    LastName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random username
 pub fn fake_username() -> String {
     use fake::faker::internet::en::Username;
-    Username().fake()
+    Username().fake_with_rng(&mut rng())
 }
 
 /// Generate a random password (8-16 characters)
 pub fn fake_password() -> String {
     use fake::faker::internet::en::Password;
-    Password(8..16).fake()
+    Password(8..16).fake_with_rng(&mut rng())
 }
 
 /// Generate a random title (Mr., Mrs., Dr., etc.)
 pub fn fake_title() -> String {
-    Title().fake()
+    Title().fake_with_rng(&mut rng())
 }
 
 /// Generate a random suffix (Jr., Sr., III, etc.)
 pub fn fake_suffix() -> String {
-    Suffix().fake()
+    Suffix().fake_with_rng(&mut rng())
 }
 
 #[cfg(test)]

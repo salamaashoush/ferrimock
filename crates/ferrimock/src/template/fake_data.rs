@@ -8,7 +8,6 @@ use crate::error::FerrimockError;
 use chrono::{Duration, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 /// Named arguments passed to a generator.
 pub type Args = HashMap<String, Value>;
@@ -39,7 +38,7 @@ fn build_registry() -> HashMap<&'static str, Generator> {
 
     // uuid() - Generates a random UUID v4 (commonly used, so we include it here)
     register("uuid", |_: &Args| -> Result<Value> {
-        Ok(Value::from(Uuid::new_v4().to_string()))
+        Ok(Value::from(crate::fake_data::rng::uuid_v4().to_string()))
     });
 
     // ========== Identity & Personal Data ==========

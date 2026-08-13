@@ -9,6 +9,43 @@ order: 6
 Generate fake data, images, PDFs, and more directly from the CLI. Useful for testing, prototyping, and mock data
 generation.
 
+## Deterministic Output
+
+Every generator draws from a seedable stream. Unseeded, output is random. Seeded, a run replays exactly — the same
+values, in the same order, on every machine.
+
+```bash
+ferrimock fake data name -n 3 --seed 42   # identical output on every run
+FERRIMOCK_SEED=42 ferrimock mock serve mocks/
+```
+
+From Rust:
+
+```rust
+use ferrimock::fake_data::rng;
+
+rng::set_global_seed(Some(42));   // pin
+rng::reset_streams();             // replay from the top without reseeding
+rng::set_global_seed(None);       // back to entropy
+```
+
+From Node:
+
+```ts
+import { fake } from 'ferrimock'
+
+fake.setSeed(42)
+fake.name()             // same value every run
+fake.resetSeedStreams() // replay from the top, e.g. in beforeEach
+fake.setSeed(null)      // back to entropy
+```
+
+Seeding works at two levels. Template rendering installs a stream per mock id, so a mock's response is reproducible
+regardless of which worker thread renders it or how requests to other mocks interleave. Direct generator calls and
+scripted handlers draw from one process-wide stream, reproducible for a given call order.
+
+Timestamps (`now()`, `fake_date()` relative to the clock) are not covered — they track real time by design.
+
 ## Quick Start
 
 ```bash

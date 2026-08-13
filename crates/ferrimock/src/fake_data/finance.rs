@@ -1,5 +1,6 @@
 //! Finance and commerce generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::creditcard::en::*;
 use fake::faker::currency::en::*;
@@ -7,27 +8,27 @@ use rand::RngExt;
 
 /// Generate a random credit card number
 pub fn fake_credit_card() -> String {
-    CreditCardNumber().fake()
+    CreditCardNumber().fake_with_rng(&mut rng())
 }
 
 /// Generate a random currency code (USD, EUR, GBP, etc.)
 pub fn fake_currency_code() -> String {
-    CurrencyCode().fake()
+    CurrencyCode().fake_with_rng(&mut rng())
 }
 
 /// Generate a random currency name
 pub fn fake_currency_name() -> String {
-    CurrencyName().fake()
+    CurrencyName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random currency symbol
 pub fn fake_currency_symbol() -> String {
-    CurrencySymbol().fake()
+    CurrencySymbol().fake_with_rng(&mut rng())
 }
 
 /// Generate a random price between min and max
 pub fn fake_price(min: f64, max: f64) -> f64 {
-    rand::rng().random_range(min..=max)
+    rng().random_range(min..=max)
 }
 
 /// Generate a random amount with 2 decimal places

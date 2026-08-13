@@ -400,3 +400,28 @@ pub fn float(min: Option<f64>, max: Option<f64>) -> f64 {
 pub fn file_size(min: Option<i64>, max: Option<i64>) -> i64 {
     ferrimock::fake_data::fake_file_size(min.unwrap_or(1024), max.unwrap_or(1_048_576))
 }
+
+// ===== Determinism =====
+
+/// Seed every generator so a run reproduces byte-for-byte. `null` restores
+/// entropy. Each mock draws from its own derived stream, so responses stay
+/// stable regardless of how requests from other mocks interleave.
+#[napi(namespace = "fake")]
+pub fn set_seed(seed: Option<i64>) {
+    #[allow(clippy::cast_sign_loss)]
+    ferrimock::fake_data::rng::set_global_seed(seed.map(|s| s as u64));
+}
+
+/// The active seed, or `null` when generators draw from entropy.
+#[napi(namespace = "fake")]
+pub fn get_seed() -> Option<i64> {
+    #[allow(clippy::cast_possible_wrap)]
+    ferrimock::fake_data::rng::global_seed().map(|s| s as i64)
+}
+
+/// Restart every derived stream without changing the seed — call between
+/// tests so each starts from the same point.
+#[napi(namespace = "fake")]
+pub fn reset_seed_streams() {
+    ferrimock::fake_data::rng::reset_streams();
+}

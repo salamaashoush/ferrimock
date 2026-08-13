@@ -60,7 +60,7 @@ fn delay(value: Opt<Value<'_>>) -> rquickjs::Result<Promised<impl Future<Output 
             DelayMode::Exact(duration) => tokio::time::sleep(duration).await,
             // MSW's "realistic" server latency: random 100-400ms.
             DelayMode::Real => {
-                let ms = 100 + rand::random::<u64>() % 301;
+                let ms = 100 + rand::RngExt::random::<u64>(&mut crate::fake_data::rng::rng()) % 301;
                 tokio::time::sleep(Duration::from_millis(ms)).await;
             }
             DelayMode::Infinite => std::future::pending::<()>().await,

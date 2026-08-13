@@ -1,42 +1,43 @@
 //! Company and job-related generators
 
+use super::rng::rng;
 use fake::Fake;
 use fake::faker::company::en::*;
 use fake::faker::job::en::*;
 
 /// Generate a random company name
 pub fn fake_company() -> String {
-    CompanyName().fake()
+    CompanyName().fake_with_rng(&mut rng())
 }
 
 /// Generate a random company suffix (Inc., LLC, etc.)
 pub fn fake_company_suffix() -> String {
-    CompanySuffix().fake()
+    CompanySuffix().fake_with_rng(&mut rng())
 }
 
 /// Generate a random profession/job title
 pub fn fake_job_title() -> String {
-    Profession().fake()
+    Profession().fake_with_rng(&mut rng())
 }
 
 /// Generate a random industry name
 pub fn fake_industry() -> String {
-    Industry().fake()
+    Industry().fake_with_rng(&mut rng())
 }
 
 /// Generate a random job field (Engineering, Marketing, etc.)
 pub fn fake_job_field() -> String {
-    Field().fake()
+    Field().fake_with_rng(&mut rng())
 }
 
 /// Generate a random job position (Manager, Director, etc.)
 pub fn fake_job_position() -> String {
-    Position().fake()
+    Position().fake_with_rng(&mut rng())
 }
 
 /// Generate a random job seniority (Junior, Senior, Lead, etc.)
 pub fn fake_job_seniority() -> String {
-    Seniority().fake()
+    Seniority().fake_with_rng(&mut rng())
 }
 
 #[cfg(test)]

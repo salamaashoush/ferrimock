@@ -79,6 +79,10 @@ struct Cli {
         value_hint = ValueHint::FilePath
     )]
     config: Option<String>,
+
+    /// Seed fake data generation so responses are reproducible across runs
+    #[arg(long, global = true, env = "FERRIMOCK_SEED", value_name = "N")]
+    seed: Option<u64>,
 }
 
 #[derive(Subcommand)]
@@ -190,6 +194,10 @@ async fn main() -> ExitCode {
 
     config::set_quiet(cli.quiet);
     config::init(config::load_config(cli.config.as_deref()));
+
+    if let Some(seed) = cli.seed {
+        ferrimock::fake_data::rng::set_global_seed(Some(seed));
+    }
 
     let result: Result<()> = match cli.command {
         Command::Mock(cmd) => ferrimock_cli::commands::execute(cmd).await,

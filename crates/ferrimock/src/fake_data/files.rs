@@ -1,5 +1,6 @@
 //! File generation (PDF, PNG, JPEG)
 
+use super::rng::rng;
 use image::Rgba;
 use rand::RngExt;
 use rand::seq::IndexedRandom;
@@ -468,7 +469,7 @@ pub fn fake_image_noise(width: Option<u32>, height: Option<u32>, colored: Option
     let width = width.unwrap_or(400);
     let height = height.unwrap_or(300);
     let colored = colored.unwrap_or(false);
-    let mut rng = rand::rng();
+    let mut rng = rng();
 
     let img = ImageBuffer::from_fn(width, height, |_x, _y| {
         use rand::RngExt;
@@ -578,7 +579,7 @@ pub fn fake_avatar(
     bg_color: Option<&str>,
     text_color: Option<&str>,
 ) -> String {
-    let mut rng = rand::rng();
+    let mut rng = rng();
 
     let size = size.unwrap_or(200);
     let default_initials = "AB";
@@ -635,7 +636,7 @@ fn parse_color_or_random(color: Option<&str>) -> [u8; 3] {
 
 /// Generate random RGB color
 fn random_color_rgb() -> [u8; 3] {
-    let mut rng = rand::rng();
+    let mut rng = rng();
     [
         rng.random_range(0..=255),
         rng.random_range(0..=255),
