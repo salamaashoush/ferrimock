@@ -269,11 +269,24 @@ fn sequence_repeated_requests(mocks: &mut [MockConfig]) {
         let Some((&last, rest)) = indices.split_last() else {
             continue;
         };
-        if rest.is_empty() || rest.iter().all(|&i| same_answer(&mocks[i], &mocks[last])) {
+        if rest.is_empty() {
+            continue;
+        }
+        let answered_alike = {
+            let Some(final_answer) = mocks.get(last) else {
+                continue;
+            };
+            rest.iter()
+                .filter_map(|&i| mocks.get(i))
+                .all(|earlier| same_answer(earlier, final_answer))
+        };
+        if answered_alike {
             continue;
         }
         for &i in rest {
-            mocks[i].once = true;
+            if let Some(mock) = mocks.get_mut(i) {
+                mock.once = true;
+            }
         }
     }
 }
