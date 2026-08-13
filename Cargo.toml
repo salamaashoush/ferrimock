@@ -224,6 +224,16 @@ serial_test = "3.5"
 http = "1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "charset", "http2"] }
 
+# Release ships a NAPI addon and a CLI where cross-crate inlining matters:
+# matching, template rendering and fake-data generation all cross crate
+# boundaries on the hot path. Cargo's defaults (no LTO, 16 codegen units)
+# leave that on the table.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+# `panic = "abort"` is deliberately NOT set: napi-rs turns a Rust panic into a
+# JS exception by unwinding, and aborting would take the host process with it.
+
 [profile.dev]
 debug = false
 
