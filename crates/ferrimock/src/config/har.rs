@@ -223,22 +223,22 @@ fn match_key(mock: &MockConfig) -> Option<MatchKey> {
 }
 
 /// Whether two recordings of the same request were answered the same way.
-fn same_answer(a: &MockConfig, b: &MockConfig) -> bool {
-    match (a.response_config.as_ref(), b.response_config.as_ref()) {
+fn same_answer(one: &MockConfig, other: &MockConfig) -> bool {
+    match (one.response_config.as_ref(), other.response_config.as_ref()) {
         (
             Some(ResponseConfig::Structured {
-                status: sa,
-                body: ba,
-                file: fa,
+                status: one_status,
+                body: one_body,
+                file: one_file,
                 ..
             }),
             Some(ResponseConfig::Structured {
-                status: sb,
-                body: bb,
-                file: fb,
+                status: other_status,
+                body: other_body,
+                file: other_file,
                 ..
             }),
-        ) => sa == sb && ba == bb && fa == fb,
+        ) => one_status == other_status && one_body == other_body && one_file == other_file,
         (None, None) => true,
         _ => false,
     }

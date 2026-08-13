@@ -150,13 +150,11 @@ async fn replay_corpus() {
         let registry = MockRegistry::new();
         let mut load_failed = false;
         for m in mocks {
-            match m.into_mock_definition().await {
-                Ok(d) => registry.add_mock(d),
-                Err(_) => {
-                    load_failed = true;
-                    break;
-                }
-            }
+            let Ok(definition) = m.into_mock_definition().await else {
+                load_failed = true;
+                break;
+            };
+            registry.add_mock(definition);
         }
         if load_failed {
             s.load_failed += 1;
@@ -194,38 +192,37 @@ async fn replay_corpus() {
                 body.as_deref().map(str::as_bytes),
             );
 
-            match found {
-                Some(m) => {
-                    s.served += 1;
-                    if is_recorded {
-                        s.served_from_recorded += 1;
-                    }
-                    if let Some(status) = u16::try_from(e.response.status)
-                        .ok()
-                        .filter(|st| (100..=599).contains(st))
-                        && m.mock.response.status != status
-                    {
-                        s.wrong_status += 1;
-                    }
-                    // Only a recorded entry has a body to be right or wrong
-                    // about; one the loader dropped was answered by some
-                    // other entry's mock, which the miss taxonomy accounts
-                    // for rather than the correctness count.
-                    if is_recorded && let Some(served) = inline_body(&m.mock.response.body) {
-                        let expected = e.response.content.text.as_deref().unwrap_or("");
-                        if served != expected.as_bytes() {
-                            s.wrong_body += 1;
-                            // The mock built from this very entry is the one
-                            // that should have answered. Whether it is still
-                            // enabled says which way the sequence went wrong:
-                            // it was skipped over, or it had already been used.
-                            let own = format!("har-entry-{}", idx + 1);
-                            match registry.get_mock(&own) {
-                                Some(mock) if mock.enabled => s.wrong_body_own_live += 1,
-                                Some(_) => s.wrong_body_own_spent += 1,
-                                None => s.wrong_body_own_missing += 1,
-                            }
-                            s.sample(|| {
+            if let Some(m) = found {
+                s.served += 1;
+                if is_recorded {
+                    s.served_from_recorded += 1;
+                }
+                if let Some(status) = u16::try_from(e.response.status)
+                    .ok()
+                    .filter(|st| (100..=599).contains(st))
+                    && m.mock.response.status != status
+                {
+                    s.wrong_status += 1;
+                }
+                // Only a recorded entry has a body to be right or wrong
+                // about; one the loader dropped was answered by some
+                // other entry's mock, which the miss taxonomy accounts
+                // for rather than the correctness count.
+                if is_recorded && let Some(served) = inline_body(&m.mock.response.body) {
+                    let expected = e.response.content.text.as_deref().unwrap_or("");
+                    if served != expected.as_bytes() {
+                        s.wrong_body += 1;
+                        // The mock built from this very entry is the one
+                        // that should have answered. Whether it is still
+                        // enabled says which way the sequence went wrong:
+                        // it was skipped over, or it had already been used.
+                        let own = format!("har-entry-{}", idx + 1);
+                        match registry.get_mock(&own) {
+                            Some(mock) if mock.enabled => s.wrong_body_own_live += 1,
+                            Some(_) => s.wrong_body_own_spent += 1,
+                            None => s.wrong_body_own_missing += 1,
+                        }
+                        s.sample(|| {
                                 format!(
                                     "WRONG {method} {path}?{}\n  answered by {} {:?}\n  recorded as  {own} {:?}",
                                     query.as_deref().unwrap_or(""),
@@ -234,44 +231,42 @@ async fn replay_corpus() {
                                     registry.get_mock(&own).map(|k| k.request.url_patterns.clone()),
                                 )
                             });
-                        }
                     }
                 }
-                None => {
-                    s.missed += 1;
-                    if is_recorded {
-                        s.missed_recorded += 1;
-                    }
-                    let kind = classify(
-                        is_recorded,
-                        &facts,
-                        method.as_str(),
-                        &path,
-                        query.as_deref(),
-                        &mut s.query_culprits,
-                    );
-                    *s.miss_kinds.entry(kind).or_default() += 1;
-                    if kind == MissKind::QueryOnly {
-                        s.sample(|| {
-                            let nearest: Vec<String> = facts
-                                .iter()
-                                .filter(|f| f.method == method.as_str() && f.path == path)
-                                .take(3)
-                                .map(|f| {
-                                    f.query
-                                        .iter()
-                                        .map(|(k, v)| format!("{k}={v}"))
-                                        .collect::<Vec<_>>()
-                                        .join("&")
-                                })
-                                .collect();
-                            format!(
-                                "MISS {method} {path}?{}\n  nearest mocks {}",
-                                query.as_deref().unwrap_or(""),
-                                nearest.join("  |  ")
-                            )
-                        });
-                    }
+            } else {
+                s.missed += 1;
+                if is_recorded {
+                    s.missed_recorded += 1;
+                }
+                let kind = classify(
+                    is_recorded,
+                    &facts,
+                    method.as_str(),
+                    &path,
+                    query.as_deref(),
+                    &mut s.query_culprits,
+                );
+                *s.miss_kinds.entry(kind).or_default() += 1;
+                if kind == MissKind::QueryOnly {
+                    s.sample(|| {
+                        let nearest: Vec<String> = facts
+                            .iter()
+                            .filter(|f| f.method == method.as_str() && f.path == path)
+                            .take(3)
+                            .map(|f| {
+                                f.query
+                                    .iter()
+                                    .map(|(k, v)| format!("{k}={v}"))
+                                    .collect::<Vec<_>>()
+                                    .join("&")
+                            })
+                            .collect();
+                        format!(
+                            "MISS {method} {path}?{}\n  nearest mocks {}",
+                            query.as_deref().unwrap_or(""),
+                            nearest.join("  |  ")
+                        )
+                    });
                 }
             }
         }
@@ -279,7 +274,10 @@ async fn replay_corpus() {
         let unmatched = registry.unmatched_requests();
         let sug = suggest(&matcher, &unmatched.requests);
         s.suggestions += sug.len();
-        s.covered_by_suggestion += sug.iter().map(|g| g.request_count as usize).sum::<usize>();
+        s.covered_by_suggestion += sug
+            .iter()
+            .filter_map(|g| usize::try_from(g.request_count).ok())
+            .sum::<usize>();
     }
 
     report(&s);
@@ -360,7 +358,7 @@ async fn corpus_query_variation() {
             groups += 1;
 
             for (i, a) in observations.iter().enumerate() {
-                for b in &observations[i + 1..] {
+                for b in observations.iter().skip(i + 1) {
                     let moved = differing_params(&a.query, &b.query);
                     let same_body = a.body == b.body;
                     match (moved.as_slice(), same_body) {
@@ -531,6 +529,9 @@ fn differing_params(
 }
 
 fn report(s: &Stats) {
+    // Counts here are request tallies, far below the point where f64 loses an
+    // integer, and the result is only ever printed to one decimal place.
+    #[allow(clippy::cast_precision_loss)]
     let pct = |n: usize, d: usize| {
         if d == 0 {
             0.0

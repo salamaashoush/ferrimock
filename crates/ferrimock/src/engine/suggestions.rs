@@ -305,15 +305,18 @@ fn to_express_pattern(normalized: &str) -> String {
     let mut out = String::with_capacity(normalized.len());
     let mut rest = normalized;
 
-    while let Some(open) = rest.find('{') {
-        let Some(close) = rest[open..].find('}') else {
+    // Split rather than index: a placeholder is delimited by braces, and byte
+    // offsets into a path that may hold multi-byte characters are not.
+    while let Some((before, after_open)) = rest.split_once('{') {
+        // An unclosed brace is not a placeholder. Leave the remainder as it
+        // was written, including the brace.
+        let Some((name, after_close)) = after_open.split_once('}') else {
             break;
         };
-        let close = open + close;
-        out.push_str(&rest[..open]);
+        out.push_str(before);
         out.push(':');
-        out.push_str(&rest[open + 1..close]);
-        rest = &rest[close + 1..];
+        out.push_str(name);
+        rest = after_close;
     }
     out.push_str(rest);
     out

@@ -318,7 +318,7 @@ fn a_widened_mock_actually_serves_what_was_suggested() {
         smallvec![],
         smallvec![],
     ));
-    let widened = MockMatcher::new(registry.clone());
+    let widened = MockMatcher::new(registry);
 
     assert!(
         widened
