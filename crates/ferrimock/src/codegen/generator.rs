@@ -388,11 +388,8 @@ mod tests {
         };
 
         let graphql_analysis = crate::codegen::types::GraphQLVariableInfo::empty();
-        let template = generator.generate_tera_template(
-            &analysis,
-            "/api/file-info",
-            &graphql_analysis,
-        );
+        let template =
+            generator.generate_tera_template(&analysis, "/api/file-info", &graphql_analysis);
 
         // Verify template is valid
         assert!(
@@ -461,8 +458,7 @@ mod tests {
         };
 
         let graphql_analysis = crate::codegen::types::GraphQLVariableInfo::empty();
-        let template =
-            generator.generate_tera_template(&analysis, "/api/files", &graphql_analysis);
+        let template = generator.generate_tera_template(&analysis, "/api/files", &graphql_analysis);
 
         assert!(crate::template::validate_template(&template).is_ok());
 
@@ -520,8 +516,7 @@ mod tests {
         };
 
         let graphql_analysis = crate::codegen::types::GraphQLVariableInfo::empty();
-        let template =
-            generator.generate_tera_template(&analysis, "/api/files", &graphql_analysis);
+        let template = generator.generate_tera_template(&analysis, "/api/files", &graphql_analysis);
 
         assert!(crate::template::validate_template(&template).is_ok());
 
@@ -580,11 +575,8 @@ mod tests {
         };
 
         let graphql_analysis = crate::codegen::types::GraphQLVariableInfo::empty();
-        let template = generator.generate_tera_template(
-            &analysis,
-            "/api/file-info",
-            &graphql_analysis,
-        );
+        let template =
+            generator.generate_tera_template(&analysis, "/api/file-info", &graphql_analysis);
 
         assert!(crate::template::validate_template(&template).is_ok());
 

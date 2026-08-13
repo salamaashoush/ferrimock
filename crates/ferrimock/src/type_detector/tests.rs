@@ -1012,7 +1012,7 @@ fn test_pagination_url_generation() {
 fn test_pagination_url_preserves_complex_query_params() {
     let detector = TypeDetector::new();
 
-    // Your actual example URL
+    // A paginating URL as a real recording writes it
     let values = vec![
         json!(
             "http://localhost:3000/api/v1/documents-search/?page=1&limit=10&autocomplete=&status=*&rsl=false&batchSend=false&pending_my_action=false&parent_doc__exists=false&bulk_status=true"
