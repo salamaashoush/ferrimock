@@ -6,6 +6,7 @@
 //! - Priority-based mock selection
 //! - YAML/JSON configuration support
 
+pub mod diagnostics;
 pub mod har_export;
 pub mod matcher;
 pub mod patcher;
@@ -13,17 +14,23 @@ pub mod recorder_ext;
 pub mod registry;
 pub mod request_patcher;
 pub mod scope;
+pub mod suggestions;
 pub mod types;
 pub mod validation;
 
 // Export only mock-engine specific types
+pub use diagnostics::{Criterion, CriterionOutcome, MatchAttempt, MatchReport};
 pub use har_export::export_mocks_to_har;
 pub use matcher::{MockAction, MockMatch, MockMatcher};
 pub use patcher::ResponsePatcher;
 pub use recorder_ext::MockRecorderConsolidationExt;
-pub use registry::MockRegistry;
+pub use registry::{
+    CoverageReport, Expected, MockCoverage, MockRegistry, UnmatchedReport, UnmatchedRequest,
+    VerifyError,
+};
 pub use request_patcher::RequestPatcher;
 pub use scope::{ScopeInfo, ScopeManager};
+pub use suggestions::{Suggestion, SuggestionKind, suggest};
 pub use types::{
     BodyMatcher, BodySource, HeaderMatcher, MockDefinition, PatchOperation, QueryMatcher,
     RequestContext, RequestMatcher, ResponseGenerator, ResponseGeneratorExt, ResponseMode,

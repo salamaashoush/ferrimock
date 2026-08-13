@@ -159,6 +159,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             log_matches,
             verbose,
             open,
+            no_explain,
         } => {
             serve::serve_mock_server(serve::MockServerConfig {
                 port,
@@ -171,6 +172,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                 log_matches,
                 verbose,
                 open_browser: open,
+                explain_unmatched: !no_explain,
             })
             .await
         }

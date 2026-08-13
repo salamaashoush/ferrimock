@@ -24,6 +24,8 @@ pub struct ServeInput {
     pub log_matches: bool,
     /// Enable verbose request logging
     pub verbose: bool,
+    /// Explain unmatched requests in the 404 body (costs a registry walk per miss)
+    pub explain_unmatched: bool,
 }
 
 impl Default for ServeInput {
@@ -38,6 +40,7 @@ impl Default for ServeInput {
             enable_management_endpoints: false,
             log_matches: false,
             verbose: false,
+            explain_unmatched: false,
         }
     }
 }
@@ -159,6 +162,10 @@ pub async fn start(input: ServeInput) -> Result<ServeHandle, crate::FerrimockErr
 
     // Create matcher
     let matcher = MockMatcher::new((*registry).clone());
+    matcher.set_explain_unmatched(input.explain_unmatched);
+    // Nothing downstream of a standalone server, so every miss is a real one
+    // and worth keeping for the run-level report.
+    matcher.set_track_unmatched(true);
 
     // Bind listener
     let addr = format!("{}:{}", input.host, input.port);
@@ -379,17 +386,45 @@ pub async fn respond(
     use http::header;
 
     fn unmatched(
+        matcher: &MockMatcher,
         method: &http::Method,
         path: &str,
         query: Option<&str>,
+        headers: &http::HeaderMap,
+        req_body: Option<&[u8]>,
         via_passthrough: bool,
     ) -> axum::response::Response {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "error": "No matching mock found",
             "method": method.as_str(),
             "path": path,
             "query": query
         });
+
+        // Explaining a miss walks the whole registry, so only developer-facing
+        // servers opt in; a proxy forwarding misses upstream must not pay it.
+        if !via_passthrough && matcher.explains_unmatched() {
+            let report = matcher.explain(method, path, query, headers, req_body);
+            let near: Vec<serde_json::Value> = report
+                .near_misses(3)
+                .iter()
+                .map(|attempt| {
+                    serde_json::json!({
+                        "mockId": attempt.mock_id,
+                        "priority": attempt.priority,
+                        "enabled": attempt.enabled,
+                        "failed": attempt.failures().map(ToString::to_string).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            tracing::debug!("{}", report.summary());
+            if let Some(map) = body.as_object_mut() {
+                map.insert("explanation".to_string(), report.summary().into());
+                if !near.is_empty() {
+                    map.insert("nearMisses".to_string(), near.into());
+                }
+            }
+        }
         let mut response = (
             http::StatusCode::NOT_FOUND,
             [(header::CONTENT_TYPE, "application/json")],
@@ -419,7 +454,7 @@ pub async fn respond(
         let Some(mock_match) =
             matcher.find_match_excluding(method, path, query, headers, body, &exclude)
         else {
-            return unmatched(method, path, query, false);
+            return unmatched(matcher, method, path, query, headers, body, false);
         };
 
         let mock_def = &mock_match.mock;
@@ -499,7 +534,7 @@ pub async fn respond(
                     continue;
                 }
                 if marker_set(resp.headers.as_ref(), crate::types::PASSTHROUGH_HEADER) {
-                    return unmatched(method, path, query, true);
+                    return unmatched(matcher, method, path, query, headers, body, true);
                 }
                 if marker_set(resp.headers.as_ref(), crate::types::NETWORK_ERROR_HEADER) {
                     // Simulate a network failure: commit headers, then error

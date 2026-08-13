@@ -213,7 +213,7 @@ pub async fn test_mock_match(params: TestMockParams) -> anyhow::Result<()> {
     // Debug mode: show matching details for all mocks
     if debug {
         show_debug_matching(
-            &registry,
+            &matcher,
             &method,
             &clean_path,
             final_query.as_deref(),
@@ -527,9 +527,9 @@ async fn test_mock_match_json(
     Ok(())
 }
 
-/// Show detailed matching debug info for all mocks
+/// Render the engine's match report: every mock, criterion by criterion.
 fn show_debug_matching(
-    registry: &MockRegistry,
+    matcher: &MockMatcher,
     method: &Method,
     path: &str,
     query: Option<&str>,
@@ -539,198 +539,27 @@ fn show_debug_matching(
     crate::say!("{}", ui::header("Debug: Mock Matching Analysis"));
     crate::say!();
 
-    let all_mocks = registry.get_enabled_mocks();
+    let report = matcher.explain(method, path, query, headers, body);
 
-    if all_mocks.is_empty() {
+    if report.attempts.is_empty() {
         crate::say!("{}", ui::warning("No mocks loaded"));
         return;
     }
 
-    for mock in all_mocks {
+    for attempt in &report.attempts {
         println!(
-            "{} {} (priority: {})",
+            "{} {} (priority: {}){}",
             ui::emphasis("Mock:"),
-            ui::code(&mock.id),
-            ui::number(mock.priority)
+            ui::code(&attempt.mock_id),
+            ui::number(attempt.priority),
+            if attempt.enabled {
+                String::new()
+            } else {
+                format!(" {}", ui::dim("[disabled]"))
+            }
         );
 
-        let mut all_matched = true;
-        let mut match_details = Vec::new();
-
-        // Check method
-        let method_match = if mock.request.methods.is_empty() {
-            true
-        } else {
-            mock.request.methods.contains(method)
-        };
-
-        if method_match {
-            match_details.push(format!(
-                "  {} Method: {} {}",
-                CHECK_ICON.green(),
-                method,
-                if mock.request.methods.is_empty() {
-                    "(any method)".to_string()
-                } else {
-                    format!(
-                        "matches {:?}",
-                        mock.request
-                            .methods
-                            .iter()
-                            .map(Method::as_str)
-                            .collect::<Vec<_>>()
-                    )
-                }
-            ));
-        } else {
-            all_matched = false;
-            match_details.push(format!(
-                "  {} Method: {} does not match {:?}",
-                CROSS_ICON.red(),
-                method,
-                mock.request
-                    .methods
-                    .iter()
-                    .map(Method::as_str)
-                    .collect::<Vec<_>>()
-            ));
-        }
-
-        // Check URL patterns
-        let url_match = if mock.request.url_patterns.is_empty() {
-            true
-        } else {
-            let full_url = if let Some(q) = query {
-                format!("{path}?{q}")
-            } else {
-                path.to_string()
-            };
-
-            mock.request
-                .url_patterns
-                .iter()
-                .any(|pattern| pattern.matches(&full_url) || pattern.matches(path))
-        };
-
-        if url_match {
-            match_details.push(format!(
-                "  {} URL: {} matches pattern(s)",
-                CHECK_ICON.green(),
-                path
-            ));
-        } else {
-            all_matched = false;
-            let pattern_count = mock.request.url_patterns.len();
-            match_details.push(format!(
-                "  {} URL: {} does not match {} pattern(s)",
-                CROSS_ICON.red(),
-                path,
-                pattern_count
-            ));
-        }
-
-        // Check header matchers
-        if !mock.request.header_matchers.is_empty() {
-            let header_match = mock
-                .request
-                .header_matchers
-                .iter()
-                .all(|matcher| matcher.matches(headers));
-
-            if header_match {
-                match_details.push(format!(
-                    "  {} Headers: all {} matcher(s) passed",
-                    CHECK_ICON.green(),
-                    mock.request.header_matchers.len()
-                ));
-            } else {
-                all_matched = false;
-                for matcher in &mock.request.header_matchers {
-                    if !matcher.matches(headers) {
-                        match_details.push(format!(
-                            "  {} Header matcher failed: {:?}",
-                            CROSS_ICON.red(),
-                            matcher
-                        ));
-                    }
-                }
-            }
-        }
-
-        // Check query matchers
-        if !mock.request.query_matchers.is_empty() {
-            let query_match = mock
-                .request
-                .query_matchers
-                .iter()
-                .all(|matcher| matcher.matches(query));
-
-            if query_match {
-                match_details.push(format!(
-                    "  {} Query: all {} matcher(s) passed",
-                    CHECK_ICON.green(),
-                    mock.request.query_matchers.len()
-                ));
-            } else {
-                all_matched = false;
-                match_details.push(format!("  {} Query matcher failed", CROSS_ICON.red()));
-            }
-        }
-
-        // Check body matcher
-        if let Some(ref body_matcher) = mock.request.body_matcher {
-            let body_match = body.is_some_and(|b| body_matcher.matches(b, None));
-
-            if body_match {
-                match_details.push(format!("  {} Body: matcher passed", CHECK_ICON.green()));
-            } else {
-                all_matched = false;
-                if body.is_none() {
-                    match_details.push(format!(
-                        "  {} Body: no body provided but matcher required",
-                        CROSS_ICON.red()
-                    ));
-                } else {
-                    match_details.push(format!("  {} Body: matcher failed", CROSS_ICON.red()));
-                }
-            }
-        }
-
-        // Check GraphQL matcher
-        if let Some(ref gql_matcher) = mock.request.graphql_matcher {
-            let gql_match = body.is_some_and(|b| {
-                serde_json::from_slice::<serde_json::Value>(b).is_ok_and(|json| {
-                    // Simplified GraphQL matching check
-                    if gql_matcher.match_any {
-                        json.get("query").is_some() || json.get("operationName").is_some()
-                    } else if let Some(ref op_name) = gql_matcher.operation_name {
-                        json.get("operationName")
-                            .and_then(|v| v.as_str())
-                            .is_some_and(|name| name == op_name)
-                    } else {
-                        true
-                    }
-                })
-            });
-
-            if gql_match {
-                match_details.push(format!("  {} GraphQL: matcher passed", CHECK_ICON.green()));
-            } else {
-                all_matched = false;
-                if let Some(ref op_name) = gql_matcher.operation_name {
-                    match_details.push(format!(
-                        "  {} GraphQL: operation '{}' not matched",
-                        CROSS_ICON.red(),
-                        op_name
-                    ));
-                } else {
-                    match_details.push(format!("  {} GraphQL: matcher failed", CROSS_ICON.red()));
-                }
-            }
-        }
-
-        // Print result
-        if all_matched {
+        if attempt.matched() {
             println!(
                 "  {} {}",
                 ui::success("MATCH"),
@@ -740,10 +569,29 @@ fn show_debug_matching(
             println!("  {}", ui::error("NO MATCH"));
         }
 
-        for detail in match_details {
-            println!("{detail}");
+        for outcome in &attempt.outcomes {
+            let icon = if outcome.passed {
+                CHECK_ICON.green()
+            } else {
+                CROSS_ICON.red()
+            };
+            println!("  {icon} {outcome}");
         }
 
+        if !attempt.enabled && attempt.failures().count() == 0 {
+            println!(
+                "  {} every criterion matches, but the mock is disabled (a consumed `once` mock, or disabled via the API)",
+                CROSS_ICON.red()
+            );
+        }
+
+        crate::say!();
+    }
+
+    if report.matched().is_none()
+        && let Some(closest) = report.near_misses(1).first()
+    {
+        println!("{} {closest}", ui::emphasis("Closest:"));
         crate::say!();
     }
 }

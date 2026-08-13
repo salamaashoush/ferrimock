@@ -143,6 +143,9 @@ pub struct EvaluatedMock {
     pub id: LeanString,
     pub priority: u32,
     pub matched: bool,
+    /// False for a mock that is loaded but currently disabled — a consumed
+    /// `once` mock lands here with every criterion still passing.
+    pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -156,6 +159,9 @@ pub struct MatchDetails {
     pub headers: String,
     pub query: String,
     pub body: String,
+    /// The criteria that rejected the request, already rendered as text.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
 }
 
 // ============================================================================

@@ -456,5 +456,9 @@ pub enum MockAction {
         /// Open browser to server URL
         #[arg(short = 'o', long)]
         open: bool,
+
+        /// Omit the near-miss explanation from unmatched (404) responses
+        #[arg(long)]
+        no_explain: bool,
     },
 }

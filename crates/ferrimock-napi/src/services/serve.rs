@@ -10,6 +10,9 @@ pub struct JsServeInput {
     pub watch: Option<bool>,
     pub cors: Option<bool>,
     pub verbose: Option<bool>,
+    /// Explain unmatched requests in the 404 body. Defaults to true — this
+    /// server is a developer tool, so a miss should say why.
+    pub explain_unmatched: Option<bool>,
 }
 
 #[napi(object, namespace = "services")]
@@ -34,6 +37,7 @@ pub async fn serve(input: JsServeInput) -> Result<JsServeResult> {
         enable_management_endpoints: false,
         log_matches: false,
         verbose: input.verbose.unwrap_or(false),
+        explain_unmatched: input.explain_unmatched.unwrap_or(true),
     })
     .await
     .map_err(|e| Error::from_reason(e.to_string()))?;

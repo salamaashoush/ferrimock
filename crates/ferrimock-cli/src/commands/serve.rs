@@ -10,8 +10,8 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, header};
-use axum::response::{Html, Response};
-use axum::routing::{any, get, post};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{any, delete, get, post};
 use ferrimock::engine::{MockMatcher, MockRegistry, RequestContext};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -31,6 +31,7 @@ pub struct MockServerConfig {
     pub log_matches: bool,
     pub verbose: bool,
     pub open_browser: bool,
+    pub explain_unmatched: bool,
 }
 
 /// Shared state for the mock server
@@ -56,6 +57,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         log_matches,
         verbose,
         open_browser,
+        explain_unmatched,
     } = config;
 
     crate::say!("{}", ui::header("Mock Server"));
@@ -148,6 +150,9 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
 
     // Create matcher
     let matcher = MockMatcher::new((*registry).clone());
+    // A standalone mock server is a developer tool: a miss should say why.
+    matcher.set_explain_unmatched(explain_unmatched);
+    matcher.set_track_unmatched(true);
 
     let state = Arc::new(MockServerState {
         matcher,
@@ -184,7 +189,14 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
     crate::say!();
 
     // Build router - use /__mock/ prefix for management endpoints to avoid conflicts
-    let mut app = Router::new().route("/__mock/status", get(index_handler));
+    let mut app = Router::new()
+        .route("/__mock/status", get(index_handler))
+        .route("/__mock/calls", get(match_counts_handler))
+        .route("/__mock/calls", delete(reset_match_counts_handler))
+        .route("/__mock/coverage", get(coverage_handler))
+        .route("/__mock/unmatched", get(unmatched_handler))
+        .route("/__mock/unmatched", delete(reset_unmatched_handler))
+        .route("/__mock/suggestions", get(suggestions_handler));
 
     // Add render endpoint if enabled
     if enable_render_endpoint {
@@ -446,6 +458,77 @@ async fn render_handler(axum::Json(req): axum::Json<RenderRequest>) -> Response 
     }
 }
 
+/// Match counts for every mock that has served a request.
+///
+/// GET /__mock/calls
+async fn match_counts_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    let counts: Vec<serde_json::Value> = state
+        .registry
+        .match_counts()
+        .into_iter()
+        .map(|(mock_id, count)| serde_json::json!({ "mockId": mock_id, "count": count }))
+        .collect();
+
+    json_response(&serde_json::json!({
+        "counts": counts,
+        "total": state.registry.total_match_count(),
+    }))
+}
+
+/// Reset every match count.
+///
+/// DELETE /__mock/calls
+async fn reset_match_counts_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    state.registry.reset_match_counts();
+    json_response(&serde_json::json!({ "counts": [], "total": 0 }))
+}
+
+/// Which mocks ran and which never did.
+///
+/// GET /__mock/coverage
+async fn coverage_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    let report = state.registry.coverage();
+    json_response(&serde_json::json!({
+        "totalMocks": report.total_mocks(),
+        "percentCovered": report.percent_covered(),
+        "served": report.served,
+        "unused": report.unused,
+        "totalMatches": report.total_matches,
+    }))
+}
+
+/// Every request that matched no mock.
+///
+/// GET /__mock/unmatched
+async fn unmatched_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    json_response(&serde_json::json!(state.registry.unmatched_requests()))
+}
+
+/// Forget every unmatched request.
+///
+/// DELETE /__mock/unmatched
+async fn reset_unmatched_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    state.registry.reset_unmatched();
+    json_response(&serde_json::json!(state.registry.unmatched_requests()))
+}
+
+/// What to widen so the corpus covers the requests it missed.
+///
+/// GET /__mock/suggestions
+async fn suggestions_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    let unmatched = state.registry.unmatched_requests();
+    let suggestions = ferrimock::engine::suggest(&state.matcher, &unmatched.requests);
+    json_response(&serde_json::json!({ "suggestions": suggestions }))
+}
+
+fn json_response(body: &serde_json::Value) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 /// List mocks handler
 #[allow(clippy::expect_used)]
 async fn list_mocks_handler(State(state): State<Arc<MockServerState>>) -> Response {
@@ -461,6 +544,7 @@ async fn list_mocks_handler(State(state): State<Arc<MockServerState>>) -> Respon
               "methods": m.request.methods.iter().map(Method::as_str).collect::<Vec<_>>(),
               "url_patterns_count": m.request.url_patterns.len(),
               "status": m.response.status.as_u16(),
+              "match_count": state.registry.match_count(m.id.as_str()),
             })
         })
         .collect();

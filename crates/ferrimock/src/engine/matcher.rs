@@ -13,6 +13,7 @@ use rustc_hash::{FxHashMap, FxHasher};
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Result of a mock match, including the mock and any URL captures
 #[derive(Debug, Clone)]
@@ -72,6 +73,16 @@ pub struct MockMatcher {
     /// Cache stores mock IDs rather than full MockDefinitions to save memory.
     /// Uses nohash-hasher since keys are pre-hashed u64 values.
     cache: Arc<Mutex<LruCache<u64, LeanString, BuildNoHashHasher<u64>>>>,
+    /// Whether unmatched requests should carry a near-miss explanation.
+    /// Off by default: it costs a full registry walk per miss, which an
+    /// embedder that forwards misses upstream would pay on every request.
+    explain_unmatched: Arc<AtomicBool>,
+    /// Whether unmatched requests are accumulated into the registry's report.
+    /// Separate from `explain_unmatched` because the costs differ by orders of
+    /// magnitude — a few allocations per miss against a full registry walk — so
+    /// a proxy can keep the run-level tally on in every mode and pay for
+    /// explanations only where it refuses to fall through.
+    track_unmatched: Arc<AtomicBool>,
 }
 
 impl MockMatcher {
@@ -90,7 +101,38 @@ impl MockMatcher {
         Self {
             registry,
             cache: Arc::new(Mutex::new(cache)),
+            explain_unmatched: Arc::new(AtomicBool::new(false)),
+            track_unmatched: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Attach a near-miss explanation to unmatched requests.
+    ///
+    /// Costs a full registry walk per miss, so it is off by default and meant
+    /// for developer-facing servers, not for embedders that forward misses to
+    /// a real upstream.
+    pub fn set_explain_unmatched(&self, enabled: bool) {
+        self.explain_unmatched.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether unmatched requests carry a near-miss explanation.
+    #[must_use]
+    pub fn explains_unmatched(&self) -> bool {
+        self.explain_unmatched.load(Ordering::Relaxed)
+    }
+
+    /// Accumulate unmatched requests into [`MockRegistry::unmatched_requests`].
+    ///
+    /// Off by default. A proxy in a fall-through mode misses on every request
+    /// bound upstream, and would otherwise pay an allocation for each.
+    pub fn set_track_unmatched(&self, enabled: bool) {
+        self.track_unmatched.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether unmatched requests are accumulated.
+    #[must_use]
+    pub fn tracks_unmatched(&self) -> bool {
+        self.track_unmatched.load(Ordering::Relaxed)
     }
 
     /// Clear the cache (useful when mocks are added/removed/modified)
@@ -281,7 +323,16 @@ impl MockMatcher {
 
             Some(MockMatch { mock, captures })
         } else {
+            self.record_unmatched_if_needed(method, path, query);
             None
+        }
+    }
+
+    /// Record a request that matched nothing, if tracking is on.
+    #[inline]
+    fn record_unmatched_if_needed(&self, method: &Method, path: &str, query: Option<&str>) {
+        if self.track_unmatched.load(Ordering::Relaxed) {
+            self.registry.record_unmatched(method.as_str(), path, query);
         }
     }
 
@@ -299,7 +350,7 @@ impl MockMatcher {
         let _ = self.registry.enable_mock(id);
     }
 
-    /// Record a call to the mock if call tracking is enabled.
+    /// Count the match, and record the full call when tracking is enabled.
     /// Extracted to avoid duplicating tracking code across fast/slow paths.
     #[inline]
     fn record_call_if_needed(
@@ -311,6 +362,9 @@ impl MockMatcher {
         headers: &HeaderMap,
         body: Option<&[u8]>,
     ) {
+        // Always counted: one relaxed increment, so `verify()` needs no setup.
+        self.registry.record_match(mock.id.as_str());
+
         if self.registry.is_call_tracking_enabled(mock.id.as_str()) {
             const MAX_TRACKED_HEADERS: usize = 10;
             let headers_map: FxHashMap<String, String> = headers
@@ -337,7 +391,11 @@ impl MockMatcher {
 
     /// Extract URL captures from the mock's URL patterns
     #[allow(clippy::unused_self)]
-    fn extract_url_captures(&self, mock: &MockDefinition, path: &str) -> FxHashMap<String, String> {
+    pub(crate) fn extract_url_captures(
+        &self,
+        mock: &MockDefinition,
+        path: &str,
+    ) -> FxHashMap<String, String> {
         // Try each URL pattern until we find one with captures
         for pattern in &mock.request.url_patterns {
             if let Some(captures) = pattern.extract_captures(path) {
@@ -349,7 +407,7 @@ impl MockMatcher {
 
     /// Check if the mock's method criteria matches the request method
     #[allow(clippy::unused_self)]
-    fn matches_method(&self, mock: &MockDefinition, method: &Method) -> bool {
+    pub(crate) fn matches_method(&self, mock: &MockDefinition, method: &Method) -> bool {
         // Empty methods list means match all methods
         if mock.request.methods.is_empty() {
             return true;
@@ -367,7 +425,7 @@ impl MockMatcher {
     /// lane); `None` tests both `ws://` and `wss://`.
     #[allow(clippy::unused_self)]
     #[inline]
-    fn matches_url(
+    pub(crate) fn matches_url(
         &self,
         mock: &MockDefinition,
         path: &str,
@@ -487,7 +545,7 @@ impl MockMatcher {
 
     /// Check if the mock's GraphQL matcher matches the request.
     /// `parsed_json` is the request body parsed once per request (shared).
-    fn matches_graphql(
+    pub(crate) fn matches_graphql(
         &self,
         mock: &MockDefinition,
         body: Option<&[u8]>,
@@ -685,7 +743,7 @@ impl MockMatcher {
 
     /// Check if the mock's body matcher matches the request body
     #[allow(clippy::unused_self)]
-    fn matches_body(
+    pub(crate) fn matches_body(
         &self,
         mock: &MockDefinition,
         body: Option<&[u8]>,
