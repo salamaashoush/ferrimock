@@ -37,8 +37,17 @@ pub fn field_type_to_tera_expr(
             )
         }
 
-        // Numeric types
-        FieldType::SequentialNumber { .. } if has_matching_path_ids && field_name == "id" => {
+        // An id the URL already carries. Echoing the capture is not a nicety:
+        // a mock that matches `/folder/{id}` and then answers with a number of
+        // its own contradicts the request it was given. Which numeric shape the
+        // detector settled on says nothing about that -- two arbitrary ids read
+        // as `RandomNumber` and two consecutive ones as `SequentialNumber`, and
+        // both are the same field.
+        FieldType::SequentialNumber { .. }
+        | FieldType::RandomNumber { .. }
+        | FieldType::NumericStringId
+            if has_matching_path_ids && field_name == "id" =>
+        {
             "{{ captures.id }}".to_string()
         }
         FieldType::SequentialNumber { start, .. } => {

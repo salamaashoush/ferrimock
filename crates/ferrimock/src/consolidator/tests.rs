@@ -648,6 +648,57 @@ async fn test_min_pattern_threshold() {
 }
 
 #[tokio::test]
+async fn a_merged_mock_answers_with_the_id_it_matched_on() {
+    // A response that wraps its resource is the common shape, and the id one
+    // level down is still the id the URL asked for. Answering with a random
+    // number instead makes the mock contradict the request it was given.
+    let collection = MockCollectionConfig {
+        name: Some("Wrapped resource".to_string()),
+        description: None,
+        enabled: true,
+        vars: None,
+        mocks: vec![
+            create_test_mock(
+                "m1",
+                "GET",
+                "/v2/folder/9848115997/extras",
+                r#"{"theme": {"id": 1}, "folder": {"id": 9848115997, "name": "One"}}"#,
+            ),
+            create_test_mock(
+                "m2",
+                "GET",
+                "/v2/folder/9850347912/extras",
+                r#"{"theme": {"id": 1}, "folder": {"id": 9850347912, "name": "Two"}}"#,
+            ),
+            create_test_mock(
+                "m3",
+                "GET",
+                "/v2/folder/9850348888/extras",
+                r#"{"theme": {"id": 1}, "folder": {"id": 9850348888, "name": "Three"}}"#,
+            ),
+        ],
+    };
+
+    let mut consolidator = MockConsolidator::new();
+    let consolidated = consolidator.consolidate(collection).unwrap();
+
+    let template = consolidated
+        .mocks
+        .iter()
+        .find_map(|mock| mock.response_config.as_ref().and_then(|rc| rc.template()))
+        .expect("the group should have produced a template");
+
+    assert!(
+        template.contains("{{ captures.id }}"),
+        "the nested id must echo the capture, got: {template}"
+    );
+    assert!(
+        !template.contains("\"id\": {{ get_random"),
+        "no id may be invented when the URL already carries it, got: {template}"
+    );
+}
+
+#[tokio::test]
 async fn a_scorer_decides_ahead_of_the_size_threshold() {
     use crate::consolidator::merge::{MergeCandidate, MergeScorer};
 

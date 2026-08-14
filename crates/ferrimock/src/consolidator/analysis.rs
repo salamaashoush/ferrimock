@@ -432,7 +432,9 @@ impl ResponseAnalyzer {
         (varying_fields, constant_fields)
     }
 
-    /// Check if response IDs match path IDs
+    /// Whether the responses in a group identify themselves with the id from
+    /// their own URL, so a merged template can echo the capture instead of
+    /// inventing a number that contradicts the request it answered.
     fn check_matching_path_ids(group: &[MockConfig], responses: &[JsonValue]) -> bool {
         if group.len() != responses.len() {
             return false;
@@ -453,9 +455,7 @@ impl ResponseAnalyzer {
                     && let Some(path_id) = caps
                         .get(1)
                         .and_then(|m: regex::Match<'_>| m.as_str().parse::<i64>().ok())
-                    && let Some(response_id) =
-                        response.get("id").and_then(serde_json::Value::as_i64)
-                    && path_id == response_id
+                    && identifies_itself_as(response, path_id, 0)
                 {
                     return true;
                 }
@@ -740,6 +740,35 @@ impl ResponseAnalyzer {
     }
 }
 
+/// Whether a response says it is about `id`.
+///
+/// The resource is as often nested as it is at the top -- `{"folder": {"id": 1}}`
+/// answering `/folder/1/extras` is the same correspondence as `{"id": 1}`
+/// answering `/folder/1`, and only looking at the top level misses every API
+/// that wraps its payload.
+///
+/// Arrays are deliberately not searched. A listing carries an entry per item,
+/// and finding the URL's id among them would say the *collection* identifies
+/// itself that way -- which would then bind every item's id to the one capture.
+fn identifies_itself_as(value: &JsonValue, id: i64, depth: usize) -> bool {
+    /// Deep enough for the wrappers APIs actually use; a resource buried past
+    /// this is not what the URL is naming.
+    const MAX_DEPTH: usize = 3;
+
+    let JsonValue::Object(fields) = value else {
+        return false;
+    };
+
+    if fields.get("id").and_then(JsonValue::as_i64) == Some(id) {
+        return true;
+    }
+
+    depth < MAX_DEPTH
+        && fields
+            .values()
+            .any(|nested| identifies_itself_as(nested, id, depth + 1))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -752,6 +781,91 @@ mod tests {
     use super::*;
     use crate::config::{MatchConfig, ReturnConfig};
     use rustc_hash::FxHashMap;
+
+    fn mock_answering(id: &str, url: &str, body: &str) -> MockConfig {
+        MockConfig {
+            id: id.into(),
+            match_config: Some(MatchConfig {
+                methods: vec!["GET".to_string()],
+                urls: vec![url.to_string()],
+                ..Default::default()
+            }),
+            response_config: Some(ReturnConfig::Structured {
+                status: Some(200),
+                headers: FxHashMap::default(),
+                body: Some(body.to_string()),
+                template: None,
+                file: None,
+                template_file: None,
+                json: Box::new(serde_json::Value::Null),
+            }),
+            ..MockConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_response_that_wraps_its_resource_still_matches_the_path_id() {
+        let analyzer = ResponseAnalyzer::new(true);
+
+        // The id is one level down, which is how most APIs answer.
+        let wrapped = vec![
+            mock_answering(
+                "a",
+                "exact:/v2/folder/9848115997/extras",
+                r#"{"theme": {"id": 1}, "folder": {"id": 9848115997, "name": "One"}}"#,
+            ),
+            mock_answering(
+                "b",
+                "exact:/v2/folder/9850347912/extras",
+                r#"{"theme": {"id": 1}, "folder": {"id": 9850347912, "name": "Two"}}"#,
+            ),
+        ];
+        let analysis = analyzer.analyze_response_patterns(&wrapped).unwrap();
+        assert!(
+            analysis.has_matching_path_ids,
+            "a merged mock must echo the id it matched on, not invent one"
+        );
+
+        // Unwrapped is the case that already worked, and must keep working.
+        let flat = vec![
+            mock_answering("a", "exact:/v2/folder/1", r#"{"id": 1, "name": "One"}"#),
+            mock_answering("b", "exact:/v2/folder/2", r#"{"id": 2, "name": "Two"}"#),
+        ];
+        assert!(
+            analyzer
+                .analyze_response_patterns(&flat)
+                .unwrap()
+                .has_matching_path_ids
+        );
+    }
+
+    #[test]
+    fn a_listing_does_not_identify_itself_by_the_ids_it_contains() {
+        let analyzer = ResponseAnalyzer::new(true);
+
+        // `/v2/folder/1/items` answering with an entry whose id is 1 says
+        // nothing about the collection. Binding on it would give every item the
+        // folder's id.
+        let listing = vec![
+            mock_answering(
+                "a",
+                "exact:/v2/folder/1/items",
+                r#"{"entries": [{"id": 1, "name": "a"}, {"id": 7, "name": "b"}]}"#,
+            ),
+            mock_answering(
+                "b",
+                "exact:/v2/folder/2/items",
+                r#"{"entries": [{"id": 2, "name": "c"}, {"id": 9, "name": "d"}]}"#,
+            ),
+        ];
+        assert!(
+            !analyzer
+                .analyze_response_patterns(&listing)
+                .unwrap()
+                .has_matching_path_ids,
+            "an id found inside a list is an item's, not the collection's"
+        );
+    }
 
     #[test]
     fn test_pagination_pattern_detection_offset_based() {
