@@ -35,6 +35,7 @@ pub mod generator;
 pub mod label;
 pub mod linear;
 pub mod merge;
+pub mod neural;
 pub mod profile;
 
 pub use artifact::ModelArtifact;
@@ -44,6 +45,7 @@ pub use features::{FEATURE_COUNT, FEATURE_LAYOUT_VERSION};
 pub use label::FieldLabel;
 pub use linear::LinearClassifier;
 pub use merge::{MERGE_FEATURE_COUNT, MERGE_FEATURE_LAYOUT_VERSION, MergeExample};
+pub use neural::{NeuralClassifier, NeuralConfig};
 pub use profile::LearnedProfile;
 
 /// Anything that can name a field's type from its name and sampled values.

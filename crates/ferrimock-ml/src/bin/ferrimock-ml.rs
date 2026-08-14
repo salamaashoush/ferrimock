@@ -19,6 +19,7 @@ use ferrimock_ml::linear::TrainingConfig;
 use ferrimock_ml::merge::{
     MergeLabelOptions, MergeModel, MergeTrainingConfig, outcome_of, size_threshold_merges,
 };
+use ferrimock_ml::neural::{NeuralClassifier, NeuralConfig};
 use ferrimock_ml::{
     Classifier, Corpus, FieldLabel, HeuristicClassifier, LinearClassifier, MergeExample,
     ModelArtifact, evaluate, generator,
@@ -79,6 +80,7 @@ options
   --label NAME      restrict `explain` to one label
   --recording PATH  HAR or recording session to extract fields from
   --mocks PATH      mock collection whose groups are measured
+  --neural          also fit a network on the same features and score it alongside
   --force           write the model even if it fails the ship gate
 
 `merge-label` needs no reviewer. It merges one group at a time, replays the
@@ -168,6 +170,20 @@ fn train(args: &[String]) -> Result<(), String> {
     );
     let heuristic = HeuristicClassifier::new();
 
+    // A network on the same features, so the question "would a network do
+    // better" is answered rather than assumed. It reads the same split as
+    // everything else.
+    let neural = has_flag(args, "--neural").then(|| {
+        eprintln!("fitting a network on the same features (this is the slow part)");
+        NeuralClassifier::train(
+            &split.train,
+            &NeuralConfig {
+                seed,
+                ..NeuralConfig::default()
+            },
+        )
+    });
+
     println!("\n--- validation ---");
     println!("{}", evaluate(&candidate, &split.validation).report());
 
@@ -179,6 +195,11 @@ fn train(args: &[String]) -> Result<(), String> {
     println!("{}", heuristic_test.report());
     println!("{}", baseline_test.report());
     println!("{}", candidate_test.report());
+
+    let neural_test = neural.as_ref().map(|model| evaluate(model, &split.test));
+    if let Some(report) = neural_test.as_ref() {
+        println!("{}", report.report());
+    }
 
     println!("--- verdict ---");
     println!(
@@ -202,6 +223,17 @@ fn train(args: &[String]) -> Result<(), String> {
             evaluate(&baseline, &reviewed_test).macro_f1(),
             evaluate(&candidate, &reviewed_test).macro_f1()
         );
+    }
+
+    if let Some(report) = neural_test.as_ref() {
+        println!("  network on the same features   {:.3}", report.macro_f1());
+        let verdict = if report.macro_f1() > candidate_test.macro_f1() {
+            "the network beats the linear model on these features"
+        } else {
+            "the network does not beat a linear model on the same features, so the features \
+             are the ceiling and more layers will not move it"
+        };
+        println!("  {verdict}");
     }
 
     let gate = ShipGate::assess(&candidate, &heuristic, &baseline, &split.test);
