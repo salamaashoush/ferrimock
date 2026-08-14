@@ -648,6 +648,55 @@ async fn test_min_pattern_threshold() {
 }
 
 #[tokio::test]
+async fn a_merged_template_is_not_outranked_by_a_recording_it_was_built_from() {
+    // One endpoint answered two ways over the session. The rarer answer is
+    // split into its own partition, and raising it above the template does not
+    // make it more specific -- both match on exactly the same thing, so the
+    // template becomes unreachable and answers nothing.
+    let collection = MockCollectionConfig {
+        name: Some("Same matcher, two answers".to_string()),
+        description: None,
+        enabled: true,
+        vars: None,
+        mocks: vec![
+            create_test_mock("m1", "GET", "/v2/status", r#"{"state": "ready", "count": 1}"#),
+            create_test_mock("m2", "GET", "/v2/status", r#"{"state": "ready", "count": 2}"#),
+            create_test_mock("m3", "GET", "/v2/status", r#"{"state": "ready", "count": 3}"#),
+            create_test_mock("m4", "GET", "/v2/status", r#"{"error": "unavailable"}"#),
+        ],
+    };
+
+    let mut consolidator = MockConsolidator::new();
+    let consolidated = consolidator.consolidate(collection).unwrap();
+
+    let matcher_of = |mock: &MockConfig| {
+        mock.match_config
+            .as_ref()
+            .map(|m| format!("{:?}{:?}", m.methods, m.urls))
+            .unwrap_or_default()
+    };
+
+    let mut by_matcher: FxHashMap<String, Vec<u32>> = FxHashMap::default();
+    for mock in &consolidated.mocks {
+        by_matcher
+            .entry(matcher_of(mock))
+            .or_default()
+            .push(mock.priority);
+    }
+
+    for (matcher, priorities) in by_matcher {
+        if priorities.len() > 1 {
+            let first = priorities.first().copied().unwrap_or_default();
+            assert!(
+                priorities.iter().all(|priority| *priority == first),
+                "mocks matching the same thing must not outrank each other, or all but the \
+                 top one are unreachable: {matcher} got {priorities:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_merged_mock_answers_with_the_id_it_matched_on() {
     // A response that wraps its resource is the common shape, and the id one
     // level down is still the id the URL asked for. Answering with a random

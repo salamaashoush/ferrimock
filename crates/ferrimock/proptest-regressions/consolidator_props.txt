@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 720a1c4084f748b01dfb661b086fffc145e73f7d5d4337816c0f00ff2f3cfabb # shrinks to traffic = Traffic { handlers: [Handler { resource: "res0", shape: Detail, id_kind: Numeric, status: 200, fields: [("id", Id)] }, Handler { resource: "res1", shape: Paginated, id_kind: Numeric, status: 200, fields: [("field_0", Nested)] }], calls: [(1, 4), (1, 1)] }

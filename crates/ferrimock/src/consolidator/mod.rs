@@ -301,7 +301,124 @@ impl MockConsolidator {
             consolidated.extend(processed);
         }
 
+        self.sequence_identical_matchers(&mut consolidated);
+
         Ok(consolidated)
+    }
+
+    /// Replay partitions that match on exactly the same thing as the sequence
+    /// they were recorded as.
+    ///
+    /// Priority encodes specificity, and that only means something when the
+    /// matchers differ. One endpoint answering differently over time -- a
+    /// GraphQL operation, a token endpoint, a list that grew -- produces
+    /// partitions carrying an identical matcher, and raising each one above the
+    /// last does not make it more specific. It makes every mock below it
+    /// unreachable, so the collection answers the whole endpoint with whichever
+    /// recording happened to land on top.
+    ///
+    /// Ties fall back to collection order, so equal priority plus `once` on all
+    /// but the last replays them in turn. A mock standing in for several
+    /// recordings answers for all of them and cannot retire, so it goes last
+    /// and stays.
+    fn sequence_identical_matchers(&self, mocks: &mut Vec<MockConfig>) {
+        let mut positions: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+        for (index, mock) in mocks.iter().enumerate() {
+            positions
+                .entry(Self::matcher_signature(mock))
+                .or_default()
+                .push(index);
+        }
+
+        for indices in positions.values().filter(|indices| indices.len() > 1) {
+            // The recording already says how a repeated request replays, in the
+            // `once` flags the converter wrote. This does not second-guess that
+            // -- inventing a sequence where the recording described none would
+            // retire a mock that was meant to keep answering. All that is undone
+            // here is the shadowing.
+            let mut ordered = indices.clone();
+            // A mock standing in for several recordings answers for all of them
+            // and cannot retire, so it is the one left holding the endpoint.
+            ordered.sort_by_key(|index| {
+                let stands_for_many = mocks
+                    .get(*index)
+                    .is_some_and(|mock| self.provenance.origins(&mock.id).len() > 1);
+                (stands_for_many, *index)
+            });
+
+            let floor = indices
+                .iter()
+                .filter_map(|index| mocks.get(*index).map(|mock| mock.priority))
+                .min()
+                .unwrap_or_else(|| MockConfig::default().priority);
+
+            let resequenced: Vec<MockConfig> = ordered
+                .iter()
+                .filter_map(|index| mocks.get(*index).cloned())
+                .map(|mut mock| {
+                    mock.priority = floor;
+                    mock
+                })
+                .collect();
+
+            // Collection order breaks the tie, so they have to sit in the order
+            // they answer in. Written rather than swapped: swapping in place
+            // moves entries the later indices still refer to.
+            let mut slots = indices.clone();
+            slots.sort_unstable();
+            for (slot, mock) in slots.into_iter().zip(resequenced) {
+                if let Some(target) = mocks.get_mut(slot) {
+                    *target = mock;
+                }
+            }
+        }
+    }
+
+    /// What a mock matches on, as a comparable key.
+    fn matcher_signature(mock: &MockConfig) -> String {
+        let Some(match_config) = mock.match_config.as_ref() else {
+            return format!("none:{}", mock.id);
+        };
+
+        let mut methods = match_config.methods.clone();
+        if let Some(method) = match_config.method.as_ref() {
+            methods.push(method.clone());
+        }
+        methods.sort_unstable();
+
+        let mut urls = match_config.urls.clone();
+        if let Some(url) = match_config.url.as_ref() {
+            urls.push(url.clone());
+        }
+        urls.sort_unstable();
+
+        // The pinned *values* are what tell two recordings of one URL apart --
+        // thirteen calls that each pin a different `$.fileIDs[0]` are thirteen
+        // distinguishable mocks, not one shadowing twelve. Comparing only the
+        // names would collapse them.
+        let mut headers: Vec<String> = match_config
+            .headers
+            .iter()
+            .map(|(name, condition)| format!("{name}={condition:?}"))
+            .collect();
+        headers.sort_unstable();
+        let mut query: Vec<String> = match_config
+            .query
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        query.sort_unstable();
+        let mut body: Vec<String> = match_config
+            .body
+            .iter()
+            .map(|(path, value)| format!("{path}={value}"))
+            .collect();
+        body.sort_unstable();
+
+        format!(
+            "{methods:?}|{urls:?}|{headers:?}|{query:?}|{body:?}|{:?}",
+            match_config.graphql
+        )
     }
 
     /// Whether a group becomes one mock or stays as it was recorded.
