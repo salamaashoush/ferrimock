@@ -13,3 +13,15 @@ crates/ferrimock-cli/npm-shim/npm/
 # Benchmark runs: machine-specific numbers, and they record the directory
 # they ran in. Keep them local.
 benchmarks/results/
+
+# Fuzzing: the build tree and the crash artifacts are per-machine. The corpus is
+# too large and too machine-shaped to track; a checked-in seed corpus would go
+# in fuzz/seeds/ instead.
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/Cargo.lock
+
+# proptest writes a regression seed on failure. Keeping it is deliberate -- a
+# counterexample that took a fuzzer to find should be replayed forever.
+!crates/*/proptest-regressions/

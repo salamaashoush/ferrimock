@@ -245,13 +245,14 @@ fn propose_parameterized_url(mock: &crate::types::MockDefinition, path: &str) ->
             });
         }
 
-        let target = PatternDetector::normalize_path_for_grouping(path);
+        let detector = PatternDetector::new();
+        let target = detector.normalize_path_for_grouping(path);
         // Nothing varied, so the paths genuinely address different endpoints
         // and a parameterised pattern would not bring them together.
         if target == path {
             continue;
         }
-        if PatternDetector::normalize_path_for_grouping(literal) == target {
+        if detector.normalize_path_for_grouping(literal) == target {
             return Some(Proposal {
                 kind: SuggestionKind::ParameterizeUrl,
                 current: literal.to_string(),

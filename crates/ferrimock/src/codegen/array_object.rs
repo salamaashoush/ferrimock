@@ -68,14 +68,18 @@ pub(super) fn generate_tera_array_with_limit(pattern: &ArrayPattern) -> String {
         FieldType::Object(_) | FieldType::Array(_)
     );
 
-    // Use limit variable for pagination results array
+    // `limit` comes from the pagination preamble. Defaulting keeps the template
+    // renderable if it is ever emitted without one -- an unrendered mock returns
+    // a 500 to the app under test, which is far worse than a differently sized
+    // array.
+    let count = "range(end=limit | default(value=20))";
     if is_complex {
         format!(
-            "[\n        {{% for i in range(end=limit) %}}\n        {element_expr}{{% if not loop.last %}},{{% endif %}}\n        {{% endfor %}}\n      ]"
+            "[\n        {{% for i in {count} %}}\n        {element_expr}{{% if not loop.last %}},{{% endif %}}\n        {{% endfor %}}\n      ]"
         )
     } else {
         format!(
-            "[{{% for i in range(end=limit) %}}{element_expr}{{ if not loop.last }}, {{ endif }}{{% endfor %}}]"
+            "[{{% for i in {count} %}}{element_expr}{{ if not loop.last }}, {{ endif }}{{% endfor %}}]"
         )
     }
 }

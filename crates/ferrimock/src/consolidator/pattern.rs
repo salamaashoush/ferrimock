@@ -1,106 +1,89 @@
 //! URL pattern detection and analysis for mock consolidation
 
 use crate::config::MockConfig;
+use crate::profile::{ConsolidationProfile, Placeholder, SegmentContext};
 use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 use url::Url;
 
-// ---------------------------------------------------------------------------
-// Path Normalizer extension point
-// ---------------------------------------------------------------------------
+/// Stand-in for a group whose sibling values are not known.
+const NO_SIBLINGS: [&str; 0] = [];
 
-/// Custom path segment normalizer for consolidation grouping.
+/// Ask the profile about each segment before the built-in rules see the path.
 ///
-/// Returns `Some(placeholder)` if the segment should be normalized (e.g., a
-/// domain-specific ID format), or `None` to let built-in normalizers handle it.
+/// The profile goes first because it is the only thing that can know an API's
+/// conventions -- that `/v2/` is a version and not an id, that an 11-digit run
+/// is a document id.
 ///
-/// Closures with signature `Fn(&str) -> Option<String>` implement this trait.
-pub trait PathNormalizer: Send + Sync + 'static {
-    fn normalize_segment(&self, segment: &str) -> Option<String>;
-}
-
-impl<F> PathNormalizer for F
-where
-    F: Fn(&str) -> Option<String> + Send + Sync + 'static,
-{
-    fn normalize_segment(&self, segment: &str) -> Option<String> {
-        self(segment)
-    }
-}
-
-static CUSTOM_NORMALIZERS: Mutex<Vec<Arc<dyn PathNormalizer>>> = Mutex::new(Vec::new());
-
-/// Register a custom path normalizer for consolidation grouping.
+/// `siblings` holds, per position, every value the group had there, which is
+/// what lets a profile distinguish a segment that varies from one that merely
+/// looks variable. Pass an empty slice when the group is not known.
 ///
-/// Custom normalizers run after built-in normalizers (UUID, ISO date, numeric ID).
-/// They are applied to each remaining path segment that wasn't matched by built-ins.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// ferrimock::consolidator::register_path_normalizer(|segment| {
-///     // Recognize 8-digit enterprise IDs
-///     if segment.len() == 8 && segment.chars().all(|c| c.is_ascii_digit()) {
-///         Some("{enterprise_id}".to_string())
-///     } else {
-///         None
-///     }
-/// });
-/// ```
-pub fn register_path_normalizer(normalizer: impl PathNormalizer) {
-    if let Ok(mut normalizers) = CUSTOM_NORMALIZERS.lock() {
-        normalizers.push(Arc::new(normalizer));
-    }
-}
+/// Returns the rewritten segments alongside a flag per segment saying whether
+/// the profile settled it. The flag is the point: a segment pinned as
+/// [`Placeholder::Literal`] reads identically to one the profile never saw, and
+/// without the flag the built-in numeric rule would claim it right back.
+fn apply_profile_normalizers<'a>(
+    segments: &[&'a str],
+    path: &str,
+    profile: &dyn ConsolidationProfile,
+    siblings: &[Vec<&'a str>],
+) -> (Vec<String>, Vec<bool>) {
+    let mut rewritten = Vec::with_capacity(segments.len());
+    let mut settled = vec![false; segments.len()];
 
-/// Apply custom normalizers to remaining path segments after built-in patterns.
-fn apply_custom_normalizers(path: &str) -> String {
-    let Ok(normalizers) = CUSTOM_NORMALIZERS.lock() else {
-        return path.to_string();
-    };
-    if normalizers.is_empty() {
-        return path.to_string();
-    }
-
-    let segments: Vec<&str> = path.split('/').collect();
-    let mut result = Vec::with_capacity(segments.len());
-
-    for segment in &segments {
+    for (index, segment) in segments.iter().enumerate() {
         if segment.is_empty() || segment.starts_with('{') {
-            // Empty segment or already normalized by built-in
-            result.push((*segment).to_string());
+            rewritten.push((*segment).to_string());
             continue;
         }
 
-        let mut matched = false;
-        for normalizer in normalizers.iter() {
-            if let Some(placeholder) = normalizer.normalize_segment(segment) {
-                result.push(placeholder);
-                matched = true;
-                break;
+        let ctx = SegmentContext {
+            segment,
+            index,
+            previous: index.checked_sub(1).and_then(|i| segments.get(i)).copied(),
+            next: segments.get(index + 1).copied(),
+            path,
+            siblings: siblings
+                .get(index)
+                .map_or(&NO_SIBLINGS[..], std::vec::Vec::as_slice),
+        };
+
+        match profile.normalize_segment(&ctx) {
+            // A name carrying a slash would desync the segment alignment every
+            // caller depends on, so it is refused rather than trusted.
+            Some(Placeholder::Named(name)) if !name.contains('/') => {
+                rewritten.push(format!("{{{name}}}"));
+                if let Some(slot) = settled.get_mut(index) {
+                    *slot = true;
+                }
             }
-        }
-        if !matched {
-            result.push((*segment).to_string());
+            Some(Placeholder::Literal) => {
+                rewritten.push((*segment).to_string());
+                if let Some(slot) = settled.get_mut(index) {
+                    *slot = true;
+                }
+            }
+            Some(Placeholder::Named(_)) | None => rewritten.push((*segment).to_string()),
         }
     }
 
-    result.join("/")
+    (rewritten, settled)
 }
 
+// Paths are classified one segment at a time rather than by scanning the whole
+// string. That ordering is what lets a profile's answer stand: a segment it
+// pinned as a literal is never offered to the numeric rule afterwards.
 #[allow(clippy::expect_used)] // Static regex literals -- panic on invalid pattern is correct
-static UUID_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(/|$)")
-        .expect("Failed to compile UUID pattern")
+static UUID_SEGMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$")
+        .expect("Failed to compile UUID segment pattern")
 });
 #[allow(clippy::expect_used)]
-static ISO_DATE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"/(\d{4}-\d{2}-\d{2})(/|$)").expect("Failed to compile ISO date pattern")
+static ISO_DATE_SEGMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("Failed to compile ISO date segment pattern")
 });
-#[allow(clippy::expect_used)]
-static NUMERIC_ID_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"/(\d+)(/|$)").expect("Failed to compile numeric ID pattern"));
 
 /// Analysis of query parameter variations in a group
 #[derive(Debug)]
@@ -116,15 +99,35 @@ pub struct QueryParamAnalysis {
 }
 
 /// Pattern detection engine for grouping and analyzing mocks
-pub struct PatternDetector;
+pub struct PatternDetector {
+    profile: Arc<dyn ConsolidationProfile>,
+}
+
+impl Default for PatternDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl PatternDetector {
+    /// A detector with only the built-in rules.
+    pub fn new() -> Self {
+        Self {
+            profile: crate::profile::default_profile(),
+        }
+    }
+
+    /// A detector that asks `profile` before applying the built-in rules.
+    pub fn with_profile(profile: Arc<dyn ConsolidationProfile>) -> Self {
+        Self { profile }
+    }
+
     /// Group mocks by similar URL patterns
-    pub fn group_similar_mocks(mocks: &[MockConfig]) -> Vec<Vec<MockConfig>> {
+    pub fn group_similar_mocks(&self, mocks: &[MockConfig]) -> Vec<Vec<MockConfig>> {
         let mut groups: FxHashMap<String, Vec<MockConfig>> = FxHashMap::default();
 
         for mock in mocks {
-            let key = Self::extract_pattern_key(mock);
+            let key = self.extract_pattern_key(mock);
             groups.entry(key).or_default().push(mock.clone());
         }
 
@@ -132,8 +135,8 @@ impl PatternDetector {
     }
 
     /// Extract a pattern key for grouping similar requests
-    /// Groups by: method + normalized_path + priority_tier + enabled_state
-    fn extract_pattern_key(mock: &MockConfig) -> String {
+    /// Groups by: method + normalized_path + resource + priority_tier + enabled_state
+    fn extract_pattern_key(&self, mock: &MockConfig) -> String {
         let Some(match_config) = mock.match_config.as_ref() else {
             return "unknown".to_string();
         };
@@ -175,10 +178,19 @@ impl PatternDetector {
                 .or(match_config.method.as_ref())
                 .map_or("GET", std::string::String::as_str);
 
+            // A profile can keep resources apart that normalize alike -- two
+            // endpoints reachable at the same shape of path but answering about
+            // different things.
+            let resource = self
+                .profile
+                .resource_key(&path)
+                .unwrap_or(std::borrow::Cow::Borrowed(""));
+
             format!(
-                "{}:{}:{}:{}:{}",
+                "{}:{}:{}:{}:{}:{}",
                 method,
-                Self::normalize_path_for_grouping(&path),
+                self.normalize_path_for_grouping(&path),
+                resource,
                 graphql_key,
                 priority_tier,
                 enabled_state
@@ -272,69 +284,75 @@ impl PatternDetector {
         }
     }
 
-    /// Normalize a path for grouping (replace numeric IDs, UUIDs, dates)
-    /// Uses unique placeholders for multiple IDs in same path
-    pub fn normalize_path_for_grouping(path: &str) -> String {
-        let mut normalized = path.to_string();
-        let mut id_counter = 0;
+    /// Normalize a path for grouping, collapsing ids, UUIDs and dates into
+    /// placeholders so that requests for different instances of one resource
+    /// land in the same group.
+    ///
+    /// Repeated kinds are numbered -- `/orgs/{id}/users/{id2}` -- so a path with
+    /// two ids stays distinguishable from one with a single id.
+    pub fn normalize_path_for_grouping(&self, path: &str) -> String {
+        self.normalize_path_with_siblings(path, &[])
+    }
 
-        // Replace UUIDs first (more specific): /files/550e...000 -> /files/{uuid}
-        // Use counter for multiple UUIDs: /orgs/{uuid1}/files/{uuid2}
-        let mut uuid_counter = 0;
-        normalized = UUID_PATTERN
-            .replace_all(&normalized, |caps: &regex::Captures<'_>| {
-                uuid_counter += 1;
-                let suffix = caps.get(1).map_or("", |m| m.as_str());
-                if uuid_counter == 1 {
-                    format!("/{{uuid}}{suffix}")
+    /// [`Self::normalize_path_for_grouping`], told what the rest of the group
+    /// had in each position so a profile can judge whether a segment varies.
+    fn normalize_path_with_siblings(&self, path: &str, siblings: &[Vec<&str>]) -> String {
+        let segments: Vec<&str> = path.split('/').collect();
+
+        // The profile speaks first: only it can know that `/v2/` is a version
+        // rather than an id, and a segment it settles is never reconsidered.
+        let (rewritten, settled) =
+            apply_profile_normalizers(&segments, path, self.profile.as_ref(), siblings);
+
+        let mut counters: FxHashMap<&'static str, usize> = FxHashMap::default();
+        let normalized: Vec<String> = rewritten
+            .into_iter()
+            .enumerate()
+            .map(|(index, segment)| {
+                if settled.get(index).copied().unwrap_or(false) {
+                    return segment;
+                }
+
+                let Some(kind) = Self::builtin_segment_kind(&segment) else {
+                    return segment;
+                };
+
+                let counter = counters.entry(kind).or_insert(0);
+                *counter += 1;
+                if *counter == 1 {
+                    format!("{{{kind}}}")
                 } else {
-                    format!("/{{uuid{uuid_counter}}}{suffix}")
+                    format!("{{{kind}{counter}}}")
                 }
             })
-            .to_string();
+            .collect();
 
-        // Replace ISO dates: /logs/2024-01-15 -> /logs/{date}
-        normalized = ISO_DATE_PATTERN
-            .replace_all(&normalized, "/{date}$2")
-            .to_string();
+        normalized.join("/")
+    }
 
-        // Replace numeric IDs: /users/123 -> /users/{id}
-        // Use counter for multiple IDs: /orgs/{id1}/users/{id2}
-        normalized = NUMERIC_ID_PATTERN
-            .replace_all(&normalized, |caps: &regex::Captures<'_>| {
-                id_counter += 1;
-                let suffix = caps.get(2).map_or("", |m| m.as_str());
-                if id_counter == 1 {
-                    format!("/{{id}}{suffix}")
-                } else {
-                    format!("/{{id{id_counter}}}{suffix}")
-                }
-            })
-            .to_string();
-
-        // Apply custom normalizers for domain-specific patterns
-        normalized = apply_custom_normalizers(&normalized);
-
-        normalized
+    /// The placeholder kind the built-in rules give a segment, if any.
+    fn builtin_segment_kind(segment: &str) -> Option<&'static str> {
+        if UUID_SEGMENT.is_match(segment) {
+            Some("uuid")
+        } else if ISO_DATE_SEGMENT.is_match(segment) {
+            Some("date")
+        } else if !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_digit()) {
+            Some("id")
+        } else {
+            None
+        }
     }
 
     /// Generate a smart URL pattern based on the URLs in the group
     /// Returns clean URLs without prefixes - system will auto-detect matching strategy
     #[allow(clippy::indexing_slicing)] // `group[0]` safe: callers ensure non-empty group; `.windows(2)` guarantees 2-element slices
-    pub fn generate_smart_url_pattern(group: &[MockConfig]) -> String {
+    pub fn generate_smart_url_pattern(&self, group: &[MockConfig]) -> String {
         let base_path = Self::extract_base_path(&group[0]);
 
         let query_analysis = Self::analyze_query_param_variations(group);
         if query_analysis.has_variations && query_analysis.has_common_base_path {
             // Query param variations - just use base path (will be prefix match)
             return base_path;
-        }
-
-        let has_varying_path_ids = Self::has_varying_path_segments(group);
-        if has_varying_path_ids {
-            let normalized = Self::normalize_path_for_grouping(&base_path);
-            // Generate Express-style pattern like /users/{id}
-            return Self::generate_express_style_pattern(&normalized, group);
         }
 
         if Self::all_urls_identical(group) {
@@ -344,34 +362,106 @@ impl PatternDetector {
                 .and_then(|mc| mc.urls.first().or(mc.url.as_ref()))
                 .map_or("", std::string::String::as_str);
             // Return clean URL without any prefix - will be exact match
-            first_url
+            return first_url
                 .strip_prefix("exact:")
                 .unwrap_or(first_url)
-                .to_string()
-        } else {
-            // Different URLs in group - use base path (will be prefix match)
-            base_path
+                .to_string();
         }
+
+        self.generate_evidence_pattern(group).unwrap_or(base_path)
     }
 
-    /// Check if there are varying segments in the path (not query params)
-    #[allow(clippy::indexing_slicing)] // `.windows(2)` guarantees 2-element slices
-    fn has_varying_path_segments(group: &[MockConfig]) -> bool {
-        if group.len() < 2 {
-            return false;
+    /// Build a URL pattern from what the group's paths actually vary.
+    ///
+    /// The grouping normalizer is deliberately loose -- it has to pull
+    /// candidates together before anything is known about them, so it turns
+    /// every numeric segment into `{id}`. A *pattern* must be the opposite:
+    /// `/api/2/users/1` and `/api/2/users/2` differ only in the last segment, so
+    /// the API version stays literal and only the id becomes a placeholder.
+    /// Deriving that from observed variation rather than from a regex is what
+    /// keeps two versions of an endpoint from claiming the same pattern.
+    ///
+    /// Returns `None` when the paths do not have a common segment count, which
+    /// leaves no sensible segment-wise alignment.
+    pub fn generate_evidence_pattern(&self, group: &[MockConfig]) -> Option<String> {
+        let paths: Vec<String> = group.iter().map(Self::extract_base_path).collect();
+        let segment_count = paths.first()?.split('/').count();
+        if paths
+            .iter()
+            .any(|path| path.split('/').count() != segment_count)
+        {
+            return None;
         }
 
-        let base_paths: Vec<String> = group.iter().map(Self::extract_base_path).collect();
-
-        let normalized: Vec<String> = base_paths
-            .iter()
-            .map(|path| Self::normalize_path_for_grouping(path))
+        // What every recording had in each position. The profile sees this, so
+        // it can answer about a segment knowing whether the group varied there.
+        let siblings: Vec<Vec<&str>> = (0..segment_count)
+            .map(|index| {
+                paths
+                    .iter()
+                    .filter_map(|path| path.split('/').nth(index))
+                    .collect()
+            })
             .collect();
 
-        let all_same_normalized = normalized.windows(2).all(|w| w[0] == w[1]);
-        let all_same_original = base_paths.windows(2).all(|w| w[0] == w[1]);
+        let first_path = paths.first()?;
+        let first_segments: Vec<&str> = first_path.split('/').collect();
+        let (rewritten, settled) = apply_profile_normalizers(
+            &first_segments,
+            first_path,
+            self.profile.as_ref(),
+            &siblings,
+        );
 
-        all_same_normalized && !all_same_original
+        let mut counters: FxHashMap<&'static str, usize> = FxHashMap::default();
+        let mut segments = Vec::with_capacity(segment_count);
+
+        for index in 0..segment_count {
+            if settled.get(index).copied().unwrap_or(false) {
+                segments.push(rewritten.get(index).cloned().unwrap_or_default());
+                continue;
+            }
+
+            let Some(values) = siblings.get(index) else {
+                continue;
+            };
+            let Some(first) = values.first().copied() else {
+                continue;
+            };
+
+            // A position every recording agreed on is a literal, whatever it
+            // looks like. This is what keeps an API version out of `{id}`.
+            if values.iter().all(|value| *value == first) {
+                segments.push(first.to_string());
+                continue;
+            }
+
+            let kind = Self::classify_segment_values(values);
+            let counter = counters.entry(kind).or_insert(0);
+            *counter += 1;
+            segments.push(if *counter == 1 {
+                format!("{{{kind}}}")
+            } else {
+                format!("{{{kind}{counter}}}")
+            });
+        }
+
+        Some(segments.join("/"))
+    }
+
+    /// Name the placeholder a set of varying segment values deserves.
+    ///
+    /// `id` is the fallback rather than something more honest like `seg` because
+    /// template generation binds response `id` fields to `captures.id`; renaming
+    /// it would silently stop those bindings resolving.
+    fn classify_segment_values(values: &[&str]) -> &'static str {
+        if values.iter().all(|value| UUID_SEGMENT.is_match(value)) {
+            "uuid"
+        } else if values.iter().all(|value| ISO_DATE_SEGMENT.is_match(value)) {
+            "date"
+        } else {
+            "id"
+        }
     }
 
     /// Check if all URLs in group are identical
@@ -460,7 +550,7 @@ impl PatternDetector {
 
     /// Extract base path from URL (without query params).
     /// Handles both absolute URLs (`https://api.example.com/v2/users/me`)
-    /// and relative paths (`/2.0/users/me`).
+    /// and relative paths (`/v2/users/me`).
     pub fn extract_base_path(mock: &MockConfig) -> String {
         let url = mock
             .match_config
@@ -484,56 +574,120 @@ impl PatternDetector {
         }
     }
 
-    /// Generate Express-style pattern for ID-based paths
-    /// Returns clean patterns like /users/{id} that the system will auto-convert to regex
-    fn generate_express_style_pattern(base_path: &str, _group: &[MockConfig]) -> String {
-        // Simply return the base path which already has {id} or {uuid} placeholders
-        // The system will auto-convert patterns like /users/{id} to proper regex
-        base_path.to_string()
-    }
-
-    /// Check if all mocks in group are duplicates
+    /// Whether every mock in the group is interchangeable with the first.
+    ///
+    /// Collapsing a group to one member discards everything the others said, so
+    /// the comparison has to cover everything a request can be selected on --
+    /// method, URL, and the header, query and body matchers -- as well as the
+    /// whole answer. Comparing only URL, status and body let a group collapse
+    /// onto a member with different response headers, or merged a `GET` mock
+    /// with a `GET, HEAD` one and lost the `HEAD`.
     #[allow(clippy::indexing_slicing)] // `group[0]` safe: `group.len() < 2` returns early
     pub fn are_duplicates(group: &[MockConfig]) -> bool {
         if group.len() < 2 {
             return false;
         }
 
-        let first_urls = group[0].match_config.as_ref().map(|mc| {
-            if mc.urls.is_empty() {
-                mc.url.as_ref().map(|u| vec![u.clone()]).unwrap_or_default()
+        let first = DuplicateKey::of(&group[0]);
+        group
+            .iter()
+            .skip(1)
+            .all(|mock| DuplicateKey::of(mock) == first)
+    }
+}
+
+/// Everything that has to agree before two recordings are interchangeable.
+#[derive(PartialEq, Eq)]
+struct DuplicateKey {
+    methods: Vec<String>,
+    urls: Vec<String>,
+    headers: Vec<(String, String)>,
+    query: Vec<(String, String)>,
+    body_match: Vec<(String, String)>,
+    graphql: Option<String>,
+    status: Option<u16>,
+    response_body: Option<String>,
+    response_headers: Vec<(String, String)>,
+}
+
+impl DuplicateKey {
+    fn of(mock: &MockConfig) -> Self {
+        let match_config = mock.match_config.as_ref();
+
+        let mut methods = match_config.map_or_else(Vec::new, |m| {
+            if m.methods.is_empty() {
+                m.method.clone().into_iter().collect()
             } else {
-                mc.urls.clone()
+                m.methods.clone()
             }
         });
-        let first_body = group[0]
-            .response_config
-            .as_ref()
-            .and_then(|rc| rc.body().cloned());
-        let first_status = group[0]
-            .response_config
-            .as_ref()
-            .and_then(crate::config::ResponseConfig::status);
+        methods.sort_unstable();
 
-        group.iter().skip(1).all(|mock| {
-            let mock_urls = mock.match_config.as_ref().map(|mc| {
-                if mc.urls.is_empty() {
-                    mc.url.as_ref().map(|u| vec![u.clone()]).unwrap_or_default()
-                } else {
-                    mc.urls.clone()
-                }
-            });
-            let mock_body = mock
-                .response_config
-                .as_ref()
-                .and_then(|rc| rc.body().cloned());
-            let mock_status = mock
-                .response_config
-                .as_ref()
-                .and_then(crate::config::ResponseConfig::status);
+        let mut urls = match_config.map_or_else(Vec::new, |m| {
+            if m.urls.is_empty() {
+                m.url.clone().into_iter().collect()
+            } else {
+                m.urls.clone()
+            }
+        });
+        urls.sort_unstable();
 
-            mock_urls == first_urls && mock_body == first_body && mock_status == first_status
-        })
+        let mut headers: Vec<(String, String)> = match_config.map_or_else(Vec::new, |m| {
+            m.headers
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        serde_json::to_string(value).unwrap_or_default(),
+                    )
+                })
+                .collect()
+        });
+        headers.sort_unstable();
+
+        let mut query: Vec<(String, String)> = match_config.map_or_else(Vec::new, |m| {
+            m.query
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect()
+        });
+        query.sort_unstable();
+
+        let mut body_match: Vec<(String, String)> = match_config.map_or_else(Vec::new, |m| {
+            m.body
+                .iter()
+                .map(|(name, value)| (name.clone(), value.to_string()))
+                .collect()
+        });
+        body_match.sort_unstable();
+
+        let graphql = match_config
+            .and_then(|m| m.graphql.as_ref())
+            .map(|graphql| serde_json::to_string(graphql).unwrap_or_default());
+
+        let response = mock.response_config.as_ref();
+        let mut response_headers: Vec<(String, String)> = response
+            .and_then(crate::config::ResponseConfig::headers)
+            .map(|headers| {
+                headers
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        response_headers.sort_unstable();
+
+        Self {
+            methods,
+            urls,
+            headers,
+            query,
+            body_match,
+            graphql,
+            status: response.and_then(crate::config::ResponseConfig::status),
+            response_body: response.and_then(|r| r.body().cloned()),
+            response_headers,
+        }
     }
 }
 
@@ -604,11 +758,11 @@ mod tests {
     #[test]
     fn test_normalize_path_numeric_id() {
         assert_eq!(
-            PatternDetector::normalize_path_for_grouping("/users/123"),
+            PatternDetector::new().normalize_path_for_grouping("/users/123"),
             "/users/{id}"
         );
         assert_eq!(
-            PatternDetector::normalize_path_for_grouping("/api/files/456/download"),
+            PatternDetector::new().normalize_path_for_grouping("/api/files/456/download"),
             "/api/files/{id}/download"
         );
     }
@@ -617,7 +771,7 @@ mod tests {
     fn test_normalize_path_uuid() {
         let path = "/files/550e8400-e29b-41d4-a716-446655440000";
         assert_eq!(
-            PatternDetector::normalize_path_for_grouping(path),
+            PatternDetector::new().normalize_path_for_grouping(path),
             "/files/{uuid}"
         );
     }
@@ -625,11 +779,11 @@ mod tests {
     #[test]
     fn test_normalize_path_before_regex_generation() {
         let path_with_id = "/api/file-info/10000000002/";
-        let normalized = PatternDetector::normalize_path_for_grouping(path_with_id);
+        let normalized = PatternDetector::new().normalize_path_for_grouping(path_with_id);
         assert_eq!(normalized, "/api/file-info/{id}/");
 
         let path_with_query = "/api/file-info/10000000003";
-        let normalized2 = PatternDetector::normalize_path_for_grouping(path_with_query);
+        let normalized2 = PatternDetector::new().normalize_path_for_grouping(path_with_query);
         assert_eq!(normalized2, "/api/file-info/{id}");
     }
 
@@ -662,8 +816,8 @@ mod tests {
             },
         );
 
-        let key1 = PatternDetector::extract_pattern_key(&mock1);
-        let key2 = PatternDetector::extract_pattern_key(&mock2);
+        let key1 = PatternDetector::new().extract_pattern_key(&mock1);
+        let key2 = PatternDetector::new().extract_pattern_key(&mock2);
 
         // Different operations should have different grouping keys
         assert_ne!(key1, key2);
@@ -697,8 +851,8 @@ mod tests {
             },
         );
 
-        let query_key = PatternDetector::extract_pattern_key(&query_mock);
-        let mutation_key = PatternDetector::extract_pattern_key(&mutation_mock);
+        let query_key = PatternDetector::new().extract_pattern_key(&query_mock);
+        let mutation_key = PatternDetector::new().extract_pattern_key(&mutation_mock);
 
         // Query and mutation should have different keys
         assert_ne!(query_key, mutation_key);
@@ -722,7 +876,7 @@ mod tests {
             },
         );
 
-        let key = PatternDetector::extract_pattern_key(&introspection_mock);
+        let key = PatternDetector::new().extract_pattern_key(&introspection_mock);
         assert!(key.contains("gql:introspection:schema"));
     }
 
@@ -733,7 +887,7 @@ mod tests {
             GraphQLMatchConfig::Simple("GetUser".to_string()),
         );
 
-        let key = PatternDetector::extract_pattern_key(&mock);
+        let key = PatternDetector::new().extract_pattern_key(&mock);
         assert!(key.contains("gql:op:GetUser"));
     }
 
@@ -746,8 +900,8 @@ mod tests {
 
         let rest_mock = create_rest_mock("rest-user", "GET", "/api/users");
 
-        let graphql_key = PatternDetector::extract_pattern_key(&graphql_mock);
-        let rest_key = PatternDetector::extract_pattern_key(&rest_mock);
+        let graphql_key = PatternDetector::new().extract_pattern_key(&graphql_mock);
+        let rest_key = PatternDetector::new().extract_pattern_key(&rest_mock);
 
         // GraphQL and REST should have different keys
         assert_ne!(graphql_key, rest_key);
@@ -796,8 +950,8 @@ mod tests {
             },
         );
 
-        let key1 = PatternDetector::extract_pattern_key(&mock1);
-        let key2 = PatternDetector::extract_pattern_key(&mock2);
+        let key1 = PatternDetector::new().extract_pattern_key(&mock1);
+        let key2 = PatternDetector::new().extract_pattern_key(&mock2);
 
         // Same operation with different variables should have SAME grouping key
         // (variables are not part of the grouping key - they'll be analyzed separately)
@@ -838,11 +992,97 @@ mod tests {
         let mock_abs = create_rest_mock("abs", "GET", "exact:https://api.example.com/v2/users/123");
         let mock_rel = create_rest_mock("rel", "GET", "exact:/v2/users/456");
 
-        let key_abs = PatternDetector::extract_pattern_key(&mock_abs);
-        let key_rel = PatternDetector::extract_pattern_key(&mock_rel);
+        let key_abs = PatternDetector::new().extract_pattern_key(&mock_abs);
+        let key_rel = PatternDetector::new().extract_pattern_key(&mock_rel);
 
         // Both should normalize to the same grouping key (path with {id})
         assert_eq!(key_abs, key_rel);
+    }
+
+    // -- Duplicate detection --
+
+    fn answered(id: &str, method: &str, url: &str, status: u16, body: &str) -> MockConfig {
+        let mut mock = create_rest_mock(id, method, url);
+        mock.response_config = Some(crate::config::ReturnConfig::Structured {
+            status: Some(status),
+            headers: FxHashMap::default(),
+            body: Some(body.to_string()),
+            template: None,
+            file: None,
+            template_file: None,
+            json: Box::new(serde_json::Value::Null),
+        });
+        mock
+    }
+
+    #[test]
+    fn identical_recordings_are_duplicates() {
+        let group = vec![
+            answered("a", "GET", "/x", 200, r#"{"id":1}"#),
+            answered("b", "GET", "/x", 200, r#"{"id":1}"#),
+        ];
+        assert!(PatternDetector::are_duplicates(&group));
+    }
+
+    #[test]
+    fn differing_response_headers_are_not_duplicates() {
+        let mut group = vec![
+            answered("a", "GET", "/x", 200, r#"{"id":1}"#),
+            answered("b", "GET", "/x", 200, r#"{"id":1}"#),
+        ];
+        if let Some(crate::config::ReturnConfig::Structured { headers, .. }) =
+            group[1].response_config.as_mut()
+        {
+            headers.insert("x-cache".to_string(), "HIT".to_string());
+        }
+        assert!(
+            !PatternDetector::are_duplicates(&group),
+            "collapsing these would silently drop the x-cache header"
+        );
+    }
+
+    #[test]
+    fn a_wider_method_set_is_not_a_duplicate_of_a_narrower_one() {
+        let mut group = vec![
+            answered("a", "GET", "/x", 200, r#"{"id":1}"#),
+            answered("b", "GET", "/x", 200, r#"{"id":1}"#),
+        ];
+        if let Some(match_config) = group[1].match_config.as_mut() {
+            match_config.methods = vec!["GET".to_string(), "HEAD".to_string()];
+        }
+        assert!(
+            !PatternDetector::are_duplicates(&group),
+            "collapsing onto the GET-only mock would lose HEAD"
+        );
+    }
+
+    #[test]
+    fn a_pinned_request_body_is_not_a_duplicate_of_an_unpinned_one() {
+        let mut group = vec![
+            answered("a", "POST", "/search", 200, r#"{"hits":1}"#),
+            answered("b", "POST", "/search", 200, r#"{"hits":1}"#),
+        ];
+        if let Some(match_config) = group[1].match_config.as_mut() {
+            match_config
+                .body
+                .insert("$.query".to_string(), serde_json::json!("invoices"));
+        }
+        assert!(!PatternDetector::are_duplicates(&group));
+    }
+
+    #[test]
+    fn method_and_url_order_does_not_decide_duplication() {
+        let mut group = vec![
+            answered("a", "GET", "/x", 200, r#"{"id":1}"#),
+            answered("b", "GET", "/x", 200, r#"{"id":1}"#),
+        ];
+        if let Some(match_config) = group[0].match_config.as_mut() {
+            match_config.methods = vec!["GET".to_string(), "HEAD".to_string()];
+        }
+        if let Some(match_config) = group[1].match_config.as_mut() {
+            match_config.methods = vec!["HEAD".to_string(), "GET".to_string()];
+        }
+        assert!(PatternDetector::are_duplicates(&group));
     }
 
     #[test]

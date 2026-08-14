@@ -437,7 +437,7 @@ impl MockFacts {
                 .first()
                 .map_or_else(|| "GET".to_string(), ToString::to_string),
             path: path.to_string(),
-            normalized_path: PatternDetector::normalize_path_for_grouping(path),
+            normalized_path: PatternDetector::new().normalize_path_for_grouping(path),
             graphql: mock.request.graphql_matcher.is_some(),
             query: parse_query(raw_query),
         }
@@ -496,7 +496,7 @@ fn classify(
         return MissKind::QueryOnly;
     }
 
-    let normalized = PatternDetector::normalize_path_for_grouping(path);
+    let normalized = PatternDetector::new().normalize_path_for_grouping(path);
     if normalized != path
         && facts
             .iter()

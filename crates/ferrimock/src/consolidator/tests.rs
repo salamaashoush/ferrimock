@@ -5,6 +5,7 @@ use crate::config::{MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig}
 use crate::template::{render_template, validate_template};
 use crate::types::RequestContext;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 // Helper to create a test mock
 fn create_test_mock(id: &str, method: &str, url: &str, response_body: &str) -> MockConfig {
@@ -522,6 +523,7 @@ async fn test_consolidation_with_disabled_templates() {
         min_pattern_threshold: 3,
         enable_stateful_pagination: false,
         pagination_storage_key_template: "api.{path}.total".to_string(),
+        ..ConsolidatorOptions::default()
     };
 
     let mut consolidator = MockConsolidator::with_options(options);
@@ -642,6 +644,114 @@ async fn test_min_pattern_threshold() {
         consolidated.mocks.len(),
         2,
         "Should not consolidate when below min_pattern_threshold"
+    );
+}
+
+#[tokio::test]
+async fn a_scorer_decides_ahead_of_the_size_threshold() {
+    use crate::consolidator::merge::{MergeCandidate, MergeScorer};
+
+    struct AlwaysMerge;
+    impl MergeScorer for AlwaysMerge {
+        fn name(&self) -> &str {
+            "always"
+        }
+        fn safe_to_merge(&self, _: &MergeCandidate<'_>) -> Option<f64> {
+            Some(1.0)
+        }
+    }
+
+    struct NeverMerge;
+    impl MergeScorer for NeverMerge {
+        fn name(&self) -> &str {
+            "never"
+        }
+        fn safe_to_merge(&self, _: &MergeCandidate<'_>) -> Option<f64> {
+            Some(0.0)
+        }
+    }
+
+    // Two mocks: below the size threshold, so the built-in rule keeps them apart.
+    let below_threshold = || {
+        vec![
+            create_test_mock("m1", "GET", "/api/items/1", r#"{"id": 1}"#),
+            create_test_mock("m2", "GET", "/api/items/2", r#"{"id": 2}"#),
+        ]
+    };
+    // Four mocks: above it, so the built-in rule merges them.
+    let above_threshold = || {
+        vec![
+            create_test_mock("m1", "GET", "/api/items/1", r#"{"id": 1}"#),
+            create_test_mock("m2", "GET", "/api/items/2", r#"{"id": 2}"#),
+            create_test_mock("m3", "GET", "/api/items/3", r#"{"id": 3}"#),
+            create_test_mock("m4", "GET", "/api/items/4", r#"{"id": 4}"#),
+        ]
+    };
+
+    let collection = |mocks| MockCollectionConfig {
+        name: Some("Scorer Test".to_string()),
+        description: None,
+        enabled: true,
+        vars: None,
+        mocks,
+    };
+
+    let consolidate = |mocks, scorer: Option<Arc<dyn MergeScorer>>| {
+        let mut consolidator = MockConsolidator::with_options(ConsolidatorOptions {
+            merge_scorer: scorer,
+            ..ConsolidatorOptions::default()
+        });
+        consolidator.consolidate(collection(mocks)).unwrap().mocks.len()
+    };
+
+    assert_eq!(
+        consolidate(below_threshold(), None),
+        2,
+        "with no scorer the size threshold still governs"
+    );
+    assert_eq!(
+        consolidate(below_threshold(), Some(Arc::new(AlwaysMerge))),
+        1,
+        "a scorer that is sure merges a group the size rule would have kept apart"
+    );
+    assert_eq!(
+        consolidate(above_threshold(), Some(Arc::new(NeverMerge))),
+        4,
+        "a scorer that refuses keeps a group the size rule would have merged"
+    );
+}
+
+#[tokio::test]
+async fn a_scorer_that_declines_leaves_the_size_threshold_in_charge() {
+    use crate::consolidator::merge::MergeScorer;
+
+    struct Quiet;
+    impl MergeScorer for Quiet {
+        fn name(&self) -> &str {
+            "quiet"
+        }
+    }
+
+    let collection = MockCollectionConfig {
+        name: Some("Declining Scorer".to_string()),
+        description: None,
+        enabled: true,
+        vars: None,
+        mocks: vec![
+            create_test_mock("m1", "GET", "/api/items/1", r#"{"id": 1}"#),
+            create_test_mock("m2", "GET", "/api/items/2", r#"{"id": 2}"#),
+        ],
+    };
+
+    let mut consolidator = MockConsolidator::with_options(ConsolidatorOptions {
+        merge_scorer: Some(Arc::new(Quiet)),
+        ..ConsolidatorOptions::default()
+    });
+
+    assert_eq!(
+        consolidator.consolidate(collection).unwrap().mocks.len(),
+        2,
+        "declining is not refusing: the group falls back to the size rule"
     );
 }
 
@@ -830,7 +940,7 @@ async fn test_multiple_ids_in_path_normalization() {
 
     // Test path with multiple numeric IDs
     let path1 = "/orgs/123/users/456/files/789";
-    let normalized = PatternDetector::normalize_path_for_grouping(path1);
+    let normalized = PatternDetector::new().normalize_path_for_grouping(path1);
 
     // Should use unique placeholders for each ID
     assert_eq!(
@@ -840,7 +950,7 @@ async fn test_multiple_ids_in_path_normalization() {
 
     // Test path with UUID and numeric ID
     let path2 = "/files/550e8400-e29b-41d4-a716-446655440000/versions/5";
-    let normalized2 = PatternDetector::normalize_path_for_grouping(path2);
+    let normalized2 = PatternDetector::new().normalize_path_for_grouping(path2);
     assert_eq!(
         normalized2, "/files/{uuid}/versions/{id}",
         "UUID and numeric ID should get different placeholders"
@@ -848,7 +958,7 @@ async fn test_multiple_ids_in_path_normalization() {
 
     // Test path with date
     let path3 = "/logs/2024-01-15/errors";
-    let normalized3 = PatternDetector::normalize_path_for_grouping(path3);
+    let normalized3 = PatternDetector::new().normalize_path_for_grouping(path3);
     assert_eq!(normalized3, "/logs/{date}/errors");
 }
 
@@ -985,7 +1095,7 @@ async fn test_path_normalization_with_dates() {
     use super::pattern::PatternDetector;
 
     let path = "/api/logs/2024-10-12/errors";
-    let normalized = PatternDetector::normalize_path_for_grouping(path);
+    let normalized = PatternDetector::new().normalize_path_for_grouping(path);
 
     assert_eq!(normalized, "/api/logs/{date}/errors");
 }

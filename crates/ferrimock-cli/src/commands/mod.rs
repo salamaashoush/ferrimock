@@ -381,6 +381,18 @@ pub enum MockAction {
         #[arg(long)]
         no_templates: bool,
 
+        /// Replay a recording through the consolidated mocks and report what changed
+        ///
+        /// Takes a recording session (JSON/YAML) or a HAR file -- the formats
+        /// that keep requests alongside responses. A consolidated mock
+        /// collection cannot be used here: it no longer records what was asked.
+        #[arg(long, value_name = "RECORDING")]
+        verify: Option<String>,
+
+        /// Fail when behavioural fidelity falls below this ratio (implies --verify)
+        #[arg(long, value_name = "RATIO", requires = "verify")]
+        fail_under: Option<f64>,
+
         /// Show detailed stats
         #[arg(short = 'v', long)]
         verbose: bool,

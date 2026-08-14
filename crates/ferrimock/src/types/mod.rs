@@ -1108,47 +1108,37 @@ impl DynamicResponse {
     /// - If the response has status/headers/body fields, parse them
     /// - If not, use the entire JSON as the body
     pub fn from_json(json: &serde_json::Value) -> Result<Self, crate::FerrimockError> {
-        if let Some(obj) = json.as_object() {
-            // Check for structured response format: { status, headers, body }
-            let has_status = obj.contains_key("status");
-            let has_headers = obj.contains_key("headers");
-            let has_body = obj.contains_key("body");
+        if let Some(obj) = json.as_object()
+            && is_response_envelope(obj)
+        {
+            let status = obj
+                .get("status")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|code| u16::try_from(code).ok())
+                .and_then(|code| StatusCode::from_u16(code).ok());
 
-            if has_status || has_headers || has_body {
-                // Parse structured response
-                let status = obj
-                    .get("status")
-                    .and_then(serde_json::Value::as_u64)
-                    .and_then(|code| u16::try_from(code).ok())
-                    .and_then(|code| StatusCode::from_u16(code).ok());
-
-                let headers = obj
-                    .get("headers")
-                    .and_then(|v| v.as_object())
-                    .map(|header_obj| {
-                        header_obj
-                            .iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                            .collect::<FxHashMap<String, String>>()
-                    });
-
-                // Use "body" field if present, otherwise use the whole result
-                let body_value = if let Some(body_val) = obj.get("body") {
-                    body_val
-                } else {
-                    json
-                };
-
-                let body_str = serde_json::to_string(body_value)?;
-                let body_bytes = bytes::Bytes::from(body_str);
-
-                return Ok(DynamicResponse {
-                    status,
-                    headers,
-                    body: body_bytes,
-                    ..Self::default()
+            let headers = obj
+                .get("headers")
+                .and_then(|v| v.as_object())
+                .map(|header_obj| {
+                    header_obj
+                        .iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect::<FxHashMap<String, String>>()
                 });
-            }
+
+            // Use "body" field if present, otherwise use the whole result
+            let body_value = obj.get("body").unwrap_or(json);
+
+            let body_str = serde_json::to_string(body_value)?;
+            let body_bytes = bytes::Bytes::from(body_str);
+
+            return Ok(DynamicResponse {
+                status,
+                headers,
+                body: body_bytes,
+                ..Self::default()
+            });
         }
 
         // Not a structured response - just return body
@@ -1171,17 +1161,11 @@ impl DynamicResponse {
         if trimmed.starts_with('{')
             && let Ok(json_value) = serde_json::from_str::<serde_json::Value>(trimmed)
         {
-            if let Some(obj) = json_value.as_object() {
-                let has_status = obj.contains_key("status");
-                let has_headers = obj.contains_key("headers");
-                let has_body = obj.contains_key("body");
-
-                if has_status || has_headers || has_body {
-                    // Structured response -- extract fields
-                    if let Ok(dynamic_response) = Self::from_json(&json_value) {
-                        return dynamic_response;
-                    }
-                }
+            if let Some(obj) = json_value.as_object()
+                && is_response_envelope(obj)
+                && let Ok(dynamic_response) = Self::from_json(&json_value)
+            {
+                return dynamic_response;
             }
             // Valid JSON but not structured -- return original string directly
             // instead of re-serializing (avoids wasteful Value -> String round-trip)
@@ -1191,6 +1175,22 @@ impl DynamicResponse {
         // Not JSON — return as body
         Self::body_only(bytes::Bytes::from(rendered))
     }
+}
+
+/// Keys that make a rendered JSON object a response envelope rather than a body.
+const ENVELOPE_KEYS: [&str; 3] = ["status", "headers", "body"];
+
+/// Whether a rendered JSON object describes the response itself rather than
+/// being the response.
+///
+/// Merely *containing* a `status` key is not enough: real payloads carry one.
+/// An error body shaped like `{"type":"error","status":404,"code":"not_found"}`
+/// is entirely ordinary, and reading it as an envelope hijacks the mock's status
+/// code and can swallow the body. An envelope is an object built solely out of
+/// the envelope keys, so a payload that happens to have a `status` field
+/// alongside its own data stays a payload.
+fn is_response_envelope(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    !obj.is_empty() && obj.keys().all(|key| ENVELOPE_KEYS.contains(&key.as_str()))
 }
 
 /// Response generation configuration
@@ -1876,5 +1876,56 @@ mod tests {
 
         assert!(response.status.is_none());
         assert_eq!(response.body.as_ref(), rendered.as_bytes());
+    }
+
+    #[test]
+    fn a_payload_with_its_own_status_field_is_not_an_envelope() {
+        // Error bodies commonly carry a top-level `status`. Reading that as an
+        // envelope hijacks the mock's status code and serves the payload under
+        // the wrong one.
+        let rendered = r#"{"type":"error","status":404,"code":"not_found"}"#;
+        let response = DynamicResponse::from_rendered_string(rendered.to_string());
+
+        assert!(
+            response.status.is_none(),
+            "a payload must not dictate the HTTP status"
+        );
+        assert_eq!(response.body.as_ref(), rendered.as_bytes());
+    }
+
+    #[test]
+    fn a_payload_named_body_or_headers_is_still_a_payload() {
+        for rendered in [
+            r#"{"body":"the email body","subject":"hi"}"#,
+            r#"{"headers":{"x":"1"},"received_at":"2026-01-01"}"#,
+        ] {
+            let response = DynamicResponse::from_rendered_string(rendered.to_string());
+            assert!(response.status.is_none());
+            assert!(response.headers.is_none());
+            assert_eq!(response.body.as_ref(), rendered.as_bytes());
+        }
+    }
+
+    #[test]
+    fn an_object_built_only_from_envelope_keys_is_an_envelope() {
+        let rendered = r#"{"status":201,"headers":{"x-state":"created"},"body":{"id":1}}"#;
+        let response = DynamicResponse::from_rendered_string(rendered.to_string());
+
+        assert_eq!(response.status, Some(http::StatusCode::CREATED));
+        assert_eq!(
+            response
+                .headers
+                .as_ref()
+                .and_then(|h| h.get("x-state"))
+                .map(String::as_str),
+            Some("created")
+        );
+        assert_eq!(response.body.as_ref(), br#"{"id":1}"#);
+    }
+
+    #[test]
+    fn a_status_only_envelope_still_works() {
+        let response = DynamicResponse::from_rendered_string(r#"{"status":204}"#.to_string());
+        assert_eq!(response.status, Some(http::StatusCode::NO_CONTENT));
     }
 }

@@ -880,18 +880,33 @@ async fn test_finalize_and_consolidate() -> Result<()> {
 
     // Finalize with consolidation
     let consolidator_options = ferrimock::consolidator::ConsolidatorOptions::default();
-    let (file_path, stats) = recorder
+    let result = recorder
         .finalize_and_consolidate(consolidator_options, false)
         .await?;
 
     // Verify consolidation happened
-    assert_eq!(stats.original_count, 5);
+    assert_eq!(result.stats.original_count, 5);
 
     // Read the consolidated file
-    let content = tokio::fs::read_to_string(&file_path).await?;
+    let content = tokio::fs::read_to_string(&result.path).await?;
     let collection: ferrimock::config::MockCollectionConfig = serde_json::from_str(&content)?;
 
-    assert_eq!(collection.mocks.len(), stats.consolidated_count);
+    assert_eq!(collection.mocks.len(), result.stats.consolidated_count);
+
+    // The recording is replayed through the result, so consolidating it must
+    // not silently stop answering the traffic it came from.
+    let fidelity = result.fidelity.expect("a JSON recording is verified");
+    assert_eq!(fidelity.score.total, 5);
+    assert_eq!(
+        fidelity.score.behavioral, 5,
+        "consolidation changed behaviour: unmatched {:?}, cross-talk {:?}, \
+         status {:?}, shape {:?}, constants {:?}",
+        fidelity.unmatched,
+        fidelity.cross_talk,
+        fidelity.status_mismatch,
+        fidelity.shape_mismatch,
+        fidelity.constant_drift,
+    );
 
     Ok(())
 }
@@ -922,14 +937,18 @@ async fn test_finalize_and_consolidate_har_format() -> Result<()> {
 
     // HAR format should not be consolidated
     let consolidator_options = ferrimock::consolidator::ConsolidatorOptions::default();
-    let (_file_path, stats) = recorder
+    let result = recorder
         .finalize_and_consolidate(consolidator_options, false)
         .await?;
 
     // Stats should be empty for HAR format
-    assert_eq!(stats.original_count, 0);
-    assert_eq!(stats.consolidated_count, 0);
-    assert!((stats.reduction_ratio - 0.0).abs() < f64::EPSILON);
+    assert_eq!(result.stats.original_count, 0);
+    assert_eq!(result.stats.consolidated_count, 0);
+    assert!((result.stats.reduction_ratio - 0.0).abs() < f64::EPSILON);
+    assert!(
+        result.fidelity.is_none(),
+        "nothing was consolidated, so there is no fidelity to report"
+    );
 
     Ok(())
 }
@@ -2998,13 +3017,13 @@ async fn test_finalize_and_consolidate_with_yaml() -> Result<()> {
     }
 
     let consolidator_options = ferrimock::consolidator::ConsolidatorOptions::default();
-    let (file_path, stats) = recorder
+    let result = recorder
         .finalize_and_consolidate(consolidator_options, false)
         .await?;
 
-    assert_eq!(stats.original_count, 3);
+    assert_eq!(result.stats.original_count, 3);
 
-    let content = tokio::fs::read_to_string(&file_path).await?;
+    let content = tokio::fs::read_to_string(&result.path).await?;
     let _collection: ferrimock::config::MockCollectionConfig = serde_yaml_ng::from_str(&content)?;
 
     Ok(())
@@ -3039,12 +3058,12 @@ async fn test_finalize_and_consolidate_with_yaml_items() -> Result<()> {
     }
 
     let consolidator_options = ferrimock::consolidator::ConsolidatorOptions::default();
-    let (file_path, stats) = recorder
+    let result = recorder
         .finalize_and_consolidate(consolidator_options, false)
         .await?;
 
-    assert_eq!(stats.original_count, 3);
-    let content = tokio::fs::read_to_string(&file_path).await?;
+    assert_eq!(result.stats.original_count, 3);
+    let content = tokio::fs::read_to_string(&result.path).await?;
     let _collection: ferrimock::config::MockCollectionConfig = serde_yaml_ng::from_str(&content)?;
 
     Ok(())
@@ -3393,4 +3412,162 @@ async fn test_format_parse_lowercase() {
         RecordingFormat::parse("json").unwrap(),
         RecordingFormat::Json
     ));
+}
+
+// ============================================================================
+// Recording order and request-body discrimination
+// ============================================================================
+
+/// Record `count` GETs, then save, returning the written file's contents.
+async fn record_and_save(dir: &TempDir, name: &str, count: usize) -> Result<String> {
+    let recorder = MockRecorder::new(name, dir.path());
+    for i in 1..=count {
+        recorder
+            .record(
+                &Method::GET,
+                &format!("/api/items/{i}"),
+                None,
+                &HeaderMap::new(),
+                None,
+                StatusCode::OK,
+                &HeaderMap::new(),
+                &Bytes::from(format!(r#"{{"id":{i}}}"#)),
+                Duration::from_millis(3),
+            )
+            .await?;
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    let path = recorder.save(RecordingFormat::Json).await?;
+    Ok(tokio::fs::read_to_string(path).await?)
+}
+
+#[tokio::test]
+async fn a_saved_recording_keeps_the_order_it_was_recorded_in() -> Result<()> {
+    let dir = TempDir::new().unwrap();
+    let content = record_and_save(&dir, "ordered", 6).await?;
+
+    // Mock ids are assigned by position, so a stable order means item N is
+    // always mock N. The backing store is a hash map, so this only holds
+    // because `get_all` sorts.
+    let positions: Vec<usize> = (1..=6)
+        .map(|i| {
+            content
+                .find(&format!("/api/items/{i}"))
+                .unwrap_or_else(|| panic!("item {i} missing from the recording"))
+        })
+        .collect();
+
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "recordings appear out of order: {positions:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn saving_the_same_traffic_twice_produces_the_same_file() -> Result<()> {
+    let first_dir = TempDir::new().unwrap();
+    let second_dir = TempDir::new().unwrap();
+
+    let first = record_and_save(&first_dir, "stable", 8).await?;
+    let second = record_and_save(&second_dir, "stable", 8).await?;
+
+    // Session ids and timestamps differ between runs; the mock list must not.
+    let mocks_of = |content: &str| {
+        content
+            .find("\"mocks\"")
+            .and_then(|start| content.get(start..))
+            .map(str::to_string)
+            .expect("a saved recording has a mocks array")
+    };
+
+    assert_eq!(
+        mocks_of(&first),
+        mocks_of(&second),
+        "the same traffic produced two different mock lists"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn searches_posted_to_one_url_are_pinned_by_what_they_asked_for() -> Result<()> {
+    let dir = TempDir::new().unwrap();
+    let recorder = MockRecorder::new("search", dir.path());
+
+    for query in ["invoices", "contracts", "receipts"] {
+        recorder
+            .record(
+                &Method::POST,
+                "/2.0/search",
+                None,
+                &HeaderMap::new(),
+                Some(&Bytes::from(format!(r#"{{"query":"{query}"}}"#))),
+                StatusCode::OK,
+                &HeaderMap::new(),
+                &Bytes::from(format!(r#"{{"hits":1,"term":"{query}"}}"#)),
+                Duration::from_millis(3),
+            )
+            .await?;
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+
+    let path = recorder.save(RecordingFormat::Json).await?;
+    let content = tokio::fs::read_to_string(path).await?;
+    let collection: ferrimock::config::MockCollectionConfig = serde_json::from_str(&content)?;
+
+    assert_eq!(collection.mocks.len(), 3);
+    for (mock, query) in collection
+        .mocks
+        .iter()
+        .zip(["invoices", "contracts", "receipts"])
+    {
+        let body = &mock
+            .match_config
+            .as_ref()
+            .expect("a recorded mock matches something")
+            .body;
+        assert_eq!(
+            body.get("$.query"),
+            Some(&serde_json::json!(query)),
+            "without a body matcher all three searches answer to the first recording"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_genuinely_repeated_request_is_not_pinned() -> Result<()> {
+    let dir = TempDir::new().unwrap();
+    let recorder = MockRecorder::new("repeat", dir.path());
+
+    for _ in 0..3 {
+        recorder
+            .record(
+                &Method::POST,
+                "/2.0/jobs",
+                None,
+                &HeaderMap::new(),
+                Some(&Bytes::from(r#"{"poll":true}"#)),
+                StatusCode::OK,
+                &HeaderMap::new(),
+                &Bytes::from(r#"{"state":"pending"}"#),
+                Duration::from_millis(3),
+            )
+            .await?;
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+
+    let path = recorder.save(RecordingFormat::Json).await?;
+    let content = tokio::fs::read_to_string(path).await?;
+    let collection: ferrimock::config::MockCollectionConfig = serde_json::from_str(&content)?;
+
+    for mock in &collection.mocks {
+        assert!(
+            mock.match_config
+                .as_ref()
+                .is_none_or(|m| m.body.is_empty()),
+            "identical bodies say nothing; pinning them adds noise, not selectivity"
+        );
+    }
+    Ok(())
 }

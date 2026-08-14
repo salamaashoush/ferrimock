@@ -148,6 +148,7 @@ sourcemap = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+proptest = { workspace = true }
 criterion = { workspace = true, features = ["html_reports", "async_tokio"] }
 futures = { workspace = true }
 smallvec = { workspace = true }

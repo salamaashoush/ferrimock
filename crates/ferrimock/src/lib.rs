@@ -62,6 +62,10 @@ pub mod recorder;
 #[cfg(feature = "engine")]
 pub mod template;
 
+/// Domain knowledge plugged into consolidation and type detection
+#[cfg(feature = "type-detector")]
+pub mod profile;
+
 /// Smart mock consolidation with pattern detection (90%+ reduction)
 #[cfg(feature = "engine")]
 pub mod consolidator;

@@ -638,9 +638,10 @@ impl ResolvedResponse {
                         }
                         Err(e) => {
                             // Fall back to on-demand loading if file can't be read at config time
-                            eprintln!(
-                                "Warning: Failed to pre-load file {}: {e}. Will load on demand.",
-                                path.display()
+                            tracing::warn!(
+                                file = %path.display(),
+                                error = %e,
+                                "failed to pre-load response body; falling back to loading it on demand"
                             );
                             BodySource::File(path)
                         }

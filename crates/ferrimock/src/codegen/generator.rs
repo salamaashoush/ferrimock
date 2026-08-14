@@ -804,7 +804,7 @@ mod tests {
         assert!(template.contains("if page > 1"));
 
         // Verify results array uses limit variable
-        assert!(template.contains("range(end=limit)"));
+        assert!(template.contains("range(end=limit |"));
 
         // Verify NO duplicate next field
         let next_count = template.matches("\"next\":").count();
@@ -1004,7 +1004,7 @@ mod tests {
 
         // The "results" field should use limit variable
         assert!(
-            template.contains("\"results\":") && template.contains("range(end=limit)"),
+            template.contains("\"results\":") && template.contains("range(end=limit |"),
             "Results array should use limit variable. Template:\n{template}"
         );
 

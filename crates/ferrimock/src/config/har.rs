@@ -196,17 +196,18 @@ fn pin_query(query: &str) -> Option<FxHashMap<String, String>> {
 ///
 /// Two recordings with the same key are indistinguishable to the matcher: no
 /// request can select one over the other.
-type MatchKey = (
+pub(crate) type MatchKey = (
     Vec<String>,
     Vec<String>,
     Option<String>,
+    Vec<(String, String)>,
     Vec<(String, String)>,
 );
 
 /// The match key of a converted recording, or None when the mock says something
 /// this cannot compare — in which case it is left out of every group and never
 /// sequenced, which is the safe way to be unsure.
-fn match_key(mock: &MockConfig) -> Option<MatchKey> {
+pub(crate) fn match_key(mock: &MockConfig) -> Option<MatchKey> {
     let m = mock.match_config.as_ref()?;
     let graphql = match m.graphql.as_ref() {
         None => None,
@@ -219,7 +220,16 @@ fn match_key(mock: &MockConfig) -> Option<MatchKey> {
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
     pinned.sort_unstable();
-    Some((m.methods.clone(), m.urls.clone(), graphql, pinned))
+    // A pinned request body is what makes two recordings of the same URL
+    // selectable, so it belongs in the key -- otherwise they would still be
+    // treated as one repeated request and sequenced with `once`.
+    let mut body: Vec<(String, String)> = m
+        .body
+        .iter()
+        .map(|(name, value)| (name.clone(), value.to_string()))
+        .collect();
+    body.sort_unstable();
+    Some((m.methods.clone(), m.urls.clone(), graphql, pinned, body))
 }
 
 /// Whether two recordings of the same request were answered the same way.
@@ -437,6 +447,36 @@ impl HarLoader {
         Ok(mocks)
     }
 
+    /// Convert recorded interactions to mock definitions, as if they had been
+    /// written to a HAR and loaded back.
+    ///
+    /// Lets a caller build a collection from part of a recording -- which is how
+    /// a merge is judged on traffic its mocks were not built from.
+    pub async fn convert_interactions_to_mocks(
+        &self,
+        interactions: &[crate::recorder::RecordedInteraction],
+    ) -> Result<Vec<MockConfig>> {
+        let entries: Vec<v1_2::Entries> = interactions
+            .iter()
+            .map(crate::recorder::har::to_har_entry)
+            .collect();
+
+        self.convert_har_to_mocks(Har {
+            log: Spec::V1_2(v1_2::Log {
+                creator: v1_2::Creator {
+                    name: "ferrimock".to_string(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    comment: None,
+                },
+                browser: None,
+                pages: None,
+                entries,
+                comment: None,
+            }),
+        })
+        .await
+    }
+
     /// Convert HAR structure to mock definitions (simple 1:1 conversion)
     pub async fn convert_har_to_mocks(&self, har: Har) -> Result<Vec<MockConfig>> {
         let entries = match &har.log {
@@ -453,6 +493,7 @@ impl HarLoader {
         }
 
         let mut mocks = Vec::new();
+        let mut request_bodies = Vec::new();
 
         for (idx, entry) in entries.iter().enumerate() {
             // Apply filtering options
@@ -463,8 +504,20 @@ impl HarLoader {
             // Convert entry to mock - returns None if domain filtered
             if let Some(mock) = self.convert_entry_to_mock(entry, idx).await? {
                 mocks.push(mock);
+                request_bodies.push(
+                    entry
+                        .request
+                        .post_data
+                        .as_ref()
+                        .and_then(|post| post.text.clone()),
+                );
             }
         }
+
+        // Pin what tells same-URL recordings apart before falling back to
+        // replaying them in order: a body matcher selects the right recording
+        // whatever order the app asks in, and sequencing cannot.
+        super::request_body_match::discriminate_by_request_body(&mut mocks, &request_bodies);
 
         if self.options.sequence_repeated_requests {
             sequence_repeated_requests(&mut mocks);

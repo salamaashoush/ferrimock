@@ -126,6 +126,163 @@ fn test_detect_etag_not_confused_with_numeric_id() {
 }
 
 #[test]
+fn test_detect_etag_under_revision_dialect_names() {
+    let detector = TypeDetector::new();
+
+    for name in ["rev", "_rev", "revision", "resource_version", "resourceVersion"] {
+        let counters = vec![json!("7"), json!("8"), json!("12")];
+        let (field_type, _) = detector.detect_type(name, &as_refs(&counters));
+        assert!(
+            matches!(field_type, FieldType::ETag),
+            "{name} holding counters should read as an ETag, got {field_type:?}"
+        );
+
+        let numeric = vec![json!(7), json!(8), json!(12)];
+        let (field_type, _) = detector.detect_type(name, &as_refs(&numeric));
+        assert!(
+            matches!(field_type, FieldType::ETag),
+            "{name} holding JSON numbers should read as an ETag, got {field_type:?}"
+        );
+    }
+
+    // CouchDB writes the counter with a hash suffix.
+    let couch = vec![json!("3-a1b2c3"), json!("4-d4e5f6")];
+    let (field_type, _) = detector.detect_type("_rev", &as_refs(&couch));
+    assert!(matches!(field_type, FieldType::ETag));
+
+    // A release number under the same name is not an entity tag.
+    let releases = vec![json!("1.2.3"), json!("1.3.0")];
+    let (field_type, _) = detector.detect_type("revision", &as_refs(&releases));
+    assert!(
+        !matches!(field_type, FieldType::ETag),
+        "a dotted release under `revision` is a version, got {field_type:?}"
+    );
+}
+
+#[test]
+fn test_detect_username_under_social_names() {
+    let detector = TypeDetector::new();
+
+    for name in ["handle", "screen_name", "nickname", "user_login"] {
+        let handles = vec![json!("cloudy42"), json!("river07"), json!("stone19")];
+        let (field_type, _) = detector.detect_type(name, &as_refs(&handles));
+        assert!(
+            matches!(field_type, FieldType::Username),
+            "{name} holding handles should read as a Username, got {field_type:?}"
+        );
+    }
+
+    // `handle` also names things the system assigned, which are not usernames.
+    let numeric_handles = vec![json!("40961"), json!("40962")];
+    let (field_type, _) = detector.detect_type("handle", &as_refs(&numeric_handles));
+    assert!(
+        !matches!(field_type, FieldType::Username),
+        "an all-numeric `handle` is not a username, got {field_type:?}"
+    );
+
+    let spaced = vec![json!("Ada Lovelace"), json!("Alan Turing")];
+    let (field_type, _) = detector.detect_type("nickname", &as_refs(&spaced));
+    assert!(
+        !matches!(field_type, FieldType::Username),
+        "a value with a space is a person name, got {field_type:?}"
+    );
+}
+
+#[test]
+fn test_image_urls_are_recognised_without_a_helpful_field_name() {
+    let detector = TypeDetector::new();
+
+    // The field name says nothing; the extension says everything.
+    let images = vec![
+        json!("https://cdn.example.com/a/1b2c3d4e.png"),
+        json!("https://cdn.example.com/b/5f6a7b8c.webp"),
+        json!("https://cdn.example.com/c/9d0e1f2a.svg"),
+    ];
+    let (field_type, _) = detector.detect_type("value", &as_refs(&images));
+    assert!(
+        matches!(field_type, FieldType::ImageUrl),
+        "a URL ending in an image extension is an image URL, got {field_type:?}"
+    );
+
+    // A query string must not be mistaken for the end of the path.
+    let with_query = vec![json!("https://cdn.example.com/a/1b2c3d4e.png?width=64")];
+    let (field_type, _) = detector.detect_type("data", &as_refs(&with_query));
+    assert!(matches!(field_type, FieldType::ImageUrl));
+
+    // An ordinary URL stays an ordinary URL.
+    let pages = vec![
+        json!("https://api.example.com/v2/files/1"),
+        json!("https://api.example.com/v2/files/2"),
+    ];
+    let (field_type, _) = detector.detect_type("value", &as_refs(&pages));
+    assert!(
+        matches!(field_type, FieldType::Url),
+        "got {field_type:?}"
+    );
+
+    // One image among plain URLs does not make the field an image field.
+    let mixed = vec![
+        json!("https://cdn.example.com/a/1b2c3d4e.png"),
+        json!("https://api.example.com/v2/files/1"),
+    ];
+    let (field_type, _) = detector.detect_type("value", &as_refs(&mixed));
+    assert!(matches!(field_type, FieldType::Url), "got {field_type:?}");
+}
+
+#[test]
+fn test_a_bare_uppercase_code_under_region_is_a_country_not_a_locale() {
+    let detector = TypeDetector::new();
+
+    let countries = vec![json!("US"), json!("GB"), json!("DE")];
+    let (field_type, _) = detector.detect_type("region", &as_refs(&countries));
+    assert!(
+        matches!(field_type, FieldType::CountryCode),
+        "BCP 47 writes regions uppercase, so `US` is a country, got {field_type:?}"
+    );
+
+    // A language subtag is lowercase, and still a locale under the same name.
+    let languages = vec![json!("en"), json!("fr"), json!("de")];
+    let (field_type, _) = detector.detect_type("region", &as_refs(&languages));
+    assert!(
+        matches!(field_type, FieldType::LocaleCode),
+        "got {field_type:?}"
+    );
+
+    // A full locale is unaffected.
+    let locales = vec![json!("en-US"), json!("pt-BR")];
+    let (field_type, _) = detector.detect_type("locale", &as_refs(&locales));
+    assert!(matches!(field_type, FieldType::LocaleCode));
+}
+
+#[test]
+fn test_a_numeric_postal_code_is_not_read_as_a_count() {
+    let detector = TypeDetector::new();
+
+    // An all-digit postal code arrives as a JSON number, not a string.
+    for name in ["zip", "postal_code", "postcode"] {
+        let numbers = vec![json!(94_105), json!(10_001), json!(60_614)];
+        let (field_type, _) = detector.detect_type(name, &as_refs(&numbers));
+        assert!(
+            matches!(field_type, FieldType::PostalCode),
+            "{name} holding a JSON number should be a postal code, got {field_type:?}"
+        );
+    }
+
+    // Still works as a string, and for the alphanumeric spellings.
+    let strings = vec![json!("SW1A 1AA"), json!("K1A 0B1")];
+    let (field_type, _) = detector.detect_type("postcode", &as_refs(&strings));
+    assert!(matches!(field_type, FieldType::PostalCode));
+
+    // A number under a name that says nothing about postcodes is left alone.
+    let counts = vec![json!(94_105), json!(10_001)];
+    let (field_type, _) = detector.detect_type("total", &as_refs(&counts));
+    assert!(
+        !matches!(field_type, FieldType::PostalCode),
+        "got {field_type:?}"
+    );
+}
+
+#[test]
 fn test_semantic_context_url_field() {
     let detector = TypeDetector::new();
     let values = vec![

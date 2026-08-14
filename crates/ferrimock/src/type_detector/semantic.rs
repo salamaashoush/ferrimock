@@ -283,11 +283,47 @@ pub fn detect_from_field_name_only(field_name: &str) -> Option<(FieldType, f64)>
     None
 }
 
+/// Whether a value reads as a monotonic revision counter rather than a release
+/// number: `7`, `"7"`, or CouchDB's `"3-a1b2c3"`, but never `"1.2.3"`.
+fn is_revision_counter(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::Number(number) => number.as_u64().is_some(),
+        JsonValue::String(text) => {
+            let trimmed = text.trim_matches('"');
+            if trimmed.is_empty() || SEMVER_REGEX.is_match(trimmed) {
+                return false;
+            }
+            match trimmed.split_once('-') {
+                Some((counter, suffix)) => {
+                    !counter.is_empty()
+                        && counter.chars().all(|c| c.is_ascii_digit())
+                        && !suffix.is_empty()
+                        && suffix.chars().all(|c| c.is_ascii_alphanumeric())
+                }
+                None => trimmed.chars().all(|c| c.is_ascii_digit()),
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Whether a value reads as a handle someone types rather than a number the
+/// system assigned.
+fn is_handle_like(value: &JsonValue) -> bool {
+    value.as_str().is_some_and(|text| {
+        !text.is_empty()
+            && !text.contains(' ')
+            && !text.contains('@')
+            && !text.chars().all(|c| c.is_ascii_digit())
+    })
+}
+
 /// Layer 1: Detect from semantic context (field names)
 #[allow(clippy::cast_precision_loss)]
 pub fn detect_from_semantic_context(
     field_name: &str,
     values: &[&JsonValue],
+    ctx: &super::DetectionContext<'_>,
 ) -> Option<(FieldType, f64)> {
     // Numeric ID fields - check field name ends with _id or is "id"
     // MUST CHECK THIS FIRST before any value analysis to catch numeric JSON values
@@ -345,6 +381,16 @@ pub fn detect_from_semantic_context(
         return Some((FieldType::ETag, 0.95));
     }
 
+    // Revision names split by dialect: CouchDB spells an entity tag `_rev`,
+    // Kubernetes spells it `resourceVersion`, and plenty of APIs put a release
+    // number in `revision`. Only the values separate those.
+    if !values.is_empty()
+        && matches_any_field_name(field_name, &["rev", "revision", "resource_version"])
+        && values.iter().all(|value| is_revision_counter(value))
+    {
+        return Some((FieldType::ETag, 0.90));
+    }
+
     // Login/username fields - field-name-based detection without needing sample values
     // MUST CHECK THIS EARLY to avoid being caught by later string-based detections
     // These are short alphanumeric identifiers, NOT full names with spaces
@@ -352,6 +398,18 @@ pub fn detect_from_semantic_context(
     if matches_any_field_name(field_name, &["login", "username", "user_name"]) {
         // These should generate proper usernames (e.g., "johndoe", "janesmith")
         return Some((FieldType::Username, 0.95));
+    }
+
+    // The same field under the names social APIs give it. Weaker than the three
+    // above -- `handle` also names a file handle -- so the values keep a veto.
+    if !values.is_empty()
+        && matches_any_field_name(
+            field_name,
+            &["handle", "screen_name", "nickname", "user_login"],
+        )
+        && values.iter().all(|value| is_handle_like(value))
+    {
+        return Some((FieldType::Username, 0.90));
     }
 
     // Longitude fields - MUST check before Latitude since longitude range includes latitude range
@@ -570,7 +628,13 @@ pub fn detect_from_semantic_context(
             let looks_like_locale = strs.iter().all(|s| {
                 let parts: Vec<&str> = s.split('-').collect();
                 match (parts.first(), parts.get(1)) {
-                    (Some(lang), None) => lang.len() == 2, // "en"
+                    // A bare two-letter code is a locale only when it is spelled
+                    // like a language subtag. BCP 47 writes those lowercase and
+                    // regions uppercase, which is the only thing separating
+                    // `region: "en"` from `region: "US"`.
+                    (Some(lang), None) => {
+                        lang.len() == 2 && lang.chars().all(|c| c.is_ascii_lowercase())
+                    }
                     (Some(lang), Some(region)) => lang.len() == 2 && region.len() == 2, // "en-US"
                     _ => false,
                 }
@@ -815,7 +879,7 @@ pub fn detect_from_semantic_context(
                     || s.contains("content")
                     || s.contains("attachment")
                     || s.contains("/file")
-                    || super::is_custom_download_url(s)
+                    || ctx.profile.is_download_url(s)
                     || s.contains(".pdf")
                     || s.contains(".doc")
                     || s.contains(".zip")
@@ -1123,10 +1187,7 @@ pub fn detect_from_semantic_context(
         }
 
         // Postal code fields - smart pattern matching
-        let suggests_postal = contains_any_field_pattern(field_name, &["zip", "postal"])
-            || matches_field_name(field_name, "postcode")
-            || (contains_field_pattern(field_name, "code")
-                && contains_any_field_pattern(field_name, &["mail", "area", "region", "district"]));
+        let suggests_postal = suggests_postal_name(field_name);
 
         if suggests_postal {
             // Check if values look like postal codes - be more flexible with validation
@@ -1155,7 +1216,29 @@ pub fn detect_from_semantic_context(
         }
     }
 
+    // A postal code with no letters in it arrives as a JSON number, and every
+    // rule above is guarded on there being string values to inspect. Without
+    // this, `zip: 94105` is read as an ordinary count.
+    if suggests_postal_name(field_name)
+        && !values.is_empty()
+        && values.iter().all(|value| {
+            value
+                .as_u64()
+                .is_some_and(|number| (10_000..=999_999).contains(&number))
+        })
+    {
+        return Some((FieldType::PostalCode, 0.90));
+    }
+
     None
+}
+
+/// Whether a field name says its contents are a postal code.
+fn suggests_postal_name(field_name: &str) -> bool {
+    contains_any_field_pattern(field_name, &["zip", "postal"])
+        || matches_field_name(field_name, "postcode")
+        || (contains_field_pattern(field_name, "code")
+            && contains_any_field_pattern(field_name, &["mail", "area", "region", "district"]))
 }
 
 /// Calculate semantic adjustment based on field name and detected type

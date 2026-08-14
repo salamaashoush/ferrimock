@@ -1,0 +1,24 @@
+[package]
+name = "ferrimock-ml"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Learned field-type classification for ferrimock's consolidation engine"
+
+[dependencies]
+ferrimock = { version = "0.3.0", path = "../ferrimock", features = ["engine"] }
+regex = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The CLI reads recordings through ferrimock, whose IO is async.
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[dev-dependencies]
+chrono = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

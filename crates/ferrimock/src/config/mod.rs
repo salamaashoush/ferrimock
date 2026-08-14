@@ -14,6 +14,9 @@
 //! - `json_yaml`: Emitting a `serde_json::Value` as YAML
 
 pub mod har;
+pub mod request_body_match;
+
+pub use request_body_match::discriminate_by_request_body;
 pub mod json_yaml;
 pub mod matcher;
 pub mod parser;

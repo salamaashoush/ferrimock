@@ -51,13 +51,14 @@
 
 pub mod filters;
 mod formats;
-mod har;
+pub(crate) mod har;
 mod session;
 mod types;
 
 // Re-export the main recorder and public types
 pub use filters::RecordingFilterOptions;
 pub use formats::RecordingFormat;
+pub use session::load_interactions;
 pub use types::{RecordedInteraction, RecordedRequest, RecordedResponse, RecordingSession};
 
 // Re-export the main recorder

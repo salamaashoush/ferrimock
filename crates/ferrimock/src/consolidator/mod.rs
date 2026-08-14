@@ -4,9 +4,19 @@
 //! to dramatically reduce file size while maintaining behavioral accuracy.
 
 pub mod analysis;
+pub mod fidelity;
+pub mod merge;
 pub mod pattern;
+pub mod provenance;
+pub mod shape;
 
-pub use pattern::{PathNormalizer, register_path_normalizer};
+pub use fidelity::{FidelityOptions, FidelityReport, FidelityScore};
+pub use merge::{MergeCandidate, MergeScorer, SizeThreshold};
+pub use crate::profile::{
+    CompositeProfile, ConsolidationProfile, DefaultProfile, PaginationDialect, Placeholder,
+    SegmentContext,
+};
+pub use provenance::Provenance;
 
 #[cfg(test)]
 #[allow(
@@ -26,11 +36,13 @@ use crate::Result;
 use crate::codegen::TemplateGenerator;
 use crate::config::{MockCollectionConfig, MockConfig, ReturnConfig};
 use crate::error::Context;
+use crate::recorder::RecordedInteraction;
 use analysis::{ResponseAnalysis, ResponseAnalyzer};
 use pattern::PatternDetector;
 use rustc_hash::FxHashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Consolidation statistics
 #[derive(Debug, Clone)]
@@ -43,42 +55,9 @@ pub struct ConsolidationStats {
     pub templates_created: usize,
 }
 
-impl ConsolidationStats {
-    pub fn print_report(&self) {
-        println!("\n╔══════════════════════════════════════════════════╗");
-        println!("║     Mock Consolidation Report                   ║");
-        println!("╠══════════════════════════════════════════════════╣");
-        println!(
-            "║  Original mocks:        {:>6}                  ║",
-            self.original_count
-        );
-        println!(
-            "║  Consolidated mocks:    {:>6}                  ║",
-            self.consolidated_count
-        );
-        println!(
-            "║  Reduction ratio:       {:>5.1}%                 ║",
-            self.reduction_ratio * 100.0
-        );
-        println!("║  ─────────────────────────────────────────────  ║");
-        println!(
-            "║  Patterns detected:     {:>6}                  ║",
-            self.patterns_detected
-        );
-        println!(
-            "║  Duplicates removed:    {:>6}                  ║",
-            self.duplicates_removed
-        );
-        println!(
-            "║  Templates created:     {:>6}                  ║",
-            self.templates_created
-        );
-        println!("╚══════════════════════════════════════════════════╝\n");
-    }
-}
 
 /// Consolidator configuration options
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConsolidatorOptions {
     /// Enable pattern consolidation
     pub enable_consolidation: bool,
@@ -90,6 +69,40 @@ pub struct ConsolidatorOptions {
     pub enable_stateful_pagination: bool,
     /// Template for storage key pattern (e.g., "api.{path}.total")
     pub pagination_storage_key_template: String,
+    /// Domain knowledge consulted ahead of the built-in heuristics.
+    ///
+    /// Defaults to [`crate::profile::DefaultProfile`], which declines every
+    /// domain question and leaves the built-ins in charge.
+    pub profile: Arc<dyn ConsolidationProfile>,
+    /// Consulted ahead of `min_pattern_threshold` to decide whether a group
+    /// merges.
+    ///
+    /// Defaults to [`merge::SizeThreshold`], which is `min_pattern_threshold`
+    /// itself; a scorer that declines leaves that rule in charge.
+    pub merge_scorer: Option<Arc<dyn MergeScorer>>,
+    /// How sure a scorer has to be before a group is merged.
+    pub merge_confidence: f64,
+}
+
+impl std::fmt::Debug for ConsolidatorOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsolidatorOptions")
+            .field("enable_consolidation", &self.enable_consolidation)
+            .field("enable_templates", &self.enable_templates)
+            .field("min_pattern_threshold", &self.min_pattern_threshold)
+            .field("enable_stateful_pagination", &self.enable_stateful_pagination)
+            .field(
+                "pagination_storage_key_template",
+                &self.pagination_storage_key_template,
+            )
+            .field("profile", &self.profile.name())
+            .field(
+                "merge_scorer",
+                &self.merge_scorer.as_ref().map(|scorer| scorer.name()),
+            )
+            .field("merge_confidence", &self.merge_confidence)
+            .finish()
+    }
 }
 
 impl Default for ConsolidatorOptions {
@@ -100,6 +113,9 @@ impl Default for ConsolidatorOptions {
             min_pattern_threshold: 3,
             enable_stateful_pagination: true,
             pagination_storage_key_template: "api.{path}.total".to_string(),
+            profile: crate::profile::default_profile(),
+            merge_scorer: None,
+            merge_confidence: 0.5,
         }
     }
 }
@@ -108,6 +124,8 @@ impl Default for ConsolidatorOptions {
 pub struct MockConsolidator {
     options: ConsolidatorOptions,
     stats: ConsolidationStats,
+    provenance: Provenance,
+    pattern_detector: PatternDetector,
     response_analyzer: ResponseAnalyzer,
     template_generator: TemplateGenerator,
 }
@@ -120,7 +138,11 @@ impl MockConsolidator {
 
     /// Create a new consolidator with custom options
     pub fn with_options(options: ConsolidatorOptions) -> Self {
-        let response_analyzer = ResponseAnalyzer::new(options.enable_stateful_pagination);
+        let response_analyzer = ResponseAnalyzer::with_profile(
+            options.enable_stateful_pagination,
+            Arc::clone(&options.profile),
+        );
+        let pattern_detector = PatternDetector::with_profile(Arc::clone(&options.profile));
         let template_generator =
             TemplateGenerator::new(options.pagination_storage_key_template.clone());
 
@@ -134,6 +156,8 @@ impl MockConsolidator {
                 duplicates_removed: 0,
                 templates_created: 0,
             },
+            provenance: Provenance::new(),
+            pattern_detector,
             response_analyzer,
             template_generator,
         }
@@ -159,10 +183,11 @@ impl MockConsolidator {
         collection: MockCollectionConfig,
     ) -> Result<MockCollectionConfig> {
         self.stats.original_count = collection.mocks.len();
+        self.provenance = Provenance::new();
 
-        println!(
-            "Analyzing {} mocks for consolidation...",
-            self.stats.original_count
+        tracing::debug!(
+            mocks = self.stats.original_count,
+            "analyzing mocks for consolidation"
         );
 
         // Streaming mocks (ws/sse) have no consolidatable response shape;
@@ -172,13 +197,16 @@ impl MockConsolidator {
             .into_iter()
             .partition(|m| m.sse.is_some() || m.ws.is_some());
 
-        let groups = PatternDetector::group_similar_mocks(&http_mocks);
-        println!("   ✓ Grouped into {} request patterns", groups.len());
+        let groups = self.pattern_detector.group_similar_mocks(&http_mocks);
+        tracing::debug!(groups = groups.len(), "grouped into request patterns");
 
         let mut consolidated_mocks = Vec::new();
         for (group_id, group) in groups.iter().enumerate() {
             let processed = self.process_mock_group(group_id, group)?;
             consolidated_mocks.extend(processed);
+        }
+        for mock in &streaming_mocks {
+            self.provenance.record_identity(mock.id.clone());
         }
         consolidated_mocks.extend(streaming_mocks);
 
@@ -212,71 +240,149 @@ impl MockConsolidator {
         group: &[MockConfig],
     ) -> Result<Vec<MockConfig>> {
         if group.len() == 1 {
+            self.record_identity_lineage(group);
             return Ok(group.to_vec());
         }
 
-        println!("   Processing group {} ({} mocks)", group_id, group.len());
+        tracing::debug!(group = group_id, mocks = group.len(), "processing group");
 
         if PatternDetector::are_duplicates(group) {
             self.stats.duplicates_removed += group.len() - 1;
             self.stats.patterns_detected += 1;
-            println!("      ↳ Removed {} duplicate mocks", group.len() - 1);
-            return Ok(vec![group[0].clone()]);
+            tracing::debug!(
+                group = group_id,
+                removed = group.len() - 1,
+                "removed duplicate mocks"
+            );
+            self.record_group_lineage(&group[0].id, group);
+            let mut survivor = group[0].clone();
+            // The survivor now answers for all of them, so it must not retire
+            // after the first.
+            survivor.once = false;
+            return Ok(vec![survivor]);
         }
 
         if !self.options.enable_consolidation {
-            println!("      ↳ Consolidation disabled, keeping mocks separate");
+            tracing::debug!(group = group_id, "consolidation disabled, keeping separate");
+            self.record_identity_lineage(group);
             return Ok(group.to_vec());
         }
 
-        if group.len() < self.options.min_pattern_threshold {
-            println!(
-                "      ↳ Group size ({}) below threshold ({}), keeping mocks separate",
-                group.len(),
-                self.options.min_pattern_threshold
+        // Requests that look alike can still have answered very differently --
+        // a 404 among the 200s, a payload carrying a field the others lack.
+        // Templating those together makes a mock that is wrong for every member,
+        // so split on what was answered before deciding what to merge.
+        let partitions = shape::partition_by_response(group);
+        if partitions.len() > 1 {
+            tracing::debug!(
+                group = group_id,
+                shapes = partitions.len(),
+                sizes = ?partitions.iter().map(Vec::len).collect::<Vec<_>>(),
+                "split group by response shape"
             );
+        }
+
+        let mut consolidated: Vec<MockConfig> = Vec::new();
+
+        // Partitions arrive largest first, so each one is at least as specific as
+        // the last. Giving every later partition a strictly higher priority makes
+        // that specificity binding: a lone 404 outranks the `{id}` pattern that
+        // would otherwise swallow it, and a rarer response shape is never
+        // shadowed by the common one it was split out of.
+        for partition in &partitions {
+            let mut processed = self.process_partition(partition)?;
+            if let Some(floor) = consolidated.iter().map(|mock| mock.priority).max() {
+                for mock in &mut processed {
+                    if mock.priority <= floor {
+                        mock.priority = floor.saturating_add(1);
+                    }
+                }
+            }
+            consolidated.extend(processed);
+        }
+
+        Ok(consolidated)
+    }
+
+    /// Whether a group becomes one mock or stays as it was recorded.
+    ///
+    /// A scorer gets the question first and may decline it; the size threshold
+    /// answers whatever is left, which is every group when no scorer is set.
+    fn should_merge(&self, group: &[MockConfig]) -> bool {
+        if let Some(scorer) = self.options.merge_scorer.as_ref() {
+            let candidate = merge::MergeCandidate::new(group, self.options.profile.as_ref());
+            if let Some(confidence) = scorer.safe_to_merge(&candidate) {
+                let merging = confidence >= self.options.merge_confidence;
+                tracing::debug!(
+                    mocks = group.len(),
+                    scorer = scorer.name(),
+                    confidence,
+                    required = self.options.merge_confidence,
+                    merging,
+                    "merge scored"
+                );
+                return merging;
+            }
+        }
+
+        let merging = group.len() >= self.options.min_pattern_threshold;
+        if !merging {
+            tracing::debug!(
+                mocks = group.len(),
+                threshold = self.options.min_pattern_threshold,
+                "group below pattern threshold, keeping separate"
+            );
+        }
+        merging
+    }
+
+    /// Consolidate one set of mocks that all answered the same way.
+    #[allow(clippy::indexing_slicing)] // `group[0]` safe: partitions are never empty
+    fn process_partition(&mut self, group: &[MockConfig]) -> Result<Vec<MockConfig>> {
+        if !self.should_merge(group) {
+            self.record_identity_lineage(group);
             return Ok(group.to_vec());
         }
 
-        let url_pattern = PatternDetector::generate_smart_url_pattern(group);
+        let url_pattern = self.pattern_detector.generate_smart_url_pattern(group);
         let response_analysis = self.response_analyzer.analyze_response_patterns(group)?;
 
         // Analyze GraphQL variables if this is a GraphQL group
         let graphql_analysis = ResponseAnalyzer::analyze_graphql_variables(group);
 
-        // Log GraphQL variable analysis if detected
         if graphql_analysis.has_variables {
-            if graphql_analysis.has_varying_variables {
-                println!(
-                    "      ↳ Detected {} varying GraphQL variables: {:?}",
-                    graphql_analysis.varying_variables.len(),
-                    graphql_analysis.varying_variables
-                );
-            }
-            if !graphql_analysis.constant_variables.is_empty() {
-                println!(
-                    "      ↳ Detected {} constant GraphQL variables",
-                    graphql_analysis.constant_variables.len()
-                );
-            }
+            tracing::debug!(
+                varying = ?graphql_analysis.varying_variables,
+                constant = graphql_analysis.constant_variables.len(),
+                "analyzed GraphQL variables"
+            );
         }
 
         if response_analysis.varying_fields.is_empty() {
             self.stats.patterns_detected += 1;
-            println!("      ↳ Identical responses -> single mock with pattern: {url_pattern}");
+            tracing::debug!(
+                pattern = %url_pattern,
+                "identical responses collapse to a single mock"
+            );
             let mut consolidated = group[0].clone();
             consolidated.id = format!("{}-consolidated", group[0].id).into();
+            // A mock standing in for a whole group cannot keep the first
+            // member's one-shot flag: it would answer the first request and
+            // leave every other member of its own group unmatched.
+            consolidated.once = false;
+            self.record_group_lineage(&consolidated.id.clone(), group);
             if let Some(ref mut match_config) = consolidated.match_config {
                 match_config.urls = vec![url_pattern];
                 match_config.url = None;
             }
+            Self::relax_match_to_group(&mut consolidated, group);
             Ok(vec![consolidated])
         } else if self.options.enable_templates && response_analysis.is_json {
             self.stats.patterns_detected += 1;
-            println!(
-                "      ↳ Creating smart template with {} varying fields (pattern: {})",
-                response_analysis.varying_fields.len(),
-                url_pattern
+            tracing::debug!(
+                pattern = %url_pattern,
+                varying_fields = response_analysis.varying_fields.len(),
+                "creating smart template"
             );
             self.stats.templates_created += 1;
             Ok(self.create_smart_template_mock(
@@ -286,17 +392,66 @@ impl MockConsolidator {
                 &graphql_analysis,
             ))
         } else {
-            println!(
-                "      ↳ Keeping mocks separate (non-JSON or templates disabled) (pattern: {url_pattern})"
+            tracing::debug!(
+                pattern = %url_pattern,
+                "keeping mocks separate: non-JSON responses or templates disabled"
             );
+            self.record_identity_lineage(group);
             Ok(group.to_vec())
         }
+    }
+
+    /// Relax a merged mock's request matchers to cover its whole group.
+    ///
+    /// A consolidated mock is cloned from one member, so it arrives carrying
+    /// that member's pins -- the `$.query` body matcher that told three
+    /// different searches apart, the `offset` the first page pinned. Keeping
+    /// them means the merged mock answers only the recording it was cloned from
+    /// and leaves the rest of its own group unmatched. A pin survives only if
+    /// every member agreed on it.
+    fn relax_match_to_group(consolidated: &mut MockConfig, group: &[MockConfig]) {
+        let Some(match_config) = consolidated.match_config.as_mut() else {
+            return;
+        };
+
+        match_config.query.retain(|name, value| {
+            group.iter().all(|mock| {
+                mock.match_config
+                    .as_ref()
+                    .and_then(|m| m.query.get(name))
+                    .is_some_and(|other| other == value)
+            })
+        });
+
+        match_config.body.retain(|name, value| {
+            group.iter().all(|mock| {
+                mock.match_config
+                    .as_ref()
+                    .and_then(|m| m.body.get(name))
+                    .is_some_and(|other| other == value)
+            })
+        });
+    }
+
+    /// Every mock in the group survives under its own id.
+    fn record_identity_lineage(&mut self, group: &[MockConfig]) {
+        for mock in group {
+            self.provenance.record_identity(mock.id.clone());
+        }
+    }
+
+    /// One mock now answers for the whole group.
+    fn record_group_lineage(&mut self, consolidated_id: &str, group: &[MockConfig]) {
+        self.provenance.record(
+            consolidated_id,
+            group.iter().map(|mock| mock.id.clone()),
+        );
     }
 
     /// Create a smart template-based mock using Tera templates
     #[allow(clippy::indexing_slicing)] // `group[0]` guarded by callers ensuring non-empty group
     fn create_smart_template_mock(
-        &self,
+        &mut self,
         group: &[MockConfig],
         pattern: &str,
         analysis: &ResponseAnalysis,
@@ -315,21 +470,26 @@ impl MockConsolidator {
         );
 
         if let Err(e) = crate::template::validate_template(&template_body) {
-            eprintln!("  Warning: Generated template has validation errors:");
-            eprintln!("{e}");
-            eprintln!("Template content:\n{template_body}");
-            println!(
-                "      ↳ Falling back to keeping mocks separate due to template validation error"
+            tracing::warn!(
+                error = %e,
+                template = %template_body,
+                "generated template does not validate; keeping the group's mocks separate"
             );
+            self.record_identity_lineage(group);
             return group.to_vec();
         }
 
         let mut template_mock = group[0].clone();
         template_mock.id = format!("{}-smart-template", group[0].id).into();
+        // See the identical-response branch: a group's stand-in must outlive the
+        // first request it answers.
+        template_mock.once = false;
+        self.record_group_lineage(&template_mock.id.clone(), group);
         if let Some(ref mut match_config) = template_mock.match_config {
             match_config.urls = vec![pattern.to_string()];
             match_config.url = None;
         }
+        Self::relax_match_to_group(&mut template_mock, group);
 
         // Extract common headers and status from the group
         let common_status = Self::extract_common_status(group);
@@ -345,17 +505,49 @@ impl MockConsolidator {
             json: Box::new(serde_json::Value::Null),
         });
 
-        println!(
-            "      ↳ Generated smart template with {} dynamic fields",
-            analysis.varying_fields.len()
+        tracing::debug!(
+            mock = %template_mock.id,
+            dynamic_fields = analysis.varying_fields.len(),
+            "generated smart template"
         );
 
         vec![template_mock]
     }
 
+    /// Consolidate a recording and measure what the consolidation cost.
+    ///
+    /// `interactions` is the ground truth the collection was recorded from.
+    /// Every one of them is replayed against the consolidated collection and
+    /// against the original, so the report separates "consolidation broke this"
+    /// from "this was never replayable".
+    pub async fn consolidate_verified(
+        &mut self,
+        interactions: &[RecordedInteraction],
+        original: MockCollectionConfig,
+        fidelity_options: &FidelityOptions,
+    ) -> Result<(MockCollectionConfig, FidelityReport)> {
+        let consolidated = self.consolidate(original.clone())?;
+        let report = fidelity::verify(
+            interactions,
+            &original,
+            &consolidated,
+            &self.provenance,
+            fidelity_options,
+        )
+        .await?;
+        Ok((consolidated, report))
+    }
+
     /// Get consolidation statistics
     pub fn stats(&self) -> &ConsolidationStats {
         &self.stats
+    }
+
+    /// Which original mocks each consolidated mock now answers for.
+    ///
+    /// Empty until [`Self::consolidate`] has run.
+    pub fn provenance(&self) -> &Provenance {
+        &self.provenance
     }
 
     /// Extract common status code from a group of mocks (if all are the same)

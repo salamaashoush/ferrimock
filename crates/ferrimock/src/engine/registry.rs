@@ -530,10 +530,10 @@ impl MockRegistry {
 
         #[cfg(not(feature = "scripting"))]
         if !script_files.is_empty() {
-            eprintln!(
-                "Warning: {} script mock file(s) in {} ignored (build with the `scripting` feature to load .js/.mjs mocks)",
-                script_files.len(),
-                path.display()
+            tracing::warn!(
+                ignored = script_files.len(),
+                directory = %path.display(),
+                "script mock files ignored; build with the `scripting` feature to load .js/.mjs mocks"
             );
             script_files.clear();
         }
@@ -563,10 +563,7 @@ impl MockRegistry {
                 }
                 Err(e) => {
                     if let Some(file) = collection_files.get(i) {
-                        eprintln!(
-                            "Warning: Failed to load mock collection from {}: {e}",
-                            file.display()
-                        );
+                        tracing::warn!(file = %file.display(), error = %e, "failed to load mock collection");
                     }
                 }
             }
@@ -580,10 +577,7 @@ impl MockRegistry {
                 }
                 Err(e) => {
                     if let Some(file) = har_files.get(i) {
-                        eprintln!(
-                            "Warning: Failed to load HAR file from {}: {e}",
-                            file.display()
-                        );
+                        tracing::warn!(file = %file.display(), error = %e, "failed to load HAR file");
                     }
                 }
             }
@@ -607,10 +601,7 @@ impl MockRegistry {
                     }
                     Err(e) => {
                         if let Some(file) = script_files.get(i) {
-                            eprintln!(
-                                "Warning: Failed to load script mocks from {}: {e}",
-                                file.display()
-                            );
+                            tracing::warn!(file = %file.display(), error = %e, "failed to load script mocks");
                         }
                     }
                 }

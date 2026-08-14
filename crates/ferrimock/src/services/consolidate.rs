@@ -51,6 +51,7 @@ pub async fn consolidate(
         min_pattern_threshold: input.min_pattern,
         enable_stateful_pagination: true,
         pagination_storage_key_template: "api.{path}.total".into(),
+        ..ConsolidatorOptions::default()
     };
 
     let mut consolidator = MockConsolidator::with_options(options);

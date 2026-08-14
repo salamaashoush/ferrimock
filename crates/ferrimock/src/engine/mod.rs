@@ -23,7 +23,7 @@ pub use diagnostics::{Criterion, CriterionOutcome, MatchAttempt, MatchReport};
 pub use har_export::export_mocks_to_har;
 pub use matcher::{MockAction, MockMatch, MockMatcher};
 pub use patcher::ResponsePatcher;
-pub use recorder_ext::MockRecorderConsolidationExt;
+pub use recorder_ext::{ConsolidatedRecording, MockRecorderConsolidationExt};
 pub use registry::{
     CoverageReport, Expected, MockCoverage, MockRegistry, UnmatchedReport, UnmatchedRequest,
     VerifyError,

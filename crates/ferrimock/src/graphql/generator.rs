@@ -328,7 +328,7 @@ impl MockGenerator {
             TypeKind::Scalar => {
                 use crate::codegen::field_type_to_tera_expr;
                 use crate::type_detector::{
-                    detect_from_field_name_only, detect_from_semantic_context,
+                    DetectionContext, detect_from_field_name_only, detect_from_semantic_context,
                 };
 
                 if let Some(name) = field_name {
@@ -361,7 +361,7 @@ impl MockGenerator {
                     }
 
                     // Try full semantic detection
-                    if let Some((field_type, _confidence)) = detect_from_semantic_context(name, &[])
+                    if let Some((field_type, _confidence)) = detect_from_semantic_context(name, &[], &DetectionContext::builtin())
                     {
                         return Ok(field_type_to_tera_expr(name, &field_type, false));
                     }

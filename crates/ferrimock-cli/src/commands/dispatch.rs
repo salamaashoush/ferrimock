@@ -137,16 +137,20 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             format,
             min_pattern,
             no_templates,
+            verify,
+            fail_under,
             verbose,
         } => {
-            consolidate::consolidate_mocks(
+            consolidate::consolidate_mocks(consolidate::ConsolidateArgs {
                 input,
                 output,
                 format,
                 min_pattern,
-                !no_templates,
+                enable_templates: !no_templates,
+                verify,
+                fail_under,
                 verbose,
-            )
+            })
             .await
         }
         MockAction::Serve {

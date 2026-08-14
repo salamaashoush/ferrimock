@@ -42,6 +42,7 @@ pub use types::{
 };
 
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 
 use analyzers::{analyze_array_pattern, analyze_numbers, analyze_object_pattern};
 use checkers::get_checkers;
@@ -49,13 +50,54 @@ use constants::DATA_URI_REGEX;
 use features::{check_categorical, extract_features};
 use semantic::calculate_semantic_boost;
 
-/// Main type detection engine (zero-sized type)
-pub struct TypeDetector;
+/// What the detector may consult beyond the values in front of it.
+#[derive(Clone, Copy)]
+pub struct DetectionContext<'a> {
+    /// Domain knowledge the built-in heuristics do not have.
+    pub profile: &'a dyn crate::profile::ConsolidationProfile,
+}
+
+/// Borrowable stand-in for callers with no profile to offer.
+static BUILTIN_PROFILE: crate::profile::DefaultProfile = crate::profile::DefaultProfile;
+
+impl DetectionContext<'static> {
+    /// A context with no domain knowledge, for callers that have none to pass.
+    pub fn builtin() -> Self {
+        Self {
+            profile: &BUILTIN_PROFILE,
+        }
+    }
+}
+
+impl Default for DetectionContext<'static> {
+    fn default() -> Self {
+        Self::builtin()
+    }
+}
+
+/// Main type detection engine
+pub struct TypeDetector {
+    profile: Arc<dyn crate::profile::ConsolidationProfile>,
+}
 
 impl TypeDetector {
-    /// Create a new type detector (zero-sized struct)
+    /// Create a detector with only the built-in heuristics.
     pub fn new() -> Self {
-        Self
+        Self {
+            profile: crate::profile::default_profile(),
+        }
+    }
+
+    /// Create a detector that consults `profile` before falling back to the
+    /// built-in heuristics.
+    pub fn with_profile(profile: Arc<dyn crate::profile::ConsolidationProfile>) -> Self {
+        Self { profile }
+    }
+
+    fn context(&self) -> DetectionContext<'_> {
+        DetectionContext {
+            profile: self.profile.as_ref(),
+        }
     }
 
     /// Detect type with confidence score using field name context
@@ -71,8 +113,13 @@ impl TypeDetector {
             return (FieldType::RandomString, 0.5);
         }
 
+        // Layer 0: the profile knows this API and the heuristics do not.
+        if let Some(result) = self.profile.classify_field(field_name, values) {
+            return result;
+        }
+
         // Layer 1: Semantic context from field name (strong hints return immediately)
-        if let Some(result) = detect_from_semantic_context(field_name, values) {
+        if let Some(result) = detect_from_semantic_context(field_name, values, &self.context()) {
             return result;
         }
 
@@ -122,7 +169,7 @@ impl TypeDetector {
             let features = extract_features(&strs);
 
             // Run priority-ordered pattern detection
-            detect_from_patterns(values, &features)
+            detect_from_patterns(values, &features, &self.context())
         } else {
             (FieldType::RandomString, 0.5)
         }
@@ -134,6 +181,7 @@ impl TypeDetector {
 fn detect_from_patterns(
     values: &[&JsonValue],
     features: &features::TypeFeatures,
+    ctx: &DetectionContext<'_>,
 ) -> (FieldType, f64) {
     let strings: Vec<&str> = values.iter().filter_map(|v| v.as_str()).collect();
 
@@ -145,7 +193,7 @@ fn detect_from_patterns(
     let mut potential_types: Vec<(FieldType, f64)> = Vec::new();
 
     for checker in get_checkers() {
-        if let Some(confidence) = (checker.checker_fn)(&strings, features)
+        if let Some(confidence) = (checker.checker_fn)(&strings, features, ctx)
             && confidence >= checker.threshold
         {
             potential_types.push((checker.field_type.clone(), confidence));
@@ -172,6 +220,15 @@ fn detect_from_patterns(
         return (FieldType::DownloadUrl { sample_url }, confidence);
     }
 
+    // A URL whose path ends in an image extension is an image URL whether or not
+    // the field name said so -- which is the only thing that can classify one
+    // sitting under a name like `data` or `value`. Narrowing the winner here
+    // rather than adding a competing checker keeps it independent of the order
+    // checkers run in.
+    if matches!(field_type, FieldType::Url) && strings.iter().all(|url| is_image_url(url)) {
+        return (FieldType::ImageUrl, confidence);
+    }
+
     // For DataUri, extract mime type for smart generation
     if matches!(field_type, FieldType::DataUri { .. }) {
         let mime_type = strings.iter().find_map(|s| {
@@ -186,65 +243,22 @@ fn detect_from_patterns(
     (field_type, confidence)
 }
 
+/// Whether a URL's path ends in an image file extension.
+fn is_image_url(url: &str) -> bool {
+    const IMAGE_EXTENSIONS: [&str; 8] = [
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif",
+    ];
+
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    path.rsplit_once('.').is_some_and(|(_, extension)| {
+        IMAGE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+    })
+}
+
 impl Default for TypeDetector {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// ---------------------------------------------------------------------------
-// URL Classifier extension point
-// ---------------------------------------------------------------------------
-
-use std::sync::{Arc, Mutex};
-
-/// Classifies URLs for type detection (e.g., identifying download URLs).
-///
-/// Embedders can register custom classifiers to recognize domain-specific
-/// download URL patterns that the built-in heuristics don't cover.
-///
-/// Closures with signature `Fn(&str) -> bool` automatically implement this trait.
-pub trait UrlClassifier: Send + Sync + 'static {
-    /// Returns true if the given URL is a download URL.
-    fn is_download_url(&self, url: &str) -> bool;
-}
-
-impl<F> UrlClassifier for F
-where
-    F: Fn(&str) -> bool + Send + Sync + 'static,
-{
-    fn is_download_url(&self, url: &str) -> bool {
-        self(url)
-    }
-}
-
-static URL_CLASSIFIERS: Mutex<Vec<Arc<dyn UrlClassifier>>> = Mutex::new(Vec::new());
-
-/// Register a custom URL classifier for type detection.
-///
-/// The classifier will be consulted when detecting download URL fields.
-/// Must be called before consolidation or type detection runs.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// ferrimock::type_detector::register_url_classifier(|url| {
-///     url.contains("dl.mycdn.com") || url.contains("files.myservice.com")
-/// });
-/// ```
-pub fn register_url_classifier(classifier: impl UrlClassifier) {
-    if let Ok(mut classifiers) = URL_CLASSIFIERS.lock() {
-        classifiers.push(Arc::new(classifier));
-    }
-}
-
-/// Check if any registered custom classifier recognizes this as a download URL.
-/// Called by checkers and semantic modules.
-pub(crate) fn is_custom_download_url(url: &str) -> bool {
-    let Ok(classifiers) = URL_CLASSIFIERS.lock() else {
-        return false;
-    };
-    classifiers.iter().any(|c| c.is_download_url(url))
 }
 
 #[cfg(test)]

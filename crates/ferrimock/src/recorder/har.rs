@@ -1,6 +1,6 @@
 //! HAR format conversion utilities
 
-use super::types::RecordedInteraction;
+use super::types::{RecordedInteraction, RecordedRequest, RecordedResponse};
 use har::v1_2;
 
 /// Convert RecordedInteraction to HAR Entry
@@ -134,6 +134,63 @@ pub fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
         server_ip_address: None,
         connection: None,
         comment: None,
+    }
+}
+
+/// Convert a HAR entry back into a recorded interaction.
+///
+/// HAR is the only recording format that keeps the request alongside the
+/// response, which makes it the only one a replay can be checked against. The
+/// entry index stands in for the interaction id, since HAR carries none.
+pub fn from_har_entry(index: usize, entry: &v1_2::Entries) -> RecordedInteraction {
+    let (uri, query) = match entry.request.url.split_once('?') {
+        Some((uri, query)) => (uri.to_string(), Some(query.to_string())),
+        None => (entry.request.url.clone(), None),
+    };
+
+    let request_headers = entry
+        .request
+        .headers
+        .iter()
+        .map(|header| (header.name.clone(), header.value.clone()))
+        .collect();
+
+    let response_headers = entry
+        .response
+        .headers
+        .iter()
+        .map(|header| (header.name.clone(), header.value.clone()))
+        .collect();
+
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&entry.started_date_time)
+        .map_or_else(|_| chrono::Utc::now(), |ts| ts.with_timezone(&chrono::Utc));
+
+    let duration = if entry.time.is_finite() && entry.time > 0.0 {
+        std::time::Duration::from_secs_f64(entry.time / 1000.0)
+    } else {
+        std::time::Duration::ZERO
+    };
+
+    RecordedInteraction {
+        id: format!("har-{}", index + 1),
+        timestamp,
+        request: RecordedRequest {
+            method: entry.request.method.clone(),
+            uri,
+            query,
+            headers: request_headers,
+            body: entry
+                .request
+                .post_data
+                .as_ref()
+                .and_then(|post| post.text.clone()),
+        },
+        response: RecordedResponse {
+            status: u16::try_from(entry.response.status).unwrap_or(0),
+            headers: response_headers,
+            body: entry.response.content.text.clone().unwrap_or_default(),
+        },
+        duration,
     }
 }
 

@@ -780,12 +780,24 @@ impl MockRecorder {
         self.interactions.len()
     }
 
-    /// Get all interactions
+    /// Every interaction, in the order it was recorded.
+    ///
+    /// The backing map is unordered, so this sorts. Order is not cosmetic here:
+    /// mock ids and priorities are assigned by position, and `once` sequencing
+    /// replays a repeated request in the order it was answered -- reading the
+    /// map directly made all three depend on hash iteration order, so saving the
+    /// same session twice produced different files.
     pub fn get_all(&self) -> Vec<RecordedInteraction> {
-        self.interactions
+        let mut interactions: Vec<RecordedInteraction> = self
+            .interactions
             .iter()
             .map(|entry| entry.value().clone())
-            .collect()
+            .collect();
+        // The id breaks ties between interactions recorded in the same instant,
+        // which only keeps the result deterministic -- it says nothing about
+        // which of the two actually came first.
+        interactions.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then_with(|| a.id.cmp(&b.id)));
+        interactions
     }
 
     /// Get a specific interaction by ID
@@ -963,6 +975,18 @@ impl MockRecorder {
 
             mocks.push(mock_config);
         }
+
+        // Recordings that share a request line but not a request body -- three
+        // different searches POSTed to one URL -- are indistinguishable to the
+        // matcher until something from the body is pinned.
+        let request_bodies: Vec<Option<String>> = interactions
+            .iter()
+            .map(|interaction| interaction.request.body.clone())
+            .collect();
+        crate::config::request_body_match::discriminate_by_request_body(
+            &mut mocks,
+            &request_bodies,
+        );
 
         MockCollectionConfig {
             name: Some(format!("Recording: {}", self.session_name)),

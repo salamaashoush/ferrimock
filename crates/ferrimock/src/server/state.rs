@@ -74,6 +74,7 @@ impl MockState {
             return Ok(StopRecordingResult {
                 file_path: recorder.get_file_path().await,
                 consolidation_stats: None,
+                fidelity: None,
             });
         };
 
@@ -88,15 +89,17 @@ impl MockState {
             .finalize_and_consolidate(consolidator_options, options.keep_original)
             .await
         {
-            Ok((file_path, stats)) => Ok(StopRecordingResult {
-                file_path: Some(file_path),
-                consolidation_stats: Some(stats),
+            Ok(result) => Ok(StopRecordingResult {
+                file_path: Some(result.path),
+                consolidation_stats: Some(result.stats),
+                fidelity: result.fidelity,
             }),
             Err(e) => {
                 tracing::warn!("Consolidation failed (recording still saved): {e}");
                 Ok(StopRecordingResult {
                     file_path: recorder.get_file_path().await,
                     consolidation_stats: None,
+                    fidelity: None,
                 })
             }
         }
@@ -114,4 +117,7 @@ pub struct ConsolidateOptions {
 pub struct StopRecordingResult {
     pub file_path: Option<PathBuf>,
     pub consolidation_stats: Option<ConsolidationStats>,
+    /// How much of the recorded traffic the consolidated file still reproduces.
+    /// `None` when nothing was consolidated.
+    pub fidelity: Option<crate::consolidator::FidelityReport>,
 }

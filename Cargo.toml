@@ -2,13 +2,14 @@
 members = [
   "crates/ferrimock",
   "crates/ferrimock-cli",
+  "crates/ferrimock-ml",
   "crates/ferrimock-napi",
 ]
 
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
 edition = "2024"
 # Verified floor for the stable feature set; the `scripting` feature
@@ -219,6 +220,7 @@ sourcemap = "9"
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 tempfile = "3.27"
 serial_test = "3.5"
+proptest = "1.11"
 
 # HTTP
 http = "1"

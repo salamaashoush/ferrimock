@@ -191,3 +191,51 @@ MSW" came from breaking both rules at once.
 - FxHashMap for performance-critical paths (not std HashMap)
 - All new code must include tests
 - Run `cargo test -p ferrimock --lib` and `bun test` before committing
+
+## Consolidation
+
+Consolidation compresses a recording into patterns and templates. It is lossy,
+so a reduction ratio on its own says nothing -- collapsing every mock into one
+would score 99%. Every change to the consolidator has to be judged against
+replay fidelity, not size.
+
+### Fidelity
+
+`consolidator::fidelity` replays each recorded request through the consolidated
+collection and diffs the answer against what was really recorded, at levels that
+fail independently: matched, no cross-talk, status exact, shape equal, constants
+held, value equal. It scores the *unconsolidated* collection the same way, so a
+failure is attributable -- a recording the recorder cannot replay is not the
+consolidator's fault, and the delta between the two is what consolidation cost.
+
+```bash
+ferrimock mock consolidate in.json out.json --verify traffic.har --fail-under 0.95
+```
+
+`--verify` takes a recording session or a HAR -- the formats that keep requests
+alongside responses. A consolidated mock collection cannot be verified against
+itself: it no longer records what was asked.
+
+### Domain knowledge
+
+The engine ships defensible defaults and no API-specific rules. Anything that
+depends on knowing a particular API -- that `/v2/` is a version rather than an
+id, that `continuation` is a cursor, which hosts serve file content -- goes in a
+`profile::ConsolidationProfile` supplied by the embedder. Do not add such rules
+to the engine; add the hook the profile needs.
+
+### Tests
+
+- `tests/consolidator_fidelity.rs` -- scenarios someone thought of, each
+  asserting both the reduction and the fidelity it must not cost.
+- `tests/consolidator_props.rs` -- proptest over a generated synthetic API.
+  Invariants are behavioural: grouping and templating are the engine's business,
+  answering every recorded request correctly is not.
+- `fuzz/` -- cargo-fuzz targets for crash safety and the invariants that hold
+  over arbitrary input. Needs nightly:
+
+```bash
+cargo +nightly install cargo-fuzz
+scripts/fuzz.sh          # every target, 60s each
+scripts/fuzz.sh 0 consolidate   # one target, until stopped
+```

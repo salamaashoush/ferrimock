@@ -1,0 +1,47 @@
+[package]
+name = "ferrimock-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1"
+rustc-hash = "2"
+
+[dependencies.ferrimock]
+path = "../crates/ferrimock"
+features = ["engine"]
+
+# Detached from the parent workspace: fuzz targets build on nightly with
+# sanitizer flags the rest of the tree neither needs nor tolerates.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = true
+
+[[bin]]
+name = "consolidate"
+path = "fuzz_targets/consolidate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "normalize_path"
+path = "fuzz_targets/normalize_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "response_envelope"
+path = "fuzz_targets/response_envelope.rs"
+test = false
+doc = false
+bench = false

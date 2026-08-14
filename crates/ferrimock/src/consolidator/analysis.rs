@@ -8,10 +8,28 @@ use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
 use std::sync::LazyLock;
+use std::sync::Arc;
+use url::form_urlencoded;
+
+use crate::profile::{ConsolidationProfile, PaginationDialect};
 
 #[allow(clippy::expect_used)] // Static regex literal -- panic on invalid pattern is correct
 static PATH_ID_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"/(\d+)(?:/|\?|$)").expect("Failed to compile path ID regex"));
+
+/// Query parameters that move a cursor through a collection rather than
+/// describing what is being asked for. Dropped when a pagination URL's static
+/// parameters are extracted, since the template regenerates them.
+const PAGINATION_PARAMS: [&str; 8] = [
+    "page",
+    "limit",
+    "offset",
+    "per_page",
+    "cursor",
+    "marker",
+    "skip",
+    "page_size",
+];
 
 /// Pagination pattern detected in responses
 #[derive(Debug, Clone)]
@@ -134,16 +152,149 @@ impl From<&GraphQLVariableAnalysis> for crate::codegen::GraphQLVariableInfo {
     }
 }
 
+/// The part a field plays in a paginated response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaginationRole {
+    Total,
+    Offset,
+    Limit,
+    Next,
+    Prev,
+    HasMore,
+}
+
+impl PaginationRole {
+    /// Field names that name this role outright, most specific first.
+    fn exact_names(self) -> &'static [&'static str] {
+        match self {
+            Self::Total => &["total_count", "totalCount", "total_items", "total", "count"],
+            Self::Offset => &["offset", "skip", "start"],
+            Self::Limit => &["limit", "per_page", "perPage", "page_size", "pageSize"],
+            Self::Next => &[
+                "next_marker",
+                "nextMarker",
+                "next_cursor",
+                "nextCursor",
+                "next_url",
+                "next",
+            ],
+            Self::Prev => &[
+                "prev_marker",
+                "prevMarker",
+                "prev_cursor",
+                "prevCursor",
+                "prev_url",
+                "previous",
+                "prev",
+            ],
+            Self::HasMore => &["has_more", "hasMore", "has_next", "hasNext"],
+        }
+    }
+
+    /// Substrings that hint at this role in a name the exact list does not cover.
+    fn fuzzy_patterns(self) -> &'static [&'static str] {
+        match self {
+            Self::Total => &["total", "count"],
+            Self::Offset => &["offset", "skip", "start"],
+            Self::Limit => &["limit", "page", "size"],
+            Self::Next => &["next"],
+            Self::Prev => &["prev", "previous"],
+            // "next" is deliberately absent: it belongs to Next, and sharing it
+            // would let one field fill both roles.
+            Self::HasMore => &["more"],
+        }
+    }
+
+    /// The names this API uses for the role, if the profile named any.
+    fn dialect_names(self, dialect: &PaginationDialect) -> &[String] {
+        match self {
+            Self::Total => &dialect.total,
+            Self::Offset => &dialect.offset,
+            Self::Limit => &dialect.limit,
+            Self::Next => &dialect.next,
+            Self::Prev => &dialect.prev,
+            Self::HasMore => &dialect.has_more,
+        }
+    }
+
+    /// Whether a field name reads as this role.
+    ///
+    /// Matching runs against the name's word components rather than the raw
+    /// string. `account_number` contains "count", and plain substring matching
+    /// duly read a customer's account number as a total count.
+    fn matches_name(self, key: &str) -> bool {
+        let patterns = self.fuzzy_patterns();
+        name_components(key)
+            .iter()
+            .any(|component| patterns.iter().any(|pattern| component.starts_with(pattern)))
+    }
+
+    /// Whether a sampled value could plausibly be this role.
+    fn value_fits(self, value: &JsonValue) -> bool {
+        match self {
+            // A count, offset or page size is a non-negative whole number. A
+            // string that merely looks numeric is an identifier, not a count.
+            Self::Total | Self::Offset | Self::Limit => {
+                value.as_u64().is_some() || value.is_null()
+            }
+            // A cursor is a token or URL, a page number is a number, and the last
+            // page's marker is null.
+            Self::Next | Self::Prev => {
+                value.is_string() || value.is_number() || value.is_null()
+            }
+            Self::HasMore => value.is_boolean(),
+        }
+    }
+}
+
+/// Split a field name into lowercase word components.
+///
+/// Handles the three conventions an API mixes freely: `total_count`,
+/// `total-count` and `totalCount` all yield `["total", "count"]`.
+fn name_components(key: &str) -> Vec<String> {
+    let mut components = Vec::new();
+    let mut current = String::new();
+
+    for ch in key.chars() {
+        if !ch.is_alphanumeric() {
+            if !current.is_empty() {
+                components.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        if ch.is_uppercase() && !current.is_empty() {
+            components.push(std::mem::take(&mut current));
+        }
+        current.extend(ch.to_lowercase());
+    }
+
+    if !current.is_empty() {
+        components.push(current);
+    }
+    components
+}
+
 /// Response analyzer for detecting patterns in mock responses
 pub struct ResponseAnalyzer {
     type_detector: TypeDetector,
+    profile: Arc<dyn ConsolidationProfile>,
     enable_stateful_pagination: bool,
 }
 
 impl ResponseAnalyzer {
     pub fn new(enable_stateful_pagination: bool) -> Self {
+        Self::with_profile(enable_stateful_pagination, crate::profile::default_profile())
+    }
+
+    /// An analyzer that consults `profile` for pagination naming and field
+    /// types before falling back to the built-in heuristics.
+    pub fn with_profile(
+        enable_stateful_pagination: bool,
+        profile: Arc<dyn ConsolidationProfile>,
+    ) -> Self {
         Self {
-            type_detector: TypeDetector::new(),
+            type_detector: TypeDetector::with_profile(Arc::clone(&profile)),
+            profile,
             enable_stateful_pagination,
         }
     }
@@ -332,40 +483,13 @@ impl ResponseAnalyzer {
             return None;
         }
 
-        // Exact match field names (most common)
-        let total_fields = ["total_count", "total", "count", "total_items", "totalCount"];
-        let offset_fields = ["offset", "skip", "start"];
-        let limit_fields = ["limit", "per_page", "page_size", "perPage", "pageSize"];
-        let next_fields = [
-            "next_marker",
-            "next_cursor",
-            "next_url",
-            "next",
-            "nextMarker",
-            "nextCursor",
-        ];
-        let prev_fields = [
-            "prev_marker",
-            "prev_cursor",
-            "prev_url",
-            "prev",
-            "previous",
-            "prevMarker",
-            "prevCursor",
-        ];
-        let has_more_fields = ["has_more", "has_next", "hasMore", "hasNext"];
-
-        // Try exact matching first
-        let total_field =
-            Self::find_field_fuzzy(objects[0], &total_fields, &["total", "count", "num"]);
-        let offset_field =
-            Self::find_field_fuzzy(objects[0], &offset_fields, &["offset", "skip", "start"]);
-        let limit_field =
-            Self::find_field_fuzzy(objects[0], &limit_fields, &["limit", "page", "size"]);
-        let next_field = Self::find_field_fuzzy(objects[0], &next_fields, &["next"]);
-        let prev_field = Self::find_field_fuzzy(objects[0], &prev_fields, &["prev", "previous"]);
-        // Don't use "next" as fallback for has_more - it conflicts with next_field
-        let has_more_field = Self::find_field_fuzzy(objects[0], &has_more_fields, &["more"]);
+        let dialect = self.profile.pagination_dialect();
+        let total_field = Self::find_role_field(&objects, PaginationRole::Total, dialect);
+        let offset_field = Self::find_role_field(&objects, PaginationRole::Offset, dialect);
+        let limit_field = Self::find_role_field(&objects, PaginationRole::Limit, dialect);
+        let next_field = Self::find_role_field(&objects, PaginationRole::Next, dialect);
+        let prev_field = Self::find_role_field(&objects, PaginationRole::Prev, dialect);
+        let has_more_field = Self::find_role_field(&objects, PaginationRole::HasMore, dialect);
 
         if total_field.is_none() && next_field.is_none() && prev_field.is_none() {
             return None;
@@ -477,68 +601,78 @@ impl ResponseAnalyzer {
                 })
             });
 
-        if let Some(url) = sample_url {
-            // Parse URL and extract query params
-            if let Some(query_start) = url.find('?') {
-                let query_string = url.get(query_start + 1..).unwrap_or("");
+        let Some(url) = sample_url else {
+            return String::new();
+        };
+        let Some((_, query_string)) = url.split_once('?') else {
+            return String::new();
+        };
 
-                // Parse query params and filter out pagination-related ones
-                let pagination_params = [
-                    "page",
-                    "limit",
-                    "offset",
-                    "per_page",
-                    "cursor",
-                    "marker",
-                    "skip",
-                    "page_size",
-                ];
-                let static_params: Vec<String> = query_string
-                    .split('&')
-                    .filter(|param| {
-                        if let Some(key) = param.split('=').next() {
-                            !pagination_params.contains(&key)
-                        } else {
-                            false
-                        }
-                    })
-                    .map(std::string::ToString::to_string)
-                    .collect();
+        // Percent-decode before comparing names, and re-encode after, so a
+        // parameter whose value contains `=` or `&` survives the round trip --
+        // hand-splitting on those characters truncated it.
+        let kept: Vec<(String, String)> = form_urlencoded::parse(query_string.as_bytes())
+            .filter(|(name, _)| !PAGINATION_PARAMS.contains(&name.as_ref()))
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect();
 
-                return static_params.join("&");
-            }
+        if kept.is_empty() {
+            return String::new();
         }
 
-        // No static params found
-        String::new()
+        form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(kept)
+            .finish()
     }
 
-    /// Find field with fuzzy matching - tries exact match first, then substring match
-    fn find_field_fuzzy(
-        obj: &serde_json::Map<String, JsonValue>,
-        exact_matches: &[&str],
-        fuzzy_patterns: &[&str],
+    /// Find the field playing a pagination role, across every response in the group.
+    ///
+    /// Two things this does that plain substring matching did not. It looks at
+    /// *all* the responses rather than the first, and requires the field in all
+    /// of them -- a key that appears in one page and not the next cannot be
+    /// driving pagination. And it checks the value fits the role: `account_number`
+    /// contains "num" and used to be picked as a total count, which then drove
+    /// the generated pagination template off a customer's account number.
+    fn find_role_field(
+        objects: &[&serde_json::Map<String, JsonValue>],
+        role: PaginationRole,
+        dialect: Option<&PaginationDialect>,
     ) -> Option<String> {
-        // Try exact matches first
-        for &field in exact_matches {
-            if obj.contains_key(field) {
-                return Some(field.to_string());
-            }
-        }
+        let present_everywhere = |field: &str| {
+            objects.iter().all(|obj| {
+                obj.get(field)
+                    .is_some_and(|value| role.value_fits(value))
+            })
+        };
 
-        // Try fuzzy/substring matching
-        for key in obj.keys() {
-            let key_lower = key.to_lowercase();
-            for &pattern in fuzzy_patterns {
-                // Match if field contains the pattern
-                // e.g., "totalRecords" matches "total", "record_count" matches "count"
-                if key_lower.contains(pattern) {
-                    return Some(key.clone());
+        // The API's own naming wins outright: a profile that says its cursor is
+        // called `continuation` is stating fact, not offering a hint.
+        if let Some(dialect) = dialect {
+            for field in role.dialect_names(dialect) {
+                if present_everywhere(field) {
+                    return Some(field.clone());
                 }
             }
         }
 
-        None
+        for &field in role.exact_names() {
+            if present_everywhere(field) {
+                return Some(field.to_string());
+            }
+        }
+
+        let first = objects.first()?;
+        let mut candidates: Vec<&String> = first
+            .keys()
+            .filter(|key| role.matches_name(key))
+            .filter(|key| present_everywhere(key))
+            .collect();
+
+        // Shortest name first: the fewer extra characters around the pattern, the
+        // likelier the key is about the role rather than merely containing the
+        // word. Alphabetical breaks ties so the choice does not depend on map order.
+        candidates.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+        candidates.first().map(|key| (*key).clone())
     }
 
     /// Analyze GraphQL variables across a group of mocks to detect varying vs constant variables
@@ -1321,5 +1455,151 @@ mod tests {
         assert!(!analysis.has_varying_variables);
         assert_eq!(analysis.varying_variables.len(), 0);
         assert_eq!(analysis.constant_variables.len(), 0);
+    }
+
+    // -- Pagination role detection --
+
+    fn objects(bodies: &[&str]) -> Vec<serde_json::Map<String, JsonValue>> {
+        bodies
+            .iter()
+            .map(|body| {
+                serde_json::from_str::<JsonValue>(body)
+                    .expect("test body parses")
+                    .as_object()
+                    .expect("test body is an object")
+                    .clone()
+            })
+            .collect()
+    }
+
+    fn role_field(bodies: &[&str], role: PaginationRole) -> Option<String> {
+        let owned = objects(bodies);
+        let refs: Vec<&serde_json::Map<String, JsonValue>> = owned.iter().collect();
+        ResponseAnalyzer::find_role_field(&refs, role, None)
+    }
+
+    #[test]
+    fn an_exact_name_beats_a_field_that_merely_contains_the_word() {
+        let bodies = [r#"{"record_count": 3, "total_count": 90}"#];
+        assert_eq!(
+            role_field(&bodies, PaginationRole::Total),
+            Some("total_count".to_string())
+        );
+    }
+
+    #[test]
+    fn an_account_number_is_not_a_total_count() {
+        // "account" contains "count"; substring matching duly picked this as the
+        // total and drove the generated pagination template off a customer's
+        // account number.
+        let bodies = [r#"{"account_number": 84021, "items": []}"#];
+        assert_eq!(role_field(&bodies, PaginationRole::Total), None);
+    }
+
+    #[test]
+    fn a_name_splits_into_words_however_it_is_cased() {
+        assert_eq!(name_components("total_count"), ["total", "count"]);
+        assert_eq!(name_components("totalCount"), ["total", "count"]);
+        assert_eq!(name_components("total-count"), ["total", "count"]);
+        assert_eq!(name_components("HTTPStatus"), ["h", "t", "t", "p", "status"]);
+        assert!(name_components("").is_empty());
+    }
+
+    #[test]
+    fn a_total_must_be_a_non_negative_whole_number() {
+        assert_eq!(
+            role_field(&[r#"{"total": "many"}"#], PaginationRole::Total),
+            None,
+            "a string is an identifier, not a count"
+        );
+        assert_eq!(
+            role_field(&[r#"{"total": -1}"#], PaginationRole::Total),
+            None
+        );
+        assert_eq!(
+            role_field(&[r#"{"total": 0}"#], PaginationRole::Total),
+            Some("total".to_string())
+        );
+    }
+
+    #[test]
+    fn a_field_missing_from_a_later_page_cannot_drive_pagination() {
+        let bodies = [
+            r#"{"total_count": 9, "offset": 0}"#,
+            r#"{"offset": 10}"#, // second page dropped the total
+        ];
+        assert_eq!(role_field(&bodies, PaginationRole::Total), None);
+        assert_eq!(
+            role_field(&bodies, PaginationRole::Offset),
+            Some("offset".to_string())
+        );
+    }
+
+    #[test]
+    fn a_null_marker_on_the_last_page_still_counts() {
+        let bodies = [
+            r#"{"next_marker": "abc", "total_count": 9}"#,
+            r#"{"next_marker": null, "total_count": 9}"#,
+        ];
+        assert_eq!(
+            role_field(&bodies, PaginationRole::Next),
+            Some("next_marker".to_string())
+        );
+    }
+
+    #[test]
+    fn has_more_must_actually_be_a_boolean() {
+        assert_eq!(
+            role_field(&[r#"{"more_info": "see docs"}"#], PaginationRole::HasMore),
+            None
+        );
+        assert_eq!(
+            role_field(&[r#"{"has_more": true}"#], PaginationRole::HasMore),
+            Some("has_more".to_string())
+        );
+    }
+
+    #[test]
+    fn the_shortest_fuzzy_candidate_wins_regardless_of_map_order() {
+        let bodies = [r#"{"grand_total_of_items": 5, "totals": 7}"#];
+        assert_eq!(
+            role_field(&bodies, PaginationRole::Total),
+            Some("totals".to_string())
+        );
+    }
+
+    // -- Static query parameter extraction --
+
+    fn static_params(next_url: &str) -> String {
+        let owned = objects(&[&format!(r#"{{"next": "{next_url}"}}"#)]);
+        let refs: Vec<&serde_json::Map<String, JsonValue>> = owned.iter().collect();
+        let analysis = crate::consolidator::pattern::PatternDetector::analyze_query_param_variations(
+            &[],
+        );
+        ResponseAnalyzer::extract_static_query_params(
+            &refs,
+            Some(&"next".to_string()),
+            None,
+            &analysis,
+        )
+    }
+
+    #[test]
+    fn a_value_containing_an_equals_sign_survives_extraction() {
+        // Splitting on '=' by hand truncated this to "filter".
+        let params = static_params("https://api.example.com/items?filter=a%3Db&limit=10");
+        assert_eq!(params, "filter=a%3Db");
+    }
+
+    #[test]
+    fn pagination_parameters_are_dropped_and_the_rest_kept() {
+        let params = static_params("https://api.example.com/items?fields=name&offset=20&limit=10");
+        assert_eq!(params, "fields=name");
+    }
+
+    #[test]
+    fn a_url_of_only_pagination_parameters_yields_nothing() {
+        let params = static_params("https://api.example.com/items?offset=20&limit=10");
+        assert_eq!(params, "");
     }
 }

@@ -532,6 +532,7 @@ async fn test_min_pattern_threshold() {
         min_pattern_threshold: 3,
         enable_stateful_pagination: true,
         pagination_storage_key_template: "api.{path}.total".to_string(),
+        ..ConsolidatorOptions::default()
     };
 
     let mut consolidator = MockConsolidator::with_options(options);
@@ -575,6 +576,7 @@ async fn test_disable_consolidation() {
         min_pattern_threshold: 3,
         enable_stateful_pagination: true,
         pagination_storage_key_template: "api.{path}.total".to_string(),
+        ..ConsolidatorOptions::default()
     };
 
     let mut consolidator = MockConsolidator::with_options(options);
