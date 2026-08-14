@@ -353,6 +353,26 @@ pub fn detect_from_semantic_context(
         });
 
         if all_large_integers {
+            // An id the recording held as a JSON number has to be generated as
+            // one. `NumericStringId` renders quoted, so returning it here turns
+            // `"id": 9848115997` into `"id": "9848115997"` -- a different shape
+            // from the one recorded, and a client that reads it as a number
+            // gets a string instead.
+            if values.iter().all(|value| value.is_number()) {
+                let bounds = values.iter().filter_map(|value| value.as_i64());
+                let (min, max) = bounds.fold((i64::MAX, i64::MIN), |(low, high), id| {
+                    (low.min(id), high.max(id))
+                });
+                if min <= max {
+                    return Some((
+                        FieldType::RandomNumber {
+                            min: Some(min),
+                            max: Some(max),
+                        },
+                        0.95,
+                    ));
+                }
+            }
             return Some((FieldType::NumericStringId, 0.95));
         }
     }
