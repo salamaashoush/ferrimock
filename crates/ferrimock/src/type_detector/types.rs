@@ -110,6 +110,14 @@ pub struct ArrayPattern {
     pub is_homogeneous: bool,
     /// Sample size for generating arrays
     pub sample_size_range: (usize, usize),
+    /// The type of each position of a representative recorded array, used when
+    /// the elements are not all the same shape.
+    ///
+    /// A listing mixes kinds -- a file carries `extension`, a folder carries
+    /// `fileCount` -- and neither one element type nor an empty array can stand
+    /// for that. Keeping the shapes in the order they were recorded lets the
+    /// template answer with the same sequence of kinds.
+    pub element_shapes: Vec<FieldType>,
 }
 
 /// Analysis of nested object structures

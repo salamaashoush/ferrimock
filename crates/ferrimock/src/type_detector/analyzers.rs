@@ -134,6 +134,11 @@ pub(super) fn analyze_floats(floats: &[f64]) -> (FieldType, f64) {
     (FieldType::RandomFloat { min, max }, 0.8)
 }
 
+/// Positions kept when an array's elements are not all the same shape.
+/// Real listings run to hundreds; the fidelity check probes the head, and a
+/// template that spelled out every element would be unreadable.
+const MAX_MIXED_ELEMENTS: usize = 12;
+
 /// Analyze array patterns to detect homogeneous structures
 pub(super) fn analyze_array_pattern<F>(
     values: &[&JsonValue],
@@ -150,6 +155,7 @@ where
                 element_type: FieldType::RandomString,
                 is_homogeneous: false,
                 sample_size_range: (0, 0),
+                element_shapes: Vec::new(),
             })),
             0.5,
         );
@@ -167,6 +173,7 @@ where
                 element_type: FieldType::RandomString,
                 is_homogeneous: true,
                 sample_size_range: (0, 0),
+                element_shapes: Vec::new(),
             })),
             1.0,
         );
@@ -189,6 +196,7 @@ where
                 element_type: FieldType::RandomString,
                 is_homogeneous: false,
                 sample_size_range: (min_size, max_size),
+                element_shapes: Vec::new(),
             })),
             0.5,
         );
@@ -197,21 +205,59 @@ where
     // Detect type from the larger, more representative sample
     let (element_type, confidence) = detect_type_from_values(&element_samples);
 
-    // Check if all elements have same type (homogeneous)
-    let is_homogeneous = arrays.iter().all(|arr| {
-        if arr.is_empty() {
-            return true;
-        }
-        let sample: Vec<&JsonValue> = arr.iter().take(5).collect();
-        let (detected, _) = detect_type_from_values(&sample);
-        std::mem::discriminant(&detected) == std::mem::discriminant(&element_type)
-    });
+    // Whether the elements are the same shape, not merely the same kind. Two
+    // objects are both `FieldType::Object` however little they have in common,
+    // so comparing the detected type would call a listing of files and folders
+    // homogeneous and then answer every element with the union of their fields.
+    let shape_of = |value: &JsonValue| -> Option<Vec<String>> {
+        value.as_object().map(|fields| {
+            let mut names: Vec<String> = fields.keys().cloned().collect();
+            names.sort_unstable();
+            names
+        })
+    };
+
+    let mut shapes = element_samples.iter().filter_map(|value| shape_of(value));
+    let first_shape = shapes.next();
+    let objects_agree = match first_shape {
+        Some(ref first) => shapes.all(|shape| shape == *first),
+        // Nothing object-shaped to disagree about.
+        None => true,
+    };
+
+    let is_homogeneous = objects_agree
+        && arrays.iter().all(|arr| {
+            if arr.is_empty() {
+                return true;
+            }
+            let sample: Vec<&JsonValue> = arr.iter().take(5).collect();
+            let (detected, _) = detect_type_from_values(&sample);
+            std::mem::discriminant(&detected) == std::mem::discriminant(&element_type)
+        });
+
+    // A mixed array is answered position by position, from the longest
+    // recording -- the one that shows the most of the sequence.
+    let element_shapes = if is_homogeneous {
+        Vec::new()
+    } else {
+        arrays
+            .iter()
+            .max_by_key(|arr| arr.len())
+            .map(|arr| {
+                arr.iter()
+                    .take(MAX_MIXED_ELEMENTS)
+                    .map(|element| detect_type_from_values(&[element]).0)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
 
     (
         FieldType::Array(Box::new(ArrayPattern {
             element_type,
             is_homogeneous,
             sample_size_range: (min_size, max_size),
+            element_shapes,
         })),
         confidence,
     )

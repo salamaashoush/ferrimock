@@ -20,7 +20,7 @@ pub(super) fn generate_tera_array(pattern: &ArrayPattern) -> String {
     let (min, max) = pattern.sample_size_range;
 
     if !pattern.is_homogeneous {
-        return "[]".to_string();
+        return generate_mixed_elements(pattern);
     }
 
     let element_expr = field_type_to_tera_expr("element", &pattern.element_type, false);
@@ -56,10 +56,32 @@ pub(super) fn generate_tera_array(pattern: &ArrayPattern) -> String {
     }
 }
 
+/// Answer an array whose elements are not all the same shape.
+///
+/// A mixed listing used to be answered with `[]`, which drops every element the
+/// recording carried and fails shape equality for the whole response. Spelling
+/// the positions out keeps the sequence of kinds that was recorded -- a file
+/// where a file was, a folder where a folder was -- while still generating
+/// their values. With no shapes to go on there is nothing better than the empty
+/// array.
+fn generate_mixed_elements(pattern: &ArrayPattern) -> String {
+    if pattern.element_shapes.is_empty() {
+        return "[]".to_string();
+    }
+
+    let elements: Vec<String> = pattern
+        .element_shapes
+        .iter()
+        .map(|shape| field_type_to_tera_expr("element", shape, false))
+        .collect();
+
+    format!("[\n        {}\n      ]", elements.join(",\n        "))
+}
+
 /// Generate Tera array template that uses `limit` for pagination results
 pub(super) fn generate_tera_array_with_limit(pattern: &ArrayPattern) -> String {
     if !pattern.is_homogeneous {
-        return "[]".to_string();
+        return generate_mixed_elements(pattern);
     }
 
     let element_expr = field_type_to_tera_expr("element", &pattern.element_type, false);
@@ -172,6 +194,42 @@ mod tests {
     use crate::type_detector::{ArrayPattern, FieldType};
 
     #[test]
+    fn a_mixed_array_keeps_the_kinds_it_recorded() {
+        // A listing of two different kinds. Answering `[]` would drop both and
+        // fail shape equality for the whole response.
+        let pattern = ArrayPattern {
+            element_type: FieldType::RandomString,
+            is_homogeneous: false,
+            sample_size_range: (2, 2),
+            element_shapes: vec![FieldType::Email, FieldType::Uuid],
+        };
+
+        let template = generate_tera_array(&pattern);
+
+        assert_ne!(template.trim(), "[]", "a mixed array must not answer empty");
+        assert!(
+            template.contains("fake_email") && template.contains("uuid"),
+            "each recorded position should keep its own kind, got: {template}"
+        );
+
+        // The paginated form has to agree; it is the same array.
+        let paginated = generate_tera_array_with_limit(&pattern);
+        assert_ne!(paginated.trim(), "[]");
+    }
+
+    #[test]
+    fn a_mixed_array_with_nothing_to_go_on_is_still_empty() {
+        let pattern = ArrayPattern {
+            element_type: FieldType::RandomString,
+            is_homogeneous: false,
+            sample_size_range: (0, 0),
+            element_shapes: Vec::new(),
+        };
+
+        assert_eq!(generate_tera_array(&pattern).trim(), "[]");
+    }
+
+    #[test]
     fn test_generate_tera_array_prevents_empty_range() {
         // Test case that previously caused panic: min=0, max=1
         // This would result in start=1, end=1 which causes get_random to panic
@@ -179,6 +237,7 @@ mod tests {
             element_type: FieldType::RandomString,
             is_homogeneous: true,
             sample_size_range: (0, 1),
+            element_shapes: Vec::new(),
         };
 
         let template = generate_tera_array(&pattern);
@@ -197,6 +256,7 @@ mod tests {
             element_type: FieldType::RandomString,
             is_homogeneous: true,
             sample_size_range: (1, 1),
+            element_shapes: Vec::new(),
         };
 
         let template = generate_tera_array(&pattern);
@@ -215,6 +275,7 @@ mod tests {
             element_type: FieldType::RandomString,
             is_homogeneous: true,
             sample_size_range: (2, 10),
+            element_shapes: Vec::new(),
         };
 
         let template = generate_tera_array(&pattern);
@@ -233,6 +294,7 @@ mod tests {
             element_type: FieldType::RandomString,
             is_homogeneous: true,
             sample_size_range: (0, 5),
+            element_shapes: Vec::new(),
         };
 
         let template = generate_tera_array(&pattern);
@@ -251,6 +313,7 @@ mod tests {
             element_type: FieldType::RandomString,
             is_homogeneous: true,
             sample_size_range: (5, 100),
+            element_shapes: Vec::new(),
         };
 
         let template = generate_tera_array(&pattern);
@@ -272,6 +335,7 @@ mod tests {
             })),
             is_homogeneous: true,
             sample_size_range: (1, 5),
+            element_shapes: Vec::new(),
         };
 
         let template = generate_tera_array(&pattern);
