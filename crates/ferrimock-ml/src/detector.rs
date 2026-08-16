@@ -53,7 +53,7 @@ pub fn kind_of(field_type: &FieldType) -> &'static str {
         FieldType::ETag => "etag",
         FieldType::MimeType => "mime_type",
         FieldType::RandomString => "random_string",
-        FieldType::Boolean => "boolean",
+        FieldType::Boolean { .. } => "boolean",
         FieldType::Constant(_) => "constant",
         FieldType::Array(_) => "array",
         FieldType::Object(_) => "object",

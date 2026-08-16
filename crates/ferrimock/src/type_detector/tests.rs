@@ -1569,7 +1569,7 @@ mod found_by_audit {
         ] {
             let detected = detect("is_active", &values);
             assert!(
-                matches!(&detected, FieldType::Stringified(inner) if **inner == FieldType::Boolean),
+                matches!(&detected, FieldType::Stringified(inner) if matches!(**inner, FieldType::Boolean { .. })),
                 "{values:?} was read as {detected:?}, not a flag written as text"
             );
         }
@@ -1581,7 +1581,7 @@ mod found_by_audit {
         // flag, there is nothing here to say which was meant.
         assert!(!matches!(
             detect("country", &[json!("no"), json!("se"), json!("dk")]),
-            FieldType::Boolean
+            FieldType::Boolean { .. }
         ));
     }
 
@@ -1639,28 +1639,88 @@ mod found_by_audit {
     }
 
     #[test]
+    fn a_flag_spelled_both_ways_at_once_is_still_a_flag() {
+        // The same field comes back `True` in one response and `1` in the next.
+        // The word list had no digits and the name rule wants every value
+        // binary, so a field spelled both ways fell between them.
+        for values in [
+            vec![json!("True"), json!("1")],
+            vec![json!("1"), json!("yes")],
+            vec![json!("true"), json!("0")],
+        ] {
+            let detected = detect("can_edit", &values);
+            assert!(
+                matches!(&detected, FieldType::Stringified(inner)
+                    if matches!(**inner, FieldType::Boolean { .. })),
+                "{values:?} was read as {detected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_digit_is_a_number_unless_the_name_says_otherwise() {
+        // `1` and `0` are a count as readily as a flag, and nothing in the
+        // values can settle it. Only a name that says flag may.
+        assert!(!matches!(
+            detect("retry_count", &[json!("1"), json!("0")]),
+            FieldType::Boolean { .. } | FieldType::Stringified(_)
+        ));
+        assert!(matches!(
+            detect("is_default", &[json!("1"), json!("0")]),
+            FieldType::Stringified(inner) if matches!(*inner, FieldType::Boolean { .. })
+        ));
+    }
+
+    #[test]
+    fn a_flag_keeps_the_spelling_the_field_used() {
+        // A field of `"1"`s answered `"true"` is the right class and a value the
+        // client cannot parse.
+        let detected = detect("is_default", &[json!("1"), json!("0")]);
+        let FieldType::Stringified(inner) = &detected else {
+            panic!("expected text, got {detected:?}");
+        };
+        assert!(matches!(
+            **inner,
+            FieldType::Boolean {
+                spelling: crate::type_detector::BooleanSpelling::Digit
+            }
+        ));
+
+        let worded = detect("is_active", &[json!("yes"), json!("no")]);
+        let FieldType::Stringified(inner) = &worded else {
+            panic!("expected text, got {worded:?}");
+        };
+        assert!(matches!(
+            **inner,
+            FieldType::Boolean {
+                spelling: crate::type_detector::BooleanSpelling::YesNo
+            }
+        ));
+    }
+
+    #[test]
     fn a_flag_spelled_as_a_number_is_decided_by_its_name() {
         // `1` and `0` cannot be told from a count by looking at them, so the
         // name is the whole evidence -- and both halves have to hold.
         assert!(matches!(
             detect("is_default", &[json!("1"), json!("0")]),
-            FieldType::Stringified(inner) if *inner == FieldType::Boolean
+            FieldType::Stringified(inner) if matches!(*inner, FieldType::Boolean { .. })
         ));
         assert!(matches!(
             detect("has_more", &[json!(1), json!(0)]),
-            FieldType::Boolean
+            FieldType::Boolean { .. }
         ));
         assert!(
             !matches!(
                 detect("total_count", &[json!(1), json!(0)]),
-                FieldType::Boolean
+                FieldType::Boolean { .. }
             ),
             "a count that happens to be one or zero is still a count"
         );
         assert!(
             !matches!(
                 detect("is_default", &[json!(7), json!(42)]),
-                FieldType::Boolean
+                FieldType::Boolean { .. }
             ),
             "a flag-shaped name over values that are not binary is not a flag"
         );

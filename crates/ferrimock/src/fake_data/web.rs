@@ -7,6 +7,15 @@ use rand::RngExt;
 use rand::seq::IndexedRandom;
 
 /// Generate a random boolean value
+/// Draw a flag written the way the field wrote it.
+///
+/// The JSON spelling is the bare `true`; every other spelling is text, and a
+/// client parsing `"1"` will not accept `"true"` in its place.
+pub fn fake_boolean_spelled(spelling: crate::type_detector::BooleanSpelling) -> String {
+    let (falsy, truthy) = spelling.pair();
+    if fake_boolean() { truthy } else { falsy }.to_string()
+}
+
 pub fn fake_boolean() -> bool {
     rng().random_bool(0.5)
 }

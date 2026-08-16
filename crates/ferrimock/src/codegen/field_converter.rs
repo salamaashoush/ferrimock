@@ -153,7 +153,12 @@ pub fn field_type_to_tera_expr(field_name: &str, field_type: &FieldType) -> Stri
         FieldType::Semver => "\"{{ fake_semver() }}\"".to_string(),
 
         // Boolean type
-        FieldType::Boolean => "{{ fake_boolean() }}".to_string(),
+        // A flag keeps the spelling the field used. A `"1"` answered `"true"`
+        // is the right class and a value the client cannot parse.
+        FieldType::Boolean { spelling } => match spelling {
+            crate::type_detector::BooleanSpelling::TrueFalse => "{{ fake_boolean() }}".to_string(),
+            other => format!("{{{{ fake_boolean(spelling='{}') }}}}", other.name()),
+        },
 
         // Constant value
         FieldType::Constant(value) => {

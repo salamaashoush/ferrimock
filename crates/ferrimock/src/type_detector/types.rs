@@ -75,6 +75,75 @@ impl DateFormat {
     }
 }
 
+/// How a flag is written.
+///
+/// Same reason as [`DateFormat`]: JSON has a boolean and half the APIs in the
+/// world do not use it. A field of `"1"`s answered `"true"` is the right class
+/// and a value the client cannot parse, which is the defect the class was
+/// supposed to prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BooleanSpelling {
+    /// A JSON `true`, or the word in lower case.
+    #[default]
+    TrueFalse,
+    /// `True` / `False`
+    TitleTrueFalse,
+    /// `TRUE` / `FALSE`
+    UpperTrueFalse,
+    /// `yes` / `no`
+    YesNo,
+    /// `Y` / `N`
+    YN,
+    /// `on` / `off`
+    OnOff,
+    /// `1` / `0`
+    Digit,
+}
+
+impl BooleanSpelling {
+    /// The name a template passes to the generator.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::TrueFalse => "true_false",
+            Self::TitleTrueFalse => "title",
+            Self::UpperTrueFalse => "upper",
+            Self::YesNo => "yes_no",
+            Self::YN => "y_n",
+            Self::OnOff => "on_off",
+            Self::Digit => "digit",
+        }
+    }
+
+    /// Which spelling a value is written in, if it spells a flag at all.
+    pub fn of(value: &str) -> Option<Self> {
+        match value.trim() {
+            "true" | "false" | "t" | "f" => Some(Self::TrueFalse),
+            "True" | "False" => Some(Self::TitleTrueFalse),
+            "TRUE" | "FALSE" => Some(Self::UpperTrueFalse),
+            "1" | "0" => Some(Self::Digit),
+            other => match other.to_lowercase().as_str() {
+                "yes" | "no" => Some(Self::YesNo),
+                "y" | "n" => Some(Self::YN),
+                "on" | "off" => Some(Self::OnOff),
+                _ => None,
+            },
+        }
+    }
+
+    /// The pair this spelling writes, falsy first.
+    pub fn pair(self) -> (&'static str, &'static str) {
+        match self {
+            Self::TrueFalse => ("false", "true"),
+            Self::TitleTrueFalse => ("False", "True"),
+            Self::UpperTrueFalse => ("FALSE", "TRUE"),
+            Self::YesNo => ("no", "yes"),
+            Self::YN => ("N", "Y"),
+            Self::OnOff => ("off", "on"),
+            Self::Digit => ("0", "1"),
+        }
+    }
+}
+
 /// How a moment in time is written.
 ///
 /// Same reason as [`DateFormat`]: a field holding `Sun, 17 Mar 2024 09:41:22 GMT`
@@ -213,8 +282,8 @@ pub enum FieldType {
     MimeType,
     /// Random string (no clear pattern)
     RandomString,
-    /// Boolean value that varies
-    Boolean,
+    /// Boolean value that varies, in the spelling the field used
+    Boolean { spelling: BooleanSpelling },
     /// Constant value (same across all responses)
     Constant(JsonValue),
     /// Array of items with homogeneous structure
@@ -286,7 +355,7 @@ impl FieldType {
                 | Self::FileSize
                 | Self::Latitude
                 | Self::Longitude
-                | Self::Boolean
+                | Self::Boolean { .. }
         )
     }
 }

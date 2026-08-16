@@ -37,8 +37,8 @@ pub mod types;
 pub use features::TypeFeatures;
 pub use semantic::{detect_from_field_name_only, detect_from_semantic_context};
 pub use types::{
-    ArrayPattern, DateFormat, FieldType, ObjectAnalysis, PaginationDirection, PaginationScheme,
-    PaginationUrlPattern, TimestampFormat,
+    ArrayPattern, BooleanSpelling, DateFormat, FieldType, ObjectAnalysis, PaginationDirection,
+    PaginationScheme, PaginationUrlPattern, TimestampFormat,
 };
 
 use serde_json::Value as JsonValue;
@@ -227,7 +227,12 @@ impl TypeDetector {
         }
 
         if values.iter().all(|v| v.is_boolean()) {
-            return (FieldType::Boolean, 1.0);
+            return (
+                FieldType::Boolean {
+                    spelling: BooleanSpelling::default(),
+                },
+                1.0,
+            );
         }
 
         if values.iter().all(|v| v.is_array()) {
@@ -295,6 +300,11 @@ fn refine(field_type: FieldType, values: &[&str]) -> FieldType {
     }
 
     match field_type {
+        // A flag keeps the spelling it was written in, for the same reason a
+        // date keeps its format.
+        FieldType::Boolean { .. } => FieldType::Boolean {
+            spelling: agreed(values, BooleanSpelling::of).unwrap_or_default(),
+        },
         FieldType::IsoDate { .. } => FieldType::IsoDate {
             format: agreed(values, DateFormat::of).unwrap_or_default(),
         },

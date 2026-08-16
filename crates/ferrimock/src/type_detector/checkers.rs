@@ -3,7 +3,7 @@
 use super::DetectionContext;
 use super::constants::*;
 use super::features::TypeFeatures;
-use super::types::{DateFormat, FieldType, TimestampFormat};
+use super::types::{BooleanSpelling, DateFormat, FieldType, TimestampFormat};
 
 /// Type checker entry for data-driven pattern detection
 pub(super) struct TypeChecker {
@@ -61,7 +61,9 @@ pub(super) fn get_checkers() -> Vec<TypeChecker> {
             name: "BooleanWords",
             checker_fn: check_boolean_words,
             threshold: CONFIDENCE_BOOLEAN_WORDS,
-            field_type: FieldType::Boolean,
+            field_type: FieldType::Boolean {
+                spelling: BooleanSpelling::default(),
+            },
         },
         TypeChecker {
             name: "NumericStringId",
@@ -1135,6 +1137,9 @@ const BOOLEAN_WORDS: [&str; 10] = [
     "true", "false", "yes", "no", "y", "n", "t", "f", "on", "off",
 ];
 
+/// The two digits a flag is written as when it is not written as a word.
+const BINARY_DIGITS: [&str; 2] = ["0", "1"];
+
 /// Words that spell a flag and nothing else.
 ///
 /// `no` is Norway and `n` is anybody's guess, so a lone one of those is not
@@ -1159,9 +1164,20 @@ pub(super) fn check_boolean_words(
     }
 
     let lowered: Vec<String> = values.iter().map(|s| s.to_lowercase()).collect();
-    if !lowered
+    // A flag is not always spelled the same way twice: the same field comes back
+    // `True` in one response and `1` in the next. Neither path caught that --
+    // the word list has no digits, and the name-based rule wants every value
+    // binary -- so a field spelled both ways read as unstructured text.
+    let spelled_as_flag =
+        |value: &str| BOOLEAN_WORDS.contains(&value) || BINARY_DIGITS.contains(&value);
+    if !lowered.iter().all(|value| spelled_as_flag(value)) {
+        return None;
+    }
+    // On their own, `1` and `0` are a count as readily as a flag. Only the name
+    // can settle that, and `names_a_flag` already does.
+    if lowered
         .iter()
-        .all(|value| BOOLEAN_WORDS.contains(&value.as_str()))
+        .all(|value| BINARY_DIGITS.contains(&value.as_str()))
     {
         return None;
     }
@@ -1173,10 +1189,10 @@ pub(super) fn check_boolean_words(
         .any(|value| UNAMBIGUOUS_BOOLEAN_WORDS.contains(&value.as_str()));
     let truthy = lowered
         .iter()
-        .any(|value| matches!(value.as_str(), "true" | "yes" | "y" | "t" | "on"));
+        .any(|value| matches!(value.as_str(), "true" | "yes" | "y" | "t" | "on" | "1"));
     let falsy = lowered
         .iter()
-        .any(|value| matches!(value.as_str(), "false" | "no" | "n" | "f" | "off"));
+        .any(|value| matches!(value.as_str(), "false" | "no" | "n" | "f" | "off" | "0"));
 
     if unambiguous || (truthy && falsy) {
         Some(1.0)

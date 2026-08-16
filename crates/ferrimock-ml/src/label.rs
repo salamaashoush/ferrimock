@@ -172,7 +172,9 @@ impl FieldLabel {
             Self::NumericStringId => FieldType::NumericStringId,
             Self::Token => FieldType::Token,
             Self::ETag => FieldType::ETag,
-            Self::Boolean => FieldType::Boolean,
+            Self::Boolean => FieldType::Boolean {
+                spelling: ferrimock::type_detector::BooleanSpelling::default(),
+            },
             Self::Number => FieldType::RandomNumber {
                 min: None,
                 max: None,
@@ -221,7 +223,7 @@ impl FieldLabel {
             FieldType::NumericStringId => Self::NumericStringId,
             FieldType::Token => Self::Token,
             FieldType::ETag => Self::ETag,
-            FieldType::Boolean => Self::Boolean,
+            FieldType::Boolean { .. } => Self::Boolean,
             FieldType::SequentialNumber { .. }
             | FieldType::RandomNumber { .. }
             | FieldType::RandomFloat { .. }

@@ -370,7 +370,13 @@ pub fn detect_from_semantic_context(
             _ => false,
         });
         if all_binary && !values.is_empty() {
-            return Some((FieldType::Boolean, 0.9));
+            // `1` and `0` written as text stay written that way.
+            let spelling = values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .find_map(super::types::BooleanSpelling::of)
+                .unwrap_or_default();
+            return Some((FieldType::Boolean { spelling }, 0.9));
         }
     }
 

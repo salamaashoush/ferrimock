@@ -431,8 +431,25 @@ fn build_registry() -> HashMap<&'static str, Generator> {
     });
 
     // ========== Web-Specific ==========
-    register("fake_boolean", |_: &Args| -> Result<Value> {
-        Ok(Value::from(crate::fake_data::web::fake_boolean()))
+    // Without a spelling this is the JSON boolean. With one it is text, because
+    // that is what the field held.
+    register("fake_boolean", |args: &Args| -> Result<Value> {
+        use crate::type_detector::BooleanSpelling;
+        let Some(spelling) = args.get("spelling").and_then(Value::as_str) else {
+            return Ok(Value::from(crate::fake_data::web::fake_boolean()));
+        };
+        let spelling = match spelling {
+            "title" => BooleanSpelling::TitleTrueFalse,
+            "upper" => BooleanSpelling::UpperTrueFalse,
+            "yes_no" => BooleanSpelling::YesNo,
+            "y_n" => BooleanSpelling::YN,
+            "on_off" => BooleanSpelling::OnOff,
+            "digit" => BooleanSpelling::Digit,
+            _ => BooleanSpelling::TrueFalse,
+        };
+        Ok(Value::from(crate::fake_data::web::fake_boolean_spelled(
+            spelling,
+        )))
     });
 
     register("fake_filename", |_: &Args| -> Result<Value> {
