@@ -572,12 +572,12 @@ impl MockGenerator {
                 .context("Expected at least one possible type")?;
             let concrete_type = self
                 .schema
-                .get_type(&type_ref.name)
-                .with_context(|| format!("Unknown type: {}", type_ref.name))?;
+                .get_type(type_ref.name())
+                .with_context(|| format!("Unknown type: {}", type_ref.name()))?;
 
             return self.generate_object_with_typename(
                 concrete_type,
-                &type_ref.name,
+                type_ref.name(),
                 depth,
                 visited,
                 variables,
@@ -592,7 +592,7 @@ impl MockGenerator {
         // Build array of type names for random selection
         let type_names: Vec<String> = possible_types
             .iter()
-            .map(|t| format!("\"{}\"", t.name))
+            .map(|t| format!("\"{}\"", t.name()))
             .collect();
         template.push_str(&type_names.join(", "));
         template.push_str("] | random_choice %}\n");
@@ -602,22 +602,22 @@ impl MockGenerator {
         for (i, type_ref) in possible_types.iter().enumerate() {
             let concrete_type = self
                 .schema
-                .get_type(&type_ref.name)
-                .with_context(|| format!("Unknown type: {}", type_ref.name))?;
+                .get_type(type_ref.name())
+                .with_context(|| format!("Unknown type: {}", type_ref.name()))?;
 
             if i == 0 {
                 template.push_str("{% if __union_type == \"");
             } else {
                 template.push_str("{% elif __union_type == \"");
             }
-            template.push_str(&type_ref.name);
+            template.push_str(type_ref.name());
             template.push_str("\" %}\n");
             template.push_str(&indent);
 
             // Generate the object template for this type with __typename
             let obj_template = self.generate_object_with_typename(
                 concrete_type,
-                &type_ref.name,
+                type_ref.name(),
                 depth,
                 visited,
                 variables,

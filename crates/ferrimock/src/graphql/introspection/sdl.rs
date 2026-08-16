@@ -7,6 +7,33 @@ use std::fmt::Write;
 
 use super::types::*;
 
+/// Escape a value for a single-line GraphQL string.
+///
+/// A description is a normal string, so an unescaped `"` inside one ends it
+/// early and the rest of the line becomes syntax. Generators that interpolate
+/// descriptions straight into the output produce SDL no conforming parser
+/// accepts — `"The MIME type (e.g., "text/plain")."` is rejected by graphql-js
+/// too, not just by ours.
+fn escape_string_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str(r"\\"),
+            '"' => out.push_str("\\\""),
+            '\t' => out.push_str(r"\t"),
+            '\r' => out.push_str(r"\r"),
+            '\n' => out.push_str(r"\n"),
+            '\u{8}' => out.push_str(r"\b"),
+            '\u{c}' => out.push_str(r"\f"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04X}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Built-in scalar types that should be excluded from SDL output
 const BUILTIN_SCALARS: &[&str] = &["ID", "String", "Int", "Float", "Boolean"];
 
@@ -116,13 +143,15 @@ impl SdlWriter {
                 return;
             }
             if desc.contains('\n') {
+                // A block string ends at the first unescaped `"""`, so a
+                // description containing one has to escape it.
                 let _ = writeln!(self.buf, "{indent}\"\"\"");
                 for line in desc.lines() {
-                    let _ = writeln!(self.buf, "{indent}{line}");
+                    let _ = writeln!(self.buf, "{indent}{}", line.replace(r#"""""#, r#"\""""#));
                 }
                 let _ = writeln!(self.buf, "{indent}\"\"\"");
             } else {
-                let _ = writeln!(self.buf, "{indent}\"{desc}\"");
+                let _ = writeln!(self.buf, "{indent}\"{}\"", escape_string_value(desc));
             }
         }
     }
@@ -143,7 +172,7 @@ impl SdlWriter {
         // Interfaces
         if !type_def.interfaces.is_empty() {
             self.buf.push_str(" implements ");
-            let ifaces: Vec<String> = type_def.interfaces.iter().map(|i| i.name.clone()).collect();
+            let ifaces: Vec<String> = type_def.interfaces.iter().map(|i| i.name().to_string()).collect();
             self.buf.push_str(&ifaces.join(" & "));
         }
 
@@ -264,7 +293,7 @@ impl SdlWriter {
         let members: Vec<&str> = type_def
             .possible_types
             .iter()
-            .map(|t| t.name.as_str())
+            .map(TypeRef::name)
             .collect();
         self.buf.push_str(&members.join(" | "));
         self.buf.push_str("\n\n");
@@ -1111,44 +1140,152 @@ mod tests {
 
     #[test]
     fn test_type_ref_display() {
-        let simple = TypeRef {
-            name: "String".to_string(),
-            is_non_null: false,
-            is_list: false,
-            inner_non_null: false,
-        };
-        assert_eq!(simple.to_string(), "String");
+        assert_eq!(TypeRef::named("String").to_string(), "String");
+        assert_eq!(TypeRef::named("String").non_null().to_string(), "String!");
+        assert_eq!(TypeRef::named("String").list().to_string(), "[String]");
+        assert_eq!(
+            TypeRef::named("String")
+                .non_null()
+                .list()
+                .non_null()
+                .to_string(),
+            "[String!]!"
+        );
+        assert_eq!(
+            TypeRef::named("User").non_null().list().to_string(),
+            "[User!]"
+        );
+        assert_eq!(
+            TypeRef::named("Int").list().list().to_string(),
+            "[[Int]]",
+            "inner list wrappers must survive"
+        );
+    }
+}
 
-        let non_null = TypeRef {
-            name: "String".to_string(),
-            is_non_null: true,
-            is_list: false,
-            inner_non_null: false,
-        };
-        assert_eq!(non_null.to_string(), "String!");
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::get_unwrap)]
+mod description_escaping_tests {
+    use super::*;
+    use crate::graphql::introspection::{FieldDefinition, ParsedSchema, TypeDefinition, TypeKind};
+    use rustc_hash::FxHashMap;
 
-        let list = TypeRef {
-            name: "String".to_string(),
-            is_non_null: false,
-            is_list: true,
-            inner_non_null: false,
-        };
-        assert_eq!(list.to_string(), "[String]");
+    fn schema_with_description(description: &str) -> ParsedSchema {
+        let mut types = FxHashMap::default();
+        types.insert(
+            "Thing".to_string(),
+            TypeDefinition {
+                kind: TypeKind::Object,
+                name: "Thing".to_string(),
+                description: None,
+                fields: vec![FieldDefinition {
+                    name: "mediaType".to_string(),
+                    description: Some(description.to_string()),
+                    args: Vec::new(),
+                    field_type: TypeRef::named("String"),
+                    is_deprecated: false,
+                    deprecation_reason: None,
+                }],
+                input_fields: Vec::new(),
+                interfaces: Vec::new(),
+                enum_values: Vec::new(),
+                possible_types: Vec::new(),
+            },
+        );
+        types.insert(
+            "Query".to_string(),
+            TypeDefinition {
+                kind: TypeKind::Object,
+                name: "Query".to_string(),
+                description: None,
+                fields: vec![FieldDefinition {
+                    name: "thing".to_string(),
+                    description: None,
+                    args: Vec::new(),
+                    field_type: TypeRef::named("Thing"),
+                    is_deprecated: false,
+                    deprecation_reason: None,
+                }],
+                input_fields: Vec::new(),
+                interfaces: Vec::new(),
+                enum_values: Vec::new(),
+                possible_types: Vec::new(),
+            },
+        );
+        ParsedSchema {
+            query_type: Some("Query".to_string()),
+            mutation_type: None,
+            subscription_type: None,
+            types,
+            directives: Vec::new(),
+        }
+    }
 
-        let non_null_list_of_non_null = TypeRef {
-            name: "String".to_string(),
-            is_non_null: true,
-            is_list: true,
-            inner_non_null: true,
-        };
-        assert_eq!(non_null_list_of_non_null.to_string(), "[String!]!");
+    /// The emitted SDL has to parse. It did not: a description carrying a
+    /// quote was interpolated raw, and every conforming parser rejected the
+    /// result — which is how a 597KB schema came to be unreadable.
+    #[test]
+    fn a_description_with_quotes_still_emits_parseable_sdl() {
+        let schema =
+            schema_with_description(r#"The MIME type of the content (e.g., "text/plain")."#);
+        let sdl = generate_sdl(&schema);
+        assert!(
+            sdl.contains(r#"\"text/plain\""#),
+            "the quotes should be escaped, got:\n{sdl}"
+        );
+        assert!(
+            async_graphql_parser::parse_schema(&sdl).is_ok(),
+            "emitted SDL must parse:\n{sdl}"
+        );
+    }
 
-        let list_of_non_null = TypeRef {
-            name: "User".to_string(),
-            is_non_null: false,
-            is_list: true,
-            inner_non_null: true,
-        };
-        assert_eq!(list_of_non_null.to_string(), "[User!]");
+    #[test]
+    fn a_description_with_a_backslash_survives() {
+        let schema = schema_with_description(r"A Windows path like C:\\Users");
+        let sdl = generate_sdl(&schema);
+        assert!(
+            async_graphql_parser::parse_schema(&sdl).is_ok(),
+            "emitted SDL must parse:\n{sdl}"
+        );
+    }
+
+    #[test]
+    fn a_description_with_control_characters_survives() {
+        let schema = schema_with_description("tab\there and bell\u{7}there");
+        let sdl = generate_sdl(&schema);
+        assert!(
+            async_graphql_parser::parse_schema(&sdl).is_ok(),
+            "emitted SDL must parse:\n{sdl}"
+        );
+    }
+
+    #[test]
+    fn a_multiline_description_containing_a_block_delimiter_survives() {
+        let schema = schema_with_description("first line\nhas a \"\"\" inside\nlast line");
+        let sdl = generate_sdl(&schema);
+        assert!(
+            async_graphql_parser::parse_schema(&sdl).is_ok(),
+            "emitted SDL must parse:\n{sdl}"
+        );
+    }
+
+    #[test]
+    fn the_description_still_says_what_it_said() {
+        let original = r#"The MIME type (e.g., "text/plain")."#;
+        let sdl = generate_sdl(&schema_with_description(original));
+        let reparsed = crate::spec::infer::graphql::parse_sdl(&sdl).unwrap();
+        let field = reparsed
+            .types
+            .get("Thing")
+            .unwrap()
+            .fields
+            .iter()
+            .find(|f| f.name == "mediaType")
+            .unwrap();
+        assert_eq!(
+            field.description.as_deref(),
+            Some(original),
+            "escaping must be reversible, not lossy"
+        );
     }
 }

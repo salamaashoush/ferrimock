@@ -205,101 +205,111 @@ pub struct DirectiveDefinition {
     pub args: Vec<InputValueDefinition>,
 }
 
-/// Type reference with wrappers (NON_NULL, LIST)
+/// Type reference, keeping every NON_NULL and LIST wrapper.
+///
+/// The wrappers nest arbitrarily (`[[String!]!]`), so they are represented as
+/// they are written rather than flattened into booleans: a flattened form
+/// cannot tell `[String!]` from `[String]!`, and loses inner lists entirely.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TypeRef {
-    /// The innermost type name
-    pub name: String,
-    /// Whether this is wrapped in NON_NULL
-    pub is_non_null: bool,
-    /// Whether this is wrapped in LIST (can be nested)
-    pub is_list: bool,
-    /// For nested lists: is the inner type non-null?
-    pub inner_non_null: bool,
+#[serde(rename_all = "camelCase")]
+pub enum TypeRef {
+    Named(String),
+    NonNull(Box<TypeRef>),
+    List(Box<TypeRef>),
 }
 
 impl TypeRef {
     /// Create a new type reference from introspection data
     pub fn from_introspection(intro: &TypeRefIntrospection) -> Self {
-        Self::unwrap_type(intro)
+        match intro.kind.as_str() {
+            "NON_NULL" => intro.of_type.as_ref().map_or_else(
+                || Self::Named(String::new()),
+                |of_type| Self::NonNull(Box::new(Self::from_introspection(of_type))),
+            ),
+            "LIST" => intro.of_type.as_ref().map_or_else(
+                || Self::List(Box::new(Self::Named(String::new()))),
+                |of_type| Self::List(Box::new(Self::from_introspection(of_type))),
+            ),
+            _ => Self::Named(intro.name.clone().unwrap_or_default()),
+        }
     }
 
-    /// Recursively unwrap NON_NULL and LIST wrappers
-    fn unwrap_type(intro: &TypeRefIntrospection) -> Self {
-        match intro.kind.as_str() {
-            "NON_NULL" => {
-                if let Some(of_type) = &intro.of_type {
-                    let mut inner = Self::unwrap_type(of_type);
-                    inner.is_non_null = true;
-                    inner
-                } else {
-                    Self {
-                        name: String::new(),
-                        is_non_null: true,
-                        is_list: false,
-                        inner_non_null: false,
-                    }
-                }
-            }
-            "LIST" => {
-                if let Some(of_type) = &intro.of_type {
-                    let mut inner = Self::unwrap_type(of_type);
-                    inner.is_list = true;
-                    // Check if the list item is non-null
-                    if of_type.kind == "NON_NULL" {
-                        inner.inner_non_null = true;
-                    }
-                    inner
-                } else {
-                    Self {
-                        name: String::new(),
-                        is_non_null: false,
-                        is_list: true,
-                        inner_non_null: false,
-                    }
-                }
-            }
-            _ => {
-                // Named type (SCALAR, OBJECT, etc.)
-                Self {
-                    name: intro.name.clone().unwrap_or_default(),
-                    is_non_null: false,
-                    is_list: false,
-                    inner_non_null: false,
-                }
-            }
+    /// Build a named type reference
+    pub fn named(name: impl Into<String>) -> Self {
+        Self::Named(name.into())
+    }
+
+    /// Wrap in NON_NULL
+    #[must_use]
+    pub fn non_null(self) -> Self {
+        Self::NonNull(Box::new(self))
+    }
+
+    /// Wrap in LIST
+    #[must_use]
+    pub fn list(self) -> Self {
+        Self::List(Box::new(self))
+    }
+
+    /// The innermost named type, with every wrapper stripped
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Named(name) => name,
+            Self::NonNull(inner) | Self::List(inner) => inner.name(),
+        }
+    }
+
+    /// Whether the outermost wrapper is NON_NULL
+    pub fn is_non_null(&self) -> bool {
+        matches!(self, Self::NonNull(_))
+    }
+
+    /// Whether this is a list once its own nullability is stripped
+    pub fn is_list(&self) -> bool {
+        match self {
+            Self::List(_) => true,
+            Self::NonNull(inner) => matches!(**inner, Self::List(_)),
+            Self::Named(_) => false,
+        }
+    }
+
+    /// For a list, whether its elements are non-null
+    pub fn inner_non_null(&self) -> bool {
+        match self {
+            Self::List(inner) => inner.is_non_null(),
+            Self::NonNull(inner) => inner.inner_non_null(),
+            Self::Named(_) => false,
+        }
+    }
+
+    /// The element type of a list, with the list wrapper removed
+    pub fn list_item(&self) -> Option<&Self> {
+        match self {
+            Self::List(inner) => Some(inner),
+            Self::NonNull(inner) => inner.list_item(),
+            Self::Named(_) => None,
         }
     }
 
     /// Get the unwrapped type information
     pub fn unwrap(&self) -> UnwrappedType {
         UnwrappedType {
-            name: self.name.clone(),
-            is_non_null: self.is_non_null,
-            is_list: self.is_list,
-            inner_non_null: self.inner_non_null,
+            name: self.name().to_string(),
+            is_non_null: self.is_non_null(),
+            is_list: self.is_list(),
+            inner_non_null: self.inner_non_null(),
         }
     }
 }
 
 impl fmt::Display for TypeRef {
-    /// Format as SDL type notation (e.g., `String!`, `[User!]!`, `[Int]`)
+    /// Format as SDL type notation (e.g., `String!`, `[User!]!`, `[[Int]]`)
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_list {
-            if self.inner_non_null {
-                write!(f, "[{}!]", self.name)?;
-            } else {
-                write!(f, "[{}]", self.name)?;
-            }
-        } else {
-            write!(f, "{}", self.name)?;
+        match self {
+            Self::Named(name) => write!(f, "{name}"),
+            Self::NonNull(inner) => write!(f, "{inner}!"),
+            Self::List(inner) => write!(f, "[{inner}]"),
         }
-
-        if self.is_non_null {
-            write!(f, "!")?;
-        }
-
-        Ok(())
     }
 }
 
@@ -327,5 +337,61 @@ impl OperationType {
             OperationType::Mutation => "mutation",
             OperationType::Subscription => "subscription",
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod type_ref_tests {
+    use super::*;
+
+    fn named(name: &str) -> TypeRefIntrospection {
+        TypeRefIntrospection {
+            kind: "SCALAR".to_string(),
+            name: Some(name.to_string()),
+            of_type: None,
+        }
+    }
+
+    fn wrap(kind: &str, inner: TypeRefIntrospection) -> TypeRefIntrospection {
+        TypeRefIntrospection {
+            kind: kind.to_string(),
+            name: None,
+            of_type: Some(Box::new(inner)),
+        }
+    }
+
+    #[test]
+    fn list_of_non_null_is_not_itself_non_null() {
+        let t = TypeRef::from_introspection(&wrap("LIST", wrap("NON_NULL", named("String"))));
+        assert_eq!(t.to_string(), "[String!]");
+        assert!(!t.is_non_null());
+        assert!(t.is_list());
+        assert!(t.inner_non_null());
+    }
+
+    #[test]
+    fn non_null_list_is_distinct_from_list_of_non_null() {
+        let t = TypeRef::from_introspection(&wrap("NON_NULL", wrap("LIST", named("String"))));
+        assert_eq!(t.to_string(), "[String]!");
+        assert!(t.is_non_null());
+        assert!(t.is_list());
+        assert!(!t.inner_non_null());
+    }
+
+    #[test]
+    fn nested_lists_survive() {
+        let t = TypeRef::from_introspection(&wrap("LIST", wrap("LIST", named("String"))));
+        assert_eq!(t.to_string(), "[[String]]");
+        assert_eq!(t.name(), "String");
+    }
+
+    #[test]
+    fn deeply_wrapped_round_trips() {
+        let t = TypeRef::from_introspection(&wrap(
+            "NON_NULL",
+            wrap("LIST", wrap("NON_NULL", wrap("LIST", wrap("NON_NULL", named("Int"))))),
+        ));
+        assert_eq!(t.to_string(), "[[Int!]!]!");
     }
 }

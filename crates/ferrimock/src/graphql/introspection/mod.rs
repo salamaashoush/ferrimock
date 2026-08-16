@@ -16,6 +16,7 @@ pub use parser::SchemaParser;
 pub use query::get_introspection_query;
 pub use sdl::generate_sdl;
 pub use types::{
-    EnumValueDefinition, FieldDefinition, InputValueDefinition, IntrospectionResponse,
-    OperationType, ParsedSchema, TypeDefinition, TypeKind, TypeRef, UnwrappedType,
+    DirectiveDefinition, EnumValueDefinition, FieldDefinition, InputValueDefinition,
+    IntrospectionResponse, OperationType, ParsedSchema, TypeDefinition, TypeKind, TypeRef,
+    UnwrappedType,
 };

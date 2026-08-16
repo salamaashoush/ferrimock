@@ -358,9 +358,9 @@ mod tests {
         };
 
         let type_ref = TypeRef::from_introspection(&non_null_ref);
-        assert_eq!(type_ref.name, "String");
-        assert!(type_ref.is_non_null);
-        assert!(!type_ref.is_list);
+        assert_eq!(type_ref.name(), "String");
+        assert!(type_ref.is_non_null());
+        assert!(!type_ref.is_list());
 
         // Test LIST unwrapping
         let list_ref = TypeRefIntrospection {
@@ -374,9 +374,9 @@ mod tests {
         };
 
         let type_ref = TypeRef::from_introspection(&list_ref);
-        assert_eq!(type_ref.name, "Int");
-        assert!(!type_ref.is_non_null);
-        assert!(type_ref.is_list);
+        assert_eq!(type_ref.name(), "Int");
+        assert!(!type_ref.is_non_null());
+        assert!(type_ref.is_list());
 
         // Test NON_NULL LIST
         let non_null_list_ref = TypeRefIntrospection {
@@ -394,8 +394,8 @@ mod tests {
         };
 
         let type_ref = TypeRef::from_introspection(&non_null_list_ref);
-        assert_eq!(type_ref.name, "String");
-        assert!(type_ref.is_non_null);
-        assert!(type_ref.is_list);
+        assert_eq!(type_ref.name(), "String");
+        assert!(type_ref.is_non_null());
+        assert!(type_ref.is_list());
     }
 }
