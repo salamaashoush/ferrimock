@@ -7,8 +7,11 @@ use regex::Regex;
 // Global compiled regexes using LazyLock for zero-cost abstraction
 pub(super) static URL_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^https?://[^\s/]+(/[^\s]*)?$").expect("valid regex"));
+// Case-insensitive: a UUID is hex, and hex has an upper case. Several real APIs
+// return them upper-cased, and a lower-case-only pattern read every one of those
+// as an unstructured string.
 pub(super) static UUID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$")
+    Regex::new(r"^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$")
         .expect("valid regex")
 });
 pub(super) static TIMESTAMP_REGEX: LazyLock<Regex> =
@@ -20,8 +23,11 @@ pub(super) static IP_REGEX: LazyLock<Regex> =
 // Phone regex: supports extensions (x1234, ext123, #456) and dots
 pub(super) static PHONE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\d\s\-\(\)\+\.xext#]+$").expect("valid regex"));
+// The leading `v` is not part of the grammar and is everywhere in practice --
+// `v2.4.0` is what a tag, a release name and half the version fields in the wild
+// actually look like.
 pub(super) static SEMVER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$").expect("valid regex")
+    Regex::new(r"^v?\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$").expect("valid regex")
 });
 pub(super) static HEX_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-fA-F0-9]+$").expect("valid regex"));
@@ -38,6 +44,9 @@ pub(super) static DATA_URI_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Confidence thresholds for different field types
 pub(super) const CONFIDENCE_DOWNLOAD_URL: f64 = 0.85;
 pub(super) const CONFIDENCE_DATA_URI: f64 = 0.95;
+/// A flag spelled as text is as certain as one spelled as JSON: nothing else is
+/// spelled `true`.
+pub(super) const CONFIDENCE_BOOLEAN_WORDS: f64 = 0.9;
 pub(super) const CONFIDENCE_URL: f64 = 0.90;
 pub(super) const CONFIDENCE_EMAIL: f64 = 0.85;
 pub(super) const CONFIDENCE_TIMESTAMP: f64 = 0.85;
@@ -80,7 +89,7 @@ pub(super) const MIN_MATCH_RATIO_FILE_PATH: f64 = 0.7;
 /// Common pagination parameter keys
 pub(super) const PAGE_KEYS: &[&str] = &["page", "page_number", "p", "offset", "skip"];
 pub(super) const LIMIT_KEYS: &[&str] = &["limit", "per_page", "page_size", "size", "l", "count"];
-pub(super) const CURSOR_KEYS: &[&str] = &[
+pub(crate) const CURSOR_KEYS: &[&str] = &[
     "cursor",
     "next_token",
     "continuation_token",

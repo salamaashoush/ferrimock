@@ -86,7 +86,7 @@ fn test_detect_timestamp() {
     let values = vec![json!("2024-01-15T10:30:00Z"), json!("2024-01-16T14:22:33Z")];
 
     let (field_type, confidence) = detector.detect_type_from_values(&as_refs(&values));
-    assert!(matches!(field_type, FieldType::Timestamp));
+    assert!(matches!(field_type, FieldType::Timestamp { .. }));
     assert!(confidence >= CONFIDENCE_TIMESTAMP);
 }
 
@@ -129,7 +129,13 @@ fn test_detect_etag_not_confused_with_numeric_id() {
 fn test_detect_etag_under_revision_dialect_names() {
     let detector = TypeDetector::new();
 
-    for name in ["rev", "_rev", "revision", "resource_version", "resourceVersion"] {
+    for name in [
+        "rev",
+        "_rev",
+        "revision",
+        "resource_version",
+        "resourceVersion",
+    ] {
         let counters = vec![json!("7"), json!("8"), json!("12")];
         let (field_type, _) = detector.detect_type(name, &as_refs(&counters));
         assert!(
@@ -215,10 +221,7 @@ fn test_image_urls_are_recognised_without_a_helpful_field_name() {
         json!("https://api.example.com/v2/files/2"),
     ];
     let (field_type, _) = detector.detect_type("value", &as_refs(&pages));
-    assert!(
-        matches!(field_type, FieldType::Url),
-        "got {field_type:?}"
-    );
+    assert!(matches!(field_type, FieldType::Url), "got {field_type:?}");
 
     // One image among plain URLs does not make the field an image field.
     let mixed = vec![
@@ -356,7 +359,7 @@ fn test_detect_hex_string() {
     assert!(
         matches!(
             field_type,
-            FieldType::HexString | FieldType::Base64 | FieldType::Token
+            FieldType::HexString { .. } | FieldType::Base64 | FieldType::Token
         ),
         "Got {:?} instead",
         field_type
@@ -519,7 +522,7 @@ fn test_iso_date_detection() {
     let values = vec![json!("2024-01-15"), json!("2024-12-31")];
 
     let (field_type, confidence) = detector.detect_type_from_values(&as_refs(&values));
-    assert!(matches!(field_type, FieldType::IsoDate));
+    assert!(matches!(field_type, FieldType::IsoDate { .. }));
     assert!(confidence >= CONFIDENCE_TIMESTAMP);
 }
 
@@ -777,7 +780,7 @@ fn test_anti_pattern_iso_date_validates_ranges() {
     let (field_type, confidence) = detector.detect_type_from_values(&as_refs(&invalid_values));
 
     assert!(
-        !matches!(field_type, FieldType::IsoDate) || confidence < 0.5,
+        !matches!(field_type, FieldType::IsoDate { .. }) || confidence < 0.5,
         "Invalid ISO dates should be rejected, got {:?} with confidence {}",
         field_type,
         confidence
@@ -788,7 +791,7 @@ fn test_anti_pattern_iso_date_validates_ranges() {
     let (field_type, confidence) = detector.detect_type_from_values(&as_refs(&valid_values));
 
     assert!(
-        matches!(field_type, FieldType::IsoDate) && confidence >= 0.8,
+        matches!(field_type, FieldType::IsoDate { .. }) && confidence >= 0.8,
         "Valid ISO dates should be detected, got {:?} with confidence {}",
         field_type,
         confidence
@@ -1002,7 +1005,9 @@ fn test_semantic_boost_combinations() {
         (
             "created_at",
             vec![json!("2024-01-15T10:30:00Z")],
-            FieldType::Timestamp,
+            FieldType::Timestamp {
+                format: TimestampFormat::Rfc3339Utc,
+            },
         ),
         ("latitude", vec![json!(37.7749)], FieldType::Latitude),
     ];
@@ -1363,4 +1368,430 @@ fn test_data_uri_vs_regular_url() {
         "Regular URL should not be detected as DataUri, got {:?}",
         field_type
     );
+}
+
+/// Cases the detector used to answer `RandomString` on.
+///
+/// Every one was found by scoring the detector against a corpus whose labels
+/// came from the generator that produced the values, not from the detector --
+/// see `ferrimock-ml audit`. They are pinned here because each is a rule that is
+/// easy to lose again, and losing one is invisible: the field still gets an
+/// answer, and the answer is still a plausible-looking string.
+mod found_by_audit {
+    use super::*;
+
+    fn detect(name: &str, values: &[JsonValue]) -> FieldType {
+        TypeDetector::new().detect_type(name, &as_refs(values)).0
+    }
+
+    #[test]
+    fn a_partly_masked_sample_is_a_redaction_and_not_a_value() {
+        // A proxy that hides part of a value leaves something that is no longer
+        // the value, and counting it drags every match ratio down: one masked
+        // sample in two is enough to put a field of good URLs under threshold.
+        assert!(matches!(
+            detect(
+                "link",
+                &[json!("https://example.com/a/b"), json!("****e=85")]
+            ),
+            FieldType::Url
+        ));
+    }
+
+    #[test]
+    fn a_name_written_without_spaces_or_letter_case_is_still_a_name() {
+        // Japanese and Chinese write a name without a space; Hebrew and Arabic
+        // have no letter case at all. Requiring either reads every name outside
+        // the Latin conventions as a random string.
+        for values in [
+            vec![json!("佐藤翔太"), json!("山本花子")],
+            vec![json!("רחל ביטון"), json!("שרה פרץ")],
+            vec![json!("Dr. Иван Соколов"), json!("Mr. Дмитрий Васильев")],
+        ] {
+            let detected = detect("created_by", &values);
+            assert!(
+                matches!(detected, FieldType::Name),
+                "{values:?} was read as {detected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_locale_keeps_its_charset_suffix_and_a_file_extension_is_not_one() {
+        // POSIX appends the character set and a modifier; neither changes which
+        // locale is named.
+        assert!(matches!(
+            detect("ui_language", &[json!("de-DE.UTF-8"), json!("de_DE")]),
+            FieldType::LocaleCode
+        ));
+        // `pdf`, `zip` and `doc` are all shaped like a three letter language
+        // code. An extension answered `fr-CA` is a broken response.
+        assert!(!matches!(
+            detect("extension", &[json!("pdf"), json!("docx"), json!("xlsx")]),
+            FieldType::LocaleCode
+        ));
+    }
+
+    #[test]
+    fn a_number_the_recording_wrote_as_text_stays_text() {
+        // The class is right and the type the client parses has changed, which
+        // is a different defect from getting the class wrong.
+        let detected = detect("sequence_id", &[json!("0"), json!("1"), json!("2")]);
+        assert!(
+            matches!(&detected, FieldType::Stringified(_)),
+            "a numeric string answered with a bare number: {detected:?}"
+        );
+        // A field the recording wrote as a number keeps writing it as one.
+        assert!(!matches!(
+            detect("size", &[json!(1000), json!(2000)]),
+            FieldType::Stringified(_)
+        ));
+    }
+
+    #[test]
+    fn a_missing_sample_is_not_evidence_against_the_field() {
+        // The systemic one. Every check below asks what share of the samples
+        // match, so a single `N/A` in three drags the share under the threshold
+        // and a field of perfectly good values gets no answer at all. A
+        // recording is full of these.
+        for absent in [
+            json!("N/A"),
+            json!(""),
+            json!("   "),
+            json!("null"),
+            json!("unknown"),
+            json!("-"),
+            json!("***"),
+            json!("[REDACTED]"),
+            json!("<hidden>"),
+            JsonValue::Null,
+        ] {
+            let values = vec![json!("en-US"), json!("de-DE"), absent.clone()];
+            assert!(
+                matches!(detect("locale", &values), FieldType::LocaleCode),
+                "{absent:?} blinded the detector to the rest of the field"
+            );
+        }
+    }
+
+    #[test]
+    fn a_field_that_only_ever_held_a_placeholder_is_still_described() {
+        // Dropping every sample would leave nothing to reason about, and
+        // "no samples" says less than "always the same marker".
+        let (field_type, _) =
+            TypeDetector::new().detect_type("status", &as_refs(&[json!("N/A"), json!("N/A")]));
+        assert!(
+            !matches!(field_type, FieldType::RandomString),
+            "got {field_type:?}"
+        );
+    }
+
+    #[test]
+    fn a_uuid_is_a_uuid_in_upper_case() {
+        // Hex has an upper case and several APIs use it.
+        assert!(matches!(
+            detect(
+                "guid",
+                &[
+                    json!("550E8400-E29B-41D4-A716-446655440000"),
+                    json!("6BA7B810-9DAD-11D1-80B4-00C04FD430C8"),
+                ]
+            ),
+            FieldType::Uuid
+        ));
+    }
+
+    #[test]
+    fn a_version_keeps_its_leading_v() {
+        assert!(matches!(
+            detect("app_version", &[json!("v2.4.24"), json!("v1.0.3")]),
+            FieldType::Semver
+        ));
+    }
+
+    #[test]
+    fn a_country_or_currency_code_may_be_lower_case() {
+        assert!(matches!(
+            detect("country", &[json!("us"), json!("gb"), json!("de")]),
+            FieldType::CountryCode
+        ));
+        assert!(matches!(
+            detect("currency", &[json!("usd"), json!("eur"), json!("gbp")]),
+            FieldType::CurrencyCode
+        ));
+    }
+
+    #[test]
+    fn a_locale_may_be_written_the_posix_way() {
+        assert!(matches!(
+            detect("locale", &[json!("en_US"), json!("de_DE"), json!("ja_JP")]),
+            FieldType::LocaleCode
+        ));
+    }
+
+    #[test]
+    fn short_base64_is_still_base64() {
+        // Relay-style global ids are eight characters, and the old twenty
+        // character floor was picked for encoded payloads.
+        assert!(matches!(
+            detect("node_id", &[json!("VXNlcjox9A=="), json!("VXNlcjoyMg==")]),
+            FieldType::Base64
+        ));
+    }
+
+    #[test]
+    fn a_digest_is_not_taken_for_base64() {
+        // Hex is a subset of the base64 alphabet and an MD5 is a multiple of
+        // four characters long, so lowering the base64 floor without excluding
+        // hex would answer every digest with base64 noise.
+        assert!(matches!(
+            detect(
+                "checksum",
+                &[
+                    json!("d41d8cd98f00b204e9800998ecf8427e"),
+                    json!("098f6bcd4621d373cade4e832627b4f6"),
+                ]
+            ),
+            FieldType::HexString { .. }
+        ));
+    }
+
+    #[test]
+    fn a_flag_spelled_as_text_is_a_flag() {
+        // Still written as text: a field of `"true"` answered with a bare
+        // `true` has changed the type the client parses.
+        for values in [
+            vec![json!("true"), json!("false")],
+            vec![json!("yes"), json!("no")],
+            vec![json!("Y"), json!("N")],
+            vec![json!("on"), json!("off")],
+            vec![json!("True"), json!("FALSE")],
+        ] {
+            let detected = detect("is_active", &values);
+            assert!(
+                matches!(&detected, FieldType::Stringified(inner) if **inner == FieldType::Boolean),
+                "{values:?} was read as {detected:?}, not a flag written as text"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lone_ambiguous_word_is_not_read_as_a_flag() {
+        // `no` is Norway. Without both polarities or a word that can only be a
+        // flag, there is nothing here to say which was meant.
+        assert!(!matches!(
+            detect("country", &[json!("no"), json!("se"), json!("dk")]),
+            FieldType::Boolean
+        ));
+    }
+
+    #[test]
+    fn prose_is_prose_in_a_script_without_spaces() {
+        // Counting words in Japanese counts one, and the old word-count floor
+        // rejected every sentence in the language.
+        assert!(matches!(
+            detect(
+                "description",
+                &[
+                    json!("東京都渋谷区の請求書は更新されました。"),
+                    json!("契約の報告書を確認してください。"),
+                ]
+            ),
+            FieldType::Sentence
+        ));
+        // Thai writes no full stop at all.
+        assert!(matches!(
+            detect(
+                "note",
+                &[
+                    json!("ใบแจ้งหนี้สัญญารายงานโฟลเดอร์"),
+                    json!("ข้อเสนอลูกค้าการชำระเงินแม่แบบ"),
+                ]
+            ),
+            FieldType::Sentence
+        ));
+    }
+
+    #[test]
+    fn a_short_punctuated_note_is_prose_and_a_name_is_not() {
+        // The full stop is the whole difference, so both halves are asserted.
+        assert!(matches!(
+            detect("message", &[json!("Short note."), json!("Renamed twice.")]),
+            FieldType::Sentence
+        ));
+        assert!(matches!(
+            detect("owner", &[json!("Ada Lovelace"), json!("Grace Hopper")]),
+            FieldType::Name
+        ));
+    }
+
+    #[test]
+    fn two_sentences_are_a_paragraph_however_short() {
+        assert!(matches!(
+            detect(
+                "details",
+                &[json!(
+                    "The alpha bravo was updated by the delta. The echo kilo was removed."
+                )]
+            ),
+            FieldType::Paragraph
+        ));
+    }
+
+    #[test]
+    fn a_flag_spelled_as_a_number_is_decided_by_its_name() {
+        // `1` and `0` cannot be told from a count by looking at them, so the
+        // name is the whole evidence -- and both halves have to hold.
+        assert!(matches!(
+            detect("is_default", &[json!("1"), json!("0")]),
+            FieldType::Stringified(inner) if *inner == FieldType::Boolean
+        ));
+        assert!(matches!(
+            detect("has_more", &[json!(1), json!(0)]),
+            FieldType::Boolean
+        ));
+        assert!(
+            !matches!(
+                detect("total_count", &[json!(1), json!(0)]),
+                FieldType::Boolean
+            ),
+            "a count that happens to be one or zero is still a count"
+        );
+        assert!(
+            !matches!(
+                detect("is_default", &[json!(7), json!(42)]),
+                FieldType::Boolean
+            ),
+            "a flag-shaped name over values that are not binary is not a flag"
+        );
+    }
+
+    #[test]
+    fn a_date_keeps_the_format_it_was_written_in() {
+        // Detecting the class is half the job. Answering a `17/03/2024` field
+        // with `2024-03-17` is the right class and the wrong value, and anything
+        // parsing it breaks on the reply.
+        for (written, expected) in [
+            ("2024-03-17", DateFormat::Iso),
+            ("17/03/2024", DateFormat::Slash),
+            ("17.03.2024", DateFormat::Dotted),
+            ("20240317", DateFormat::Compact),
+        ] {
+            let detected = detect("due_date", &[json!(written), json!(written)]);
+            assert_eq!(
+                detected,
+                FieldType::IsoDate { format: expected },
+                "{written} came back as {detected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_timestamp_keeps_the_format_it_was_written_in() {
+        for (written, expected) in [
+            ("2024-03-17T09:41:22Z", TimestampFormat::Rfc3339Utc),
+            ("2024-03-17T09:41:22+02:00", TimestampFormat::Rfc3339Offset),
+            ("2024-03-17T09:41:22.481Z", TimestampFormat::Rfc3339Millis),
+            ("2024-03-17 09:41:22", TimestampFormat::SqlDateTime),
+            ("Sun, 17 Mar 2024 09:41:22 GMT", TimestampFormat::HttpDate),
+            ("Sun, 17 Mar 2024 09:41:22 +0000", TimestampFormat::Rfc2822),
+            ("1710668482.000100", TimestampFormat::EpochFractional),
+        ] {
+            let detected = detect("updated_at", &[json!(written), json!(written)]);
+            assert_eq!(
+                detected,
+                FieldType::Timestamp { format: expected },
+                "{written} came back as {detected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dotted_date_is_not_a_version_and_a_compact_one_is_not_an_id() {
+        // `17.03.2024` is three dot-separated numbers and so is `1.2.3`;
+        // `20240317` is eight digits and so is an identifier. The year is the
+        // only thing separating each pair.
+        assert!(matches!(
+            detect("release", &[json!("1.2.3"), json!("4.5.6")]),
+            FieldType::Semver
+        ));
+        assert!(matches!(
+            detect("file_id", &[json!("12345678901"), json!("98765432109")]),
+            FieldType::NumericStringId
+        ));
+    }
+
+    #[test]
+    fn a_digest_keeps_its_width_and_its_case() {
+        // A field of forty-character SHA-1s answered with a thirty-two character
+        // MD5 is the wrong value, however right the class is.
+        assert_eq!(
+            detect(
+                "sha1",
+                &[
+                    json!("da39a3ee5e6b4b0d3255bfef95601890afd80709"),
+                    json!("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"),
+                ]
+            ),
+            FieldType::HexString {
+                length: Some(40),
+                upper: false
+            }
+        );
+        assert_eq!(
+            detect(
+                "checksum",
+                &[json!("A3F0C1D2E4B5A697"), json!("B4E1D2C3F5A6B788")]
+            ),
+            FieldType::HexString {
+                length: Some(16),
+                upper: true
+            }
+        );
+    }
+
+    #[test]
+    fn the_template_a_format_produces_can_be_rendered() {
+        // The escaping trap: a double-quoted argument has to be escaped for the
+        // JSON body it sits in, and then reaches the template engine still
+        // escaped. Single quotes avoid the question, and this is what noticed.
+        for field_type in [
+            FieldType::IsoDate {
+                format: DateFormat::Slash,
+            },
+            FieldType::Timestamp {
+                format: TimestampFormat::HttpDate,
+            },
+            FieldType::HexString {
+                length: Some(40),
+                upper: true,
+            },
+        ] {
+            let expression = crate::codegen::field_type_to_tera_expr("f", &field_type);
+            assert!(
+                !expression.contains('\\'),
+                "{expression} carries an escape the template engine will read literally"
+            );
+        }
+    }
+
+    #[test]
+    fn the_shapes_that_still_have_no_answer_are_recorded_here() {
+        // Not passing assertions -- a list. Each of these is a real identifier
+        // shape that reaches a template as ten random characters today, and the
+        // audit ranks them. Closing one means adding a field type that can
+        // regenerate it, and this test is where that will be noticed.
+        for (name, value) in [
+            ("reference", "01ARZ3NDEKTSV4RRFFQ69G5FAV"), // ULID
+            ("id", "2SxvQZLmN8hKpR3wYtBcDfGjHkL"),       // KSUID
+            ("resource", "projects/acme/locations/eu/things/x7"), // resource name
+            ("arn", "arn:cloud:s3:eu-west-2:123456789012:bucket/reports"),
+        ] {
+            let detected = detect(name, &[json!(value)]);
+            assert!(
+                !matches!(detected, FieldType::Uuid | FieldType::NumericStringId),
+                "{name} is now placed as {detected:?}, so this list needs updating"
+            );
+        }
+    }
 }

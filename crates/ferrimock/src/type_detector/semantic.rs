@@ -5,7 +5,10 @@ use url::Url;
 
 use super::checkers::{calculate_email_confidence, calculate_url_confidence};
 use super::constants::*;
-use super::types::{FieldType, PaginationScheme, PaginationUrlPattern, analyze_pagination_pattern};
+use super::types::{
+    DateFormat, FieldType, PaginationScheme, PaginationUrlPattern, TimestampFormat,
+    analyze_pagination_pattern,
+};
 
 /// Helper function for case-insensitive contains check
 pub fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
@@ -258,7 +261,13 @@ pub fn detect_from_field_name_only(field_name: &str) -> Option<(FieldType, f64)>
     ) || (contains_field_pattern(field_name, "hash")
         && !contains_field_pattern(field_name, "tag"))
     {
-        return Some((FieldType::HexString, 0.90));
+        return Some((
+            FieldType::HexString {
+                length: None,
+                upper: false,
+            },
+            0.90,
+        ));
     }
 
     // GraphQL cursors - opaque pagination cursors
@@ -320,11 +329,51 @@ fn is_handle_like(value: &JsonValue) -> bool {
 
 /// Layer 1: Detect from semantic context (field names)
 #[allow(clippy::cast_precision_loss)]
+/// Whether a field's name says it holds a flag.
+///
+/// The only evidence there is when the values are `1` and `0`, which a count
+/// spells exactly the same way.
+fn names_a_flag(field_name: &str) -> bool {
+    const PREFIXES: [&str; 8] = ["is", "has", "can", "allow", "should", "was", "does", "use"];
+    const FLAG_WORDS: [&str; 12] = [
+        "enabled", "disabled", "active", "deleted", "archived", "verified", "visible", "public",
+        "private", "readonly", "livemode", "flag",
+    ];
+
+    let lowered = field_name.to_lowercase();
+    let words: Vec<&str> = lowered
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+
+    words
+        .first()
+        .is_some_and(|first| PREFIXES.contains(first) && words.len() > 1)
+        || words.iter().any(|word| FLAG_WORDS.contains(word))
+}
+
 pub fn detect_from_semantic_context(
     field_name: &str,
     values: &[&JsonValue],
     ctx: &super::DetectionContext<'_>,
 ) -> Option<(FieldType, f64)> {
+    // A flag spelled as a number. `1` and `0` cannot be told from a count by
+    // looking at them, so this is decided by the name and nothing else -- and a
+    // name that says the field is a flag is the whole evidence there is.
+    if names_a_flag(field_name) {
+        let all_binary = values.iter().all(|value| match value {
+            JsonValue::Number(number) => {
+                matches!(number.as_i64(), Some(0 | 1))
+            }
+            JsonValue::String(text) => matches!(text.trim(), "0" | "1"),
+            JsonValue::Bool(_) => true,
+            _ => false,
+        });
+        if all_binary && !values.is_empty() {
+            return Some((FieldType::Boolean, 0.9));
+        }
+    }
+
     // Numeric ID fields - check field name ends with _id or is "id"
     // MUST CHECK THIS FIRST before any value analysis to catch numeric JSON values
     // This works with both numeric JSON values and string values
@@ -994,12 +1043,24 @@ pub fn detect_from_semantic_context(
         });
 
         if suggests_color_context && looks_like_hex_color {
-            return Some((FieldType::HexString, 0.95));
+            return Some((
+                FieldType::HexString {
+                    length: None,
+                    upper: false,
+                },
+                0.95,
+            ));
         }
 
         // Even without field name context, if ALL values are hex colors, it's likely HexString
         if looks_like_hex_color && !strs.is_empty() {
-            return Some((FieldType::HexString, 0.90));
+            return Some((
+                FieldType::HexString {
+                    length: None,
+                    upper: false,
+                },
+                0.90,
+            ));
         }
 
         // Email fields
@@ -1061,10 +1122,20 @@ pub fn detect_from_semantic_context(
             ],
         ) {
             if strs.iter().any(|s| TIMESTAMP_REGEX.is_match(s)) {
-                return Some((FieldType::Timestamp, 0.95));
+                return Some((
+                    FieldType::Timestamp {
+                        format: TimestampFormat::Rfc3339Utc,
+                    },
+                    0.95,
+                ));
             }
             if strs.iter().any(|s| ISO_DATE_REGEX.is_match(s)) {
-                return Some((FieldType::IsoDate, 0.95));
+                return Some((
+                    FieldType::IsoDate {
+                        format: DateFormat::Iso,
+                    },
+                    0.95,
+                ));
             }
         }
 
@@ -1148,6 +1219,7 @@ pub fn detect_from_semantic_context(
 
             if looks_like_natural_text {
                 // Calculate average text length
+                #[allow(clippy::cast_precision_loss)] // sample counts and lengths are small
                 let avg_length = if strs.is_empty() {
                     0.0
                 } else {
@@ -1179,10 +1251,11 @@ pub fn detect_from_semantic_context(
         );
 
         if suggests_currency {
-            // Check if values are exactly 3 uppercase letters (typical currency codes)
+            // Three letters, in either case: `usd` and `USD` name the same
+            // currency, and only the second was being recognised.
             let looks_like_currency_code = strs
                 .iter()
-                .all(|s| s.len() == 3 && s.chars().all(|c| c.is_ascii_uppercase()));
+                .all(|s| s.len() == 3 && s.chars().all(|c| c.is_ascii_alphabetic()));
 
             if looks_like_currency_code {
                 return Some((FieldType::CurrencyCode, 0.95));
@@ -1196,10 +1269,13 @@ pub fn detect_from_semantic_context(
                     && contains_field_pattern(field_name, "country"));
 
         if suggests_country {
-            // Check if values are 2-3 uppercase letters (typical country codes)
+            // Two or three letters, in either case. The standard writes them
+            // upper case and services return them either way, and a field
+            // called `country` holding `us` is not a locale however much a
+            // bare lower-case pair looks like a language subtag.
             let looks_like_country_code = strs
                 .iter()
-                .all(|s| s.len() >= 2 && s.len() <= 3 && s.chars().all(|c| c.is_ascii_uppercase()));
+                .all(|s| (2..=3).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphabetic()));
 
             if looks_like_country_code {
                 return Some((FieldType::CountryCode, 0.95));
@@ -1282,7 +1358,7 @@ pub(super) fn calculate_semantic_boost(field_name: &str, field_type: &FieldType)
             }
             0.0
         }
-        FieldType::Timestamp => {
+        FieldType::Timestamp { .. } => {
             if name_lower.contains("date")
                 || name_lower.ends_with("_at")
                 || name_lower.contains("time")

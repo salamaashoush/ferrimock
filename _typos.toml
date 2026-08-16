@@ -3,9 +3,17 @@
 ags = "ags"
 hel = "hel"
 nto = "nto"
+# burn's CPU tensor backend is `NdArray`
+Nd = "Nd"
+# An identifier prefix a real API mints: `wrk_9s2Kf3aB1`
+wrk = "wrk"
 
 [files]
 extend-exclude = [
   "Cargo.lock",
   "*.ttf",
+  # A table of words in twenty languages. Every entry is a real word in the
+  # language it belongs to and a misspelling of an English one, which is the
+  # whole reason the corpus needs it.
+  "crates/ferrimock-ml/src/generator/lexicon.rs",
 ]

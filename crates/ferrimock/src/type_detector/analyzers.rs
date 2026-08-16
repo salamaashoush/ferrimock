@@ -264,10 +264,10 @@ where
 }
 
 /// Analyze nested object patterns
-pub(super) fn analyze_object_pattern<F>(values: &[&JsonValue], detect_type: F) -> (FieldType, f64)
-where
-    F: Fn(&str, &[&JsonValue]) -> (FieldType, f64),
-{
+pub(super) fn analyze_object_pattern(
+    values: &[&JsonValue],
+    detector: &super::TypeDetector,
+) -> (FieldType, f64) {
     let objects: Vec<&serde_json::Map<String, JsonValue>> =
         values.iter().filter_map(|v| v.as_object()).collect();
 
@@ -299,19 +299,43 @@ where
             continue;
         }
 
+        // A field most of the samples did not carry at all is answered without
+        // it, and one most of them left null is answered null. Both are the same
+        // rule: reproduce the shape the recording usually had, since that is the
+        // one a client will most often be checking against.
+        if field_values.len() * 2 <= objects.len() {
+            continue;
+        }
+        if field_values.iter().filter(|value| value.is_null()).count() * 2 > field_values.len() {
+            constant_fields.push((field.clone(), JsonValue::Null));
+            continue;
+        }
+
         // Check if all values are the same
         let all_same = field_values
             .windows(2)
             .all(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a == b));
 
-        if all_same {
+        // One sample is agreement with itself, not evidence that the field is
+        // fixed. Asked to generalize, the detector reads the value instead.
+        let single = field_values.len() == 1;
+        if all_same && !(single && detector.generalizes()) {
             if let Some(first_val) = field_values.first() {
                 constant_fields.push((field.clone(), (*first_val).clone()));
             }
-        } else {
-            let (field_type, _) = detect_type(&field, &field_values);
-            varying_fields.push((field, field_type));
+            continue;
         }
+
+        if single && let Some(value) = field_values.first() {
+            match detector.classify_single(&field, value) {
+                Some(field_type) => varying_fields.push((field, field_type)),
+                None => constant_fields.push((field.clone(), (*value).clone())),
+            }
+            continue;
+        }
+
+        let (field_type, _) = detector.detect_type(&field, &field_values);
+        varying_fields.push((field, field_type));
     }
 
     (

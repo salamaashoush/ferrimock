@@ -6,6 +6,166 @@ use url::Url;
 
 use super::constants::{CURSOR_KEYS, LIMIT_KEYS, PAGE_KEYS};
 
+/// How a date without a time is written.
+///
+/// Carried on the type because a template that answers a `17/03/2024` field with
+/// `2024-03-17` has changed the value's shape, and anything parsing it breaks.
+/// Detecting the class is only half the job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DateFormat {
+    /// `2024-03-17`
+    #[default]
+    Iso,
+    /// `17/03/2024`
+    Slash,
+    /// `17.03.2024`
+    Dotted,
+    /// `20240317`
+    Compact,
+}
+
+impl DateFormat {
+    /// The name a template passes to the generator.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Iso => "iso",
+            Self::Slash => "slash",
+            Self::Dotted => "dotted",
+            Self::Compact => "compact",
+        }
+    }
+
+    /// Which format a value is written in, if it is a date at all.
+    pub fn of(value: &str) -> Option<Self> {
+        let digits = |part: &str, width: usize| {
+            part.len() == width && part.chars().all(|c| c.is_ascii_digit())
+        };
+
+        if value.len() == 8 && value.chars().all(|c| c.is_ascii_digit()) {
+            let year: u32 = value.get(..4)?.parse().ok()?;
+            let month: u32 = value.get(4..6)?.parse().ok()?;
+            let day: u32 = value.get(6..)?.parse().ok()?;
+            return ((1900..=2999).contains(&year)
+                && (1..=12).contains(&month)
+                && (1..=31).contains(&day))
+            .then_some(Self::Compact);
+        }
+
+        for (separator, format) in [('-', Self::Iso), ('/', Self::Slash), ('.', Self::Dotted)] {
+            let parts: Vec<&str> = value.split(separator).collect();
+            let [first, middle, last] = parts.as_slice() else {
+                continue;
+            };
+            // ISO writes the year first; the other two write it last. That is
+            // also what separates `17.03.2024` from the version `1.2.3`.
+            let (year, month, day) = if format == Self::Iso {
+                (*first, *middle, *last)
+            } else {
+                (*last, *middle, *first)
+            };
+            if !digits(year, 4) || !digits(month, 2) || !digits(day, 2) {
+                continue;
+            }
+            let (month, day): (u32, u32) = (month.parse().ok()?, day.parse().ok()?);
+            if (1..=12).contains(&month) && (1..=31).contains(&day) {
+                return Some(format);
+            }
+        }
+        None
+    }
+}
+
+/// How a moment in time is written.
+///
+/// Same reason as [`DateFormat`]: a field holding `Sun, 17 Mar 2024 09:41:22 GMT`
+/// is a timestamp field, and answering it with ISO 8601 breaks every client that
+/// parses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimestampFormat {
+    /// `2024-03-17T09:41:22Z`
+    #[default]
+    Rfc3339Utc,
+    /// `2024-03-17T09:41:22+02:00`
+    Rfc3339Offset,
+    /// `2024-03-17T09:41:22.481Z`
+    Rfc3339Millis,
+    /// `2024-03-17T09:41:22.481920374Z`
+    Rfc3339Nanos,
+    /// `2024-03-17 09:41:22` -- a database column that reached the wire
+    SqlDateTime,
+    /// `Sun, 17 Mar 2024 09:41:22 +0000`
+    Rfc2822,
+    /// `Sun, 17 Mar 2024 09:41:22 GMT`
+    HttpDate,
+    /// `1710668482.000100`
+    EpochFractional,
+}
+
+impl TimestampFormat {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rfc3339Utc => "rfc3339",
+            Self::Rfc3339Offset => "rfc3339_offset",
+            Self::Rfc3339Millis => "rfc3339_millis",
+            Self::Rfc3339Nanos => "rfc3339_nanos",
+            Self::SqlDateTime => "sql",
+            Self::Rfc2822 => "rfc2822",
+            Self::HttpDate => "http",
+            Self::EpochFractional => "epoch_fractional",
+        }
+    }
+
+    /// Which format a value is written in, if it is a timestamp at all.
+    pub fn of(value: &str) -> Option<Self> {
+        // Every spelling below carries a clock time and a four-digit year. Text
+        // that carries neither is not a timestamp however it is punctuated.
+        let has_time = value.contains(':');
+        let has_year = value
+            .as_bytes()
+            .windows(4)
+            .any(|window| window.iter().all(u8::is_ascii_digit));
+
+        // `1710668482.000100`
+        if let Some((seconds, fraction)) = value.split_once('.')
+            && seconds.len() >= 9
+            && seconds.chars().all(|c| c.is_ascii_digit())
+            && !fraction.is_empty()
+            && fraction.chars().all(|c| c.is_ascii_digit())
+        {
+            return Some(Self::EpochFractional);
+        }
+
+        if !(has_time && has_year) {
+            return None;
+        }
+
+        if value.ends_with(" GMT") && value.contains(", ") {
+            return Some(Self::HttpDate);
+        }
+        if value.contains(", ") && (value.contains(" +") || value.contains(" -")) {
+            return Some(Self::Rfc2822);
+        }
+
+        let separated = value.contains('T') || value.contains(' ');
+        if !separated || !value.contains(':') {
+            return None;
+        }
+        if value.contains(' ') && !value.contains('T') {
+            return Some(Self::SqlDateTime);
+        }
+
+        let fraction = value
+            .split_once('.')
+            .map(|(_, rest)| rest.chars().take_while(char::is_ascii_digit).count());
+        Some(match fraction {
+            Some(digits) if digits >= 7 => Self::Rfc3339Nanos,
+            Some(_) => Self::Rfc3339Millis,
+            None if value.ends_with('Z') => Self::Rfc3339Utc,
+            None => Self::Rfc3339Offset,
+        })
+    }
+}
+
 /// Extended field type enumeration with specialized types
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldType {
@@ -17,8 +177,8 @@ pub enum FieldType {
     RandomFloat { min: Option<f64>, max: Option<f64> },
     /// UUID pattern (v4 format)
     Uuid,
-    /// ISO 8601 timestamp
-    Timestamp,
+    /// A moment in time, in the format it was written in
+    Timestamp { format: TimestampFormat },
     /// Email address
     Email,
     /// Username/login (alphanumeric identifier without spaces)
@@ -67,8 +227,8 @@ pub enum FieldType {
     PaginationUrl(Box<PaginationUrlPattern>),
     /// API endpoint (relative paths)
     ApiEndpoint,
-    /// ISO date without time
-    IsoDate,
+    /// A date without a time, in the format it was written in
+    IsoDate { format: DateFormat },
     /// Unix timestamp (numeric, seconds)
     UnixTimestamp,
     /// Unix timestamp in milliseconds
@@ -77,8 +237,8 @@ pub enum FieldType {
     MicrosecondTimestamp,
     /// Semantic version string
     Semver,
-    /// Hexadecimal string
-    HexString,
+    /// Hexadecimal string, at the width and case it was seen at
+    HexString { length: Option<usize>, upper: bool },
     /// Base64-encoded data
     Base64,
     /// Latitude coordinate (-90 to 90)
@@ -87,6 +247,13 @@ pub enum FieldType {
     Longitude,
     /// Categorical/Enum string (low cardinality)
     Categorical { values: Vec<String> },
+    /// A value shaped like `inner` that the recording wrote as text.
+    ///
+    /// APIs do this constantly: `"size": "1024"`, `"sequence_id": "0"`,
+    /// `"enabled": "true"`. Answering such a field with a JSON number is a
+    /// different defect from getting its class wrong -- the class is right and
+    /// the type the client parses has changed.
+    Stringified(Box<FieldType>),
     /// ISO 3166-1 alpha-2 country code
     CountryCode,
     /// ISO 4217 currency code
@@ -99,6 +266,29 @@ pub enum FieldType {
     LocaleCode,
     /// IANA timezone identifier (e.g., America/New_York, Europe/London)
     Timezone,
+}
+
+impl FieldType {
+    /// Whether a template writes this type without surrounding quotes.
+    ///
+    /// The list is the emitter's, and the two have to agree: this is what says
+    /// a class needs [`FieldType::Stringified`] wrapping to keep the JSON kind
+    /// the recording used.
+    pub fn writes_bare(&self) -> bool {
+        matches!(
+            self,
+            Self::SequentialNumber { .. }
+                | Self::RandomNumber { .. }
+                | Self::RandomFloat { .. }
+                | Self::UnixTimestamp
+                | Self::MillisecondTimestamp
+                | Self::MicrosecondTimestamp
+                | Self::FileSize
+                | Self::Latitude
+                | Self::Longitude
+                | Self::Boolean
+        )
+    }
 }
 
 /// Analysis of array patterns
