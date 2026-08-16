@@ -194,6 +194,11 @@ lopdf = { version = "0.44", default-features = false }
 # only embedded asset is one font; the size trade is acceptable.
 rust-embed = { version = "8.12" }
 
+# GraphQL execution (spec feature): dynamic schema built at runtime from a
+# parsed spec, plus the SDL parser (arrives transitively, pinned for clarity).
+async-graphql = { version = "7.2", default-features = false, features = ["dynamic-schema"] }
+async-graphql-parser = "7.2"
+
 # Template engine
 tera = "2.1"
 # Tera 2 moved its dependency-heavy built-ins out of core; json_encode, date,

@@ -108,6 +108,9 @@ pub mod codegen;
 #[cfg(feature = "graphql")]
 pub mod graphql;
 
+#[cfg(feature = "spec")]
+pub mod spec;
+
 /// HTTP server utilities: hot reload, graceful shutdown, state management
 #[cfg(feature = "server")]
 pub mod server;

@@ -46,6 +46,10 @@ codegen = ["type-detector"]
 # GraphQL schema introspection and mock generation
 graphql = ["engine"]
 
+# Spec-driven virtual backends: a spec compiles to an entity graph, a seeded
+# store answers queries against it, and protocol bindings serve it.
+spec = ["engine", "graphql", "dep:async-graphql", "dep:async-graphql-parser"]
+
 # HTTP server with hot reload and graceful shutdown
 server = ["engine", "dep:axum", "dep:tower-http", "dep:notify", "dep:tokio-tungstenite", "dep:reqwest"]
 
@@ -70,9 +74,11 @@ scripting = [
 ]
 
 # Everything
-full = ["engine", "graphql", "server", "api", "schema", "scripting"]
+full = ["engine", "graphql", "spec", "server", "api", "schema", "scripting"]
 
 [dependencies]
+async-graphql = { workspace = true, optional = true }
+async-graphql-parser = { workspace = true, optional = true }
 # ---- Always required (engine feature) ----
 # Async runtime
 tokio = { workspace = true }
