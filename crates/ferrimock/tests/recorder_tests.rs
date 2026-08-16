@@ -898,7 +898,8 @@ async fn test_finalize_and_consolidate() -> Result<()> {
     let fidelity = result.fidelity.expect("a JSON recording is verified");
     assert_eq!(fidelity.score.total, 5);
     assert_eq!(
-        fidelity.score.behavioral, 5,
+        fidelity.score.behavioral,
+        5,
         "consolidation changed behaviour: unmatched {:?}, cross-talk {:?}, \
          status {:?}, shape {:?}, constants {:?}",
         fidelity.unmatched,
@@ -3563,9 +3564,7 @@ async fn a_genuinely_repeated_request_is_not_pinned() -> Result<()> {
 
     for mock in &collection.mocks {
         assert!(
-            mock.match_config
-                .as_ref()
-                .is_none_or(|m| m.body.is_empty()),
+            mock.match_config.as_ref().is_none_or(|m| m.body.is_empty()),
             "identical bodies say nothing; pinning them adds noise, not selectivity"
         );
     }

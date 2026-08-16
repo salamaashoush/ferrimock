@@ -89,10 +89,7 @@ impl FieldKind {
                     .map(|n| {
                         let mut item = JsonMap::new();
                         item.insert("id".to_string(), JsonValue::from(n));
-                        item.insert(
-                            "label".to_string(),
-                            JsonValue::String(format!("l{n}")),
-                        );
+                        item.insert("label".to_string(), JsonValue::String(format!("l{n}")));
                         JsonValue::Object(item)
                     })
                     .collect();
@@ -108,10 +105,7 @@ impl FieldKind {
                 let items: Vec<JsonValue> = (0..=u32::from(instance) % 3)
                     .map(|n| {
                         let mut item = JsonMap::new();
-                        item.insert(
-                            "kind".to_string(),
-                            JsonValue::String("entry".to_string()),
-                        );
+                        item.insert("kind".to_string(), JsonValue::String("entry".to_string()));
                         item.insert("n".to_string(), JsonValue::from(n));
                         JsonValue::Object(item)
                     })
@@ -179,9 +173,9 @@ impl Handler {
 
     fn request_body(&self, instance: u8) -> Option<String> {
         match self.shape {
-            Shape::Search => Some(
-                serde_json::json!({ "query": format!("term-{instance}") }).to_string(),
-            ),
+            Shape::Search => {
+                Some(serde_json::json!({ "query": format!("term-{instance}") }).to_string())
+            }
             Shape::Detail | Shape::Paginated => None,
         }
     }
@@ -235,18 +229,12 @@ impl Traffic {
                         method: handler.method().to_string(),
                         uri: handler.uri(*instance),
                         query: handler.query(*instance),
-                        headers: vec![(
-                            "accept".to_string(),
-                            "application/json".to_string(),
-                        )],
+                        headers: vec![("accept".to_string(), "application/json".to_string())],
                         body: handler.request_body(*instance),
                     },
                     response: RecordedResponse {
                         status: handler.status,
-                        headers: vec![(
-                            "content-type".to_string(),
-                            "application/json".to_string(),
-                        )],
+                        headers: vec![("content-type".to_string(), "application/json".to_string())],
                         body: handler.body(*instance),
                     },
                     duration: Duration::from_millis(3),
@@ -278,7 +266,11 @@ fn arb_handler(index: usize) -> impl Strategy<Value = Handler> {
             Just(Shape::Paginated),
             Just(Shape::Search)
         ],
-        prop_oneof![Just(IdKind::Numeric), Just(IdKind::Uuid), Just(IdKind::Slug)],
+        prop_oneof![
+            Just(IdKind::Numeric),
+            Just(IdKind::Uuid),
+            Just(IdKind::Slug)
+        ],
         prop_oneof![Just(200u16), Just(201), Just(404), Just(500)],
         prop::collection::vec(arb_field_kind(), 1..5),
     )
@@ -311,9 +303,7 @@ fn arb_handler(index: usize) -> impl Strategy<Value = Handler> {
 
 fn arb_traffic() -> impl Strategy<Value = Traffic> {
     (1usize..4).prop_flat_map(|handler_count| {
-        let handlers = (0..handler_count)
-            .map(arb_handler)
-            .collect::<Vec<_>>();
+        let handlers = (0..handler_count).map(arb_handler).collect::<Vec<_>>();
         (
             handlers,
             prop::collection::vec((0..handler_count, 0u8..8), 1..24),
@@ -392,9 +382,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
     }
 }
 
-fn consolidate(
-    interactions: &[RecordedInteraction],
-) -> (MockCollectionConfig, FidelityReport) {
+fn consolidate(interactions: &[RecordedInteraction]) -> (MockCollectionConfig, FidelityReport) {
     let original = recorded_collection(interactions);
     let mut consolidator = MockConsolidator::with_options(ConsolidatorOptions::default());
     runtime().block_on(async {

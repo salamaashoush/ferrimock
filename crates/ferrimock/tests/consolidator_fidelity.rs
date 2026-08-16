@@ -281,7 +281,8 @@ fn explain(report: &FidelityReport) -> String {
 /// the consolidated numbers measure the recorder, not the consolidator.
 fn assert_baseline_perfect(report: &FidelityReport) {
     assert_eq!(
-        report.baseline.behavioral, report.baseline.total,
+        report.baseline.behavioral,
+        report.baseline.total,
         "the recording does not replay against its own collection: {}",
         explain(report)
     );
@@ -304,7 +305,8 @@ async fn a_uniform_detail_endpoint_collapses_without_loss() {
     assert_baseline_perfect(&report);
     assert_eq!(mocks, 1, "four same-shaped users should become one pattern");
     assert_eq!(
-        report.score.behavioral, 4,
+        report.score.behavioral,
+        4,
         "consolidation must not change behaviour: {}",
         explain(&report)
     );
@@ -316,20 +318,31 @@ async fn distinct_resources_under_one_collection_stay_distinct() {
         get("/v2/users/1", r#"{"type":"user","id":"1","name":"Ann"}"#),
         get("/v2/users/2", r#"{"type":"user","id":"2","name":"Bob"}"#),
         get("/v2/users/3", r#"{"type":"user","id":"3","name":"Cid"}"#),
-        get("/v2/folders/1", r#"{"type":"folder","id":"1","name":"Docs"}"#),
-        get("/v2/folders/2", r#"{"type":"folder","id":"2","name":"Pics"}"#),
-        get("/v2/folders/3", r#"{"type":"folder","id":"3","name":"Code"}"#),
+        get(
+            "/v2/folders/1",
+            r#"{"type":"folder","id":"1","name":"Docs"}"#,
+        ),
+        get(
+            "/v2/folders/2",
+            r#"{"type":"folder","id":"2","name":"Pics"}"#,
+        ),
+        get(
+            "/v2/folders/3",
+            r#"{"type":"folder","id":"3","name":"Code"}"#,
+        ),
     ])
     .await;
 
     assert_baseline_perfect(&report);
     assert_eq!(
-        report.score.no_cross_talk, 6,
+        report.score.no_cross_talk,
+        6,
         "a user request must never be answered by a folder mock: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.shape_equal, 6,
+        report.score.shape_equal,
+        6,
         "users and folders have different shapes: {}",
         explain(&report)
     );
@@ -346,25 +359,37 @@ async fn a_paginated_listing_survives_consolidation() {
     };
 
     let (_, report) = run(vec![
-        page(0, r#"[{"type":"file","id":"10"},{"type":"file","id":"11"}]"#),
-        page(2, r#"[{"type":"file","id":"12"},{"type":"file","id":"13"}]"#),
-        page(4, r#"[{"type":"file","id":"14"},{"type":"file","id":"15"}]"#),
+        page(
+            0,
+            r#"[{"type":"file","id":"10"},{"type":"file","id":"11"}]"#,
+        ),
+        page(
+            2,
+            r#"[{"type":"file","id":"12"},{"type":"file","id":"13"}]"#,
+        ),
+        page(
+            4,
+            r#"[{"type":"file","id":"14"},{"type":"file","id":"15"}]"#,
+        ),
     ])
     .await;
 
     assert_baseline_perfect(&report);
     assert_eq!(
-        report.score.matched, 3,
+        report.score.matched,
+        3,
         "every page must still be answerable: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.shape_equal, 3,
+        report.score.shape_equal,
+        3,
         "a page must keep total/offset/limit/items: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.constants_held, 3,
+        report.score.constants_held,
+        3,
         "total never varied across the pages: {}",
         explain(&report)
     );
@@ -378,19 +403,24 @@ async fn mixed_status_codes_in_one_path_shape_are_preserved() {
         get("/v2/files/3", r#"{"type":"file","id":"3","name":"c.txt"}"#),
         with_status(
             404,
-            get("/v2/files/999", r#"{"type":"error","status":404,"code":"not_found"}"#),
+            get(
+                "/v2/files/999",
+                r#"{"type":"error","status":404,"code":"not_found"}"#,
+            ),
         ),
     ])
     .await;
 
     assert_baseline_perfect(&report);
     assert_eq!(
-        report.score.status_exact, 4,
+        report.score.status_exact,
+        4,
         "a 404 must not become a 200: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.behavioral, 4,
+        report.score.behavioral,
+        4,
         "splitting the error out must cost nothing: {}",
         explain(&report)
     );
@@ -414,12 +444,14 @@ async fn an_api_version_segment_is_not_an_id() {
 
     assert_baseline_perfect(&report);
     assert_eq!(
-        report.score.no_cross_talk, 6,
+        report.score.no_cross_talk,
+        6,
         "v2 and v3 are different resources: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.shape_equal, 6,
+        report.score.shape_equal,
+        6,
         "v3 carries a field v2 does not: {}",
         explain(&report)
     );
@@ -452,7 +484,8 @@ async fn posts_differing_only_by_request_body_stay_distinguishable() {
 
     assert_baseline_perfect(&report);
     assert_eq!(
-        report.score.no_cross_talk, 3,
+        report.score.no_cross_talk,
+        3,
         "each search body deserves its own answer: {}",
         explain(&report)
     );
@@ -461,16 +494,29 @@ async fn posts_differing_only_by_request_body_stay_distinguishable() {
 #[tokio::test]
 async fn nested_resource_ids_do_not_collide() {
     let (_, report) = run(vec![
-        get("/v2/enterprises/1/users/10", r#"{"enterprise":"1","user":"10"}"#),
-        get("/v2/enterprises/1/users/11", r#"{"enterprise":"1","user":"11"}"#),
-        get("/v2/enterprises/2/users/10", r#"{"enterprise":"2","user":"10"}"#),
-        get("/v2/enterprises/2/users/11", r#"{"enterprise":"2","user":"11"}"#),
+        get(
+            "/v2/enterprises/1/users/10",
+            r#"{"enterprise":"1","user":"10"}"#,
+        ),
+        get(
+            "/v2/enterprises/1/users/11",
+            r#"{"enterprise":"1","user":"11"}"#,
+        ),
+        get(
+            "/v2/enterprises/2/users/10",
+            r#"{"enterprise":"2","user":"10"}"#,
+        ),
+        get(
+            "/v2/enterprises/2/users/11",
+            r#"{"enterprise":"2","user":"11"}"#,
+        ),
     ])
     .await;
 
     assert_baseline_perfect(&report);
     assert_eq!(
-        report.score.behavioral, 4,
+        report.score.behavioral,
+        4,
         "enterprise and user ids must both survive: {}",
         explain(&report)
     );
@@ -490,7 +536,8 @@ async fn a_repeated_identical_request_collapses_to_one_mock() {
     assert_baseline_perfect(&report);
     assert_eq!(mocks, 1, "four identical recordings are one mock");
     assert_eq!(
-        report.score.value_equal, 4,
+        report.score.value_equal,
+        4,
         "a deduplicated mock must reproduce byte for byte: {}",
         explain(&report)
     );
@@ -522,18 +569,21 @@ async fn searches_differing_only_by_request_body_survive_the_whole_pipeline() {
     .await;
 
     assert_eq!(
-        report.baseline.behavioral, 3,
+        report.baseline.behavioral,
+        3,
         "three distinct searches must each be answerable before consolidation; \
          if they collapse to one matcher the recording is already lossy: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.matched, 3,
+        report.score.matched,
+        3,
         "a merged mock must answer for every search it merged: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.behavioral, 3,
+        report.score.behavioral,
+        3,
         "consolidating the searches must cost nothing: {}",
         explain(&report)
     );
@@ -551,7 +601,10 @@ async fn a_mixed_corpus_round_trips_through_the_whole_pipeline() {
     for id in 1..=4 {
         recorded.push(get(
             format!("/v2/files/{id}"),
-            format!(r#"{{"type":"file","id":"{id}","name":"f{id}.pdf","size":{}}}"#, 1000 + id),
+            format!(
+                r#"{{"type":"file","id":"{id}","name":"f{id}.pdf","size":{}}}"#,
+                1000 + id
+            ),
         ));
     }
     recorded.push(with_status(
@@ -576,12 +629,14 @@ async fn a_mixed_corpus_round_trips_through_the_whole_pipeline() {
     let (mocks, report) = run_through_har(recorded).await;
 
     assert_eq!(
-        report.baseline.behavioral, recorded_count,
+        report.baseline.behavioral,
+        recorded_count,
         "the recording must replay against its own mocks: {}",
         explain(&report)
     );
     assert_eq!(
-        report.score.behavioral, recorded_count,
+        report.score.behavioral,
+        recorded_count,
         "consolidation must preserve every recorded behaviour: {}",
         explain(&report)
     );
@@ -609,7 +664,8 @@ async fn consolidation_disabled_is_a_faithful_identity() {
 
     assert_eq!(mocks, 3, "nothing may be merged when consolidation is off");
     assert_eq!(
-        report.score.value_equal, 3,
+        report.score.value_equal,
+        3,
         "the identity transform must be byte-exact: {}",
         explain(&report)
     );
