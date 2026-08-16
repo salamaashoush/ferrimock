@@ -10,6 +10,11 @@
 //! terms which features drove a decision, and it produces calibrated-enough
 //! probabilities to compare against the detector's confidence.
 
+// A classifier answering `name()` with a literal reads as needlessly bound
+// against the `&str` the trait must return for models that name themselves after
+// the artifact they were loaded from.
+#![allow(clippy::unnecessary_literal_bound)]
+
 use crate::corpus::Corpus;
 use crate::features::{self, FEATURE_COUNT, FEATURE_LAYOUT_VERSION};
 use crate::label::FieldLabel;
@@ -103,7 +108,8 @@ impl LinearClassifier {
                         continue;
                     };
                     for (w, f) in row.iter_mut().zip(features.iter()) {
-                        *w -= error * f + config.l2 * *w * rate;
+                        let decayed = (-config.l2 * rate).mul_add(*w, *w);
+                        *w = (-error).mul_add(*f, decayed);
                     }
                     if let Some(bias) = model.biases.get_mut(class) {
                         *bias -= error;
@@ -179,8 +185,8 @@ impl Classifier for LinearClassifier {
         "linear"
     }
 
-    fn classify(&self, field_name: &str, values: &[&str]) -> Option<(FieldLabel, f64)> {
-        let vector = features::extract(field_name, values);
+    fn classify(&self, field: &crate::Field<'_>) -> Option<(FieldLabel, f64)> {
+        let vector = features::extract(field);
         let probabilities = self.probabilities(&vector);
 
         let (index, confidence) = probabilities
@@ -227,13 +233,20 @@ fn shuffle(items: &mut [usize], seed: u64) {
         state.wrapping_mul(0x2545_F491_4F6C_DD1D)
     };
     for index in (1..items.len()).rev() {
+        #[allow(clippy::cast_possible_truncation)] // modulo keeps this below `index`
         let pick = (next() % (index as u64 + 1)) as usize;
         items.swap(index, pick);
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::string_slice,
+    clippy::cast_precision_loss
+)]
 mod tests {
     use super::*;
     use crate::corpus::{Example, Provenance};
@@ -245,6 +258,38 @@ mod tests {
             label,
             Provenance::Generated,
         )
+    }
+
+    #[test]
+    fn classifying_a_field_is_cheap_enough_to_be_invisible() {
+        // The question this answers is whether asking a model costs anything
+        // worth avoiding. It runs during consolidation, which is an offline step
+        // -- the server answers requests from the collection consolidation wrote,
+        // and never loads a model. So the only cost that could matter is the one
+        // paid once per field of one recording.
+        //
+        // A guard rather than a benchmark: if a field ever costs a millisecond,
+        // consolidating a large recording stops being interactive, and nobody
+        // finds out until they point it at one.
+        let model = LinearClassifier::train(&separable_corpus(), TrainingConfig::default());
+        let values = [
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "01BX5ZZKBKACTAV9WEVGEMMVRZ",
+            "01C0M0Z5F6W3HN9K2QRPX8T4YB",
+        ];
+
+        let rounds = 20_000;
+        let started = std::time::Instant::now();
+        for _ in 0..rounds {
+            let _ = model.classify(&crate::Field::new("external_reference", &values));
+        }
+        let each = started.elapsed() / rounds;
+
+        assert!(
+            each < std::time::Duration::from_micros(200),
+            "a field cost {each:?}, so a recording of ten thousand fields would cost seconds"
+        );
+        println!("one field costs {each:?}");
     }
 
     fn separable_corpus() -> Corpus {
@@ -260,11 +305,7 @@ mod tests {
                 &[&format!("550e8400-e29b-41d4-a716-{n:012x}")],
                 FieldLabel::Uuid,
             ));
-            examples.push(example(
-                "count",
-                &[&format!("{n}")],
-                FieldLabel::Number,
-            ));
+            examples.push(example("count", &[&format!("{n}")], FieldLabel::Number));
         }
         Corpus::new(examples)
     }
@@ -291,7 +332,7 @@ mod tests {
             ("weird", vec![""]),
             ("huge", vec![&"x".repeat(5000)[..]]),
         ] {
-            let vector = features::extract(name, &values);
+            let vector = features::extract(&crate::Field::new(name, &values));
             let probabilities = model.probabilities(&vector);
             let total: f32 = probabilities.iter().sum();
 
@@ -309,7 +350,9 @@ mod tests {
     #[test]
     fn an_untrained_model_is_uniform_rather_than_confident() {
         let model = LinearClassifier::train(&Corpus::default(), TrainingConfig::default());
-        let (_, confidence) = model.classify("anything", &["x"]).unwrap();
+        let (_, confidence) = model
+            .classify(&crate::Field::new("anything", &["x"]))
+            .unwrap();
         let uniform = 1.0 / FieldLabel::ALL.len() as f64;
 
         assert!(

@@ -350,7 +350,11 @@ fn split_interactions(
     let mut order: Vec<usize> = (0..interactions.len()).collect();
     shuffle(&mut order, options.seed);
 
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     let holdout_size =
         ((interactions.len() as f64) * options.holdout_ratio.clamp(0.0, 1.0)) as usize;
     let holdout_size = holdout_size.min(interactions.len());
@@ -412,10 +416,7 @@ impl MergeModel {
     ///
     /// Rows from a different feature layout are refused rather than skipped: a
     /// model fitted on a mixture of layouts is wrong in a way no metric shows.
-    pub fn train(
-        examples: &[MergeExample],
-        config: &MergeTrainingConfig,
-    ) -> Result<Self, String> {
+    pub fn train(examples: &[MergeExample], config: &MergeTrainingConfig) -> Result<Self, String> {
         let mut model = Self {
             feature_layout_version: MERGE_FEATURE_LAYOUT_VERSION,
             weights: vec![0.0; MERGE_FEATURE_COUNT],
@@ -470,7 +471,8 @@ impl MergeModel {
                     continue;
                 }
                 for (w, f) in model.weights.iter_mut().zip(example.features.iter()) {
-                    *w -= error * f + config.l2 * *w * rate;
+                    let decayed = (-config.l2 * rate).mul_add(*w, *w);
+                    *w = (-error).mul_add(*f, decayed);
                 }
                 model.bias -= error;
             }
@@ -1016,7 +1018,11 @@ mod tests {
             .collect();
         seen.sort();
         seen.dedup();
-        assert_eq!(seen.len(), 20, "the split must not drop or duplicate traffic");
+        assert_eq!(
+            seen.len(),
+            20,
+            "the split must not drop or duplicate traffic"
+        );
     }
 
     #[test]

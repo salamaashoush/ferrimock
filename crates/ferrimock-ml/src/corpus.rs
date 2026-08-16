@@ -27,6 +27,37 @@ pub enum Provenance {
     Reviewed,
 }
 
+/// The JSON kind a field's values were recorded as.
+///
+/// Not cosmetic, and not derivable from the text. A numeric string id and a
+/// count are the same digits and differ in exactly one thing: whether the JSON
+/// had quotes around them. A corpus that stores both as text and lets the reader
+/// guess has thrown away the only evidence that separates them, and then
+/// measures the detector against a question nobody could answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueKind {
+    #[default]
+    String,
+    Number,
+    Boolean,
+}
+
+impl ValueKind {
+    /// A recorded value, back in the kind it was recorded as.
+    pub fn as_json(self, value: &str) -> serde_json::Value {
+        match self {
+            Self::String => serde_json::Value::String(value.to_string()),
+            Self::Number | Self::Boolean => serde_json::from_str(value)
+                .ok()
+                .filter(|parsed: &serde_json::Value| parsed.is_number() || parsed.is_boolean())
+                // A disturbed sample is not a number any more -- a redacted count
+                // comes back as `***` -- and it stays the text it became.
+                .unwrap_or_else(|| serde_json::Value::String(value.to_string())),
+        }
+    }
+}
+
 /// One labelled field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Example {
@@ -34,6 +65,22 @@ pub struct Example {
     pub values: Vec<String>,
     pub label: FieldLabel,
     pub provenance: Provenance,
+    /// Which API this field came from -- a generated family, or the host a
+    /// recording was taken against.
+    ///
+    /// The only way to ask whether a model works on an API it has never seen is
+    /// to hold one out of training and score on it, and that question cannot
+    /// even be posed unless every example remembers where it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The JSON kind the values were recorded as.
+    #[serde(default, skip_serializing_if = "is_string_kind")]
+    pub kind: ValueKind,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's `skip_serializing_if` hands a reference
+fn is_string_kind(kind: &ValueKind) -> bool {
+    *kind == ValueKind::String
 }
 
 impl Example {
@@ -48,16 +95,52 @@ impl Example {
             values,
             label,
             provenance,
+            source: None,
+            kind: ValueKind::String,
         }
+    }
+
+    /// The same example, recorded as the JSON kind it really had.
+    #[must_use]
+    pub fn of_kind(mut self, kind: ValueKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// The values, back in the JSON kinds they were recorded as.
+    pub fn json_values(&self) -> Vec<serde_json::Value> {
+        self.values
+            .iter()
+            .map(|value| self.kind.as_json(value))
+            .collect()
+    }
+
+    /// The same example, attributed to the API it came from.
+    #[must_use]
+    pub fn from_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
     }
 
     pub fn features(&self) -> Vec<f32> {
         let refs: Vec<&str> = self.values.iter().map(String::as_str).collect();
-        features::extract(&self.field_name, &refs)
+        features::extract(&self.as_field(&refs))
     }
 
     pub fn value_refs(&self) -> Vec<&str> {
         self.values.iter().map(String::as_str).collect()
+    }
+
+    /// The example as a classifier sees it.
+    ///
+    /// Borrows the values, so the caller holds them: `let values =
+    /// example.value_refs(); example.as_field(&values)`.
+    pub fn as_field<'a>(&'a self, values: &'a [&'a str]) -> crate::Field<'a> {
+        crate::Field {
+            name: &self.field_name,
+            values,
+            kind: self.kind,
+        }
     }
 }
 
@@ -96,6 +179,46 @@ impl Corpus {
             self.examples
                 .iter()
                 .filter(|e| e.provenance == Provenance::Reviewed)
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// The APIs this corpus was drawn from, in a fixed order.
+    pub fn sources(&self) -> Vec<String> {
+        let mut sources: Vec<String> = self
+            .examples
+            .iter()
+            .filter_map(|example| example.source.clone())
+            .collect();
+        sources.sort();
+        sources.dedup();
+        sources
+    }
+
+    /// Everything except one API.
+    ///
+    /// The training half of a held-out-API measurement. Examples with no source
+    /// at all stay in: they are usually reviewed real traffic, and dropping them
+    /// would quietly shrink the only data that matters.
+    #[must_use]
+    pub fn without_source(&self, source: &str) -> Self {
+        Self::new(
+            self.examples
+                .iter()
+                .filter(|example| example.source.as_deref() != Some(source))
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// Only one API. The scoring half of a held-out-API measurement.
+    #[must_use]
+    pub fn only_source(&self, source: &str) -> Self {
+        Self::new(
+            self.examples
+                .iter()
+                .filter(|example| example.source.as_deref() == Some(source))
                 .cloned()
                 .collect(),
         )
@@ -150,10 +273,17 @@ impl Corpus {
             let Some(mut group) = by_label.remove(&label) else {
                 continue;
             };
-            shuffle(&mut group, seed ^ (label.class_index() as u64).wrapping_mul(0x9E37));
+            shuffle(
+                &mut group,
+                seed ^ (label.class_index() as u64).wrapping_mul(0x9E37),
+            );
 
             let portion = |fraction: f64| -> usize {
-                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                #[allow(
+                    clippy::cast_precision_loss,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss
+                )]
                 let count = (group.len() as f64 * fraction.max(0.0)).round() as usize;
                 count.min(group.len())
             };
@@ -258,7 +388,10 @@ mod tests {
         let split = corpus.split(0.7, 0.15, 7);
 
         assert!(
-            split.test.label_counts().contains_key(&FieldLabel::Timezone),
+            split
+                .test
+                .label_counts()
+                .contains_key(&FieldLabel::Timezone),
             "stratification exists precisely so the rare class is measured"
         );
     }
@@ -314,6 +447,47 @@ mod tests {
 
         assert_eq!(loaded.len(), original.len());
         assert_eq!(loaded.label_counts(), original.label_counts());
+    }
+
+    #[test]
+    fn an_api_can_be_held_out_and_scored_on_separately() {
+        let corpus = Corpus::new(vec![
+            example(FieldLabel::Email, 1).from_source("payments-platform"),
+            example(FieldLabel::Email, 2).from_source("payments-platform"),
+            example(FieldLabel::Uuid, 3).from_source("content-platform"),
+            // Reviewed traffic often has no family; it must survive the split.
+            example(FieldLabel::Uuid, 4),
+        ]);
+
+        assert_eq!(
+            corpus.sources(),
+            vec!["content-platform", "payments-platform"]
+        );
+        assert_eq!(corpus.only_source("payments-platform").len(), 2);
+        assert_eq!(
+            corpus.without_source("payments-platform").len(),
+            2,
+            "the unattributed example belongs to no family and stays in training"
+        );
+    }
+
+    #[test]
+    fn a_source_survives_the_round_trip_and_its_absence_does_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sourced.jsonl");
+
+        let original = Corpus::new(vec![
+            example(FieldLabel::Email, 1).from_source("developer-platform"),
+            example(FieldLabel::Uuid, 2),
+        ]);
+        original.save(&path).unwrap();
+        let loaded = Corpus::load(&path).unwrap();
+
+        assert_eq!(
+            loaded.examples.first().and_then(|e| e.source.clone()),
+            Some("developer-platform".to_string())
+        );
+        assert_eq!(loaded.examples.get(1).and_then(|e| e.source.clone()), None);
     }
 
     #[test]

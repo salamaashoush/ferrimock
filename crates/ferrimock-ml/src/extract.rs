@@ -63,6 +63,12 @@ pub struct ExtractOptions {
     pub max_depth: usize,
     /// Fields seen fewer times than this are dropped as noise.
     pub min_occurrences: usize,
+    /// Samples kept per field for the detector, repeats included.
+    ///
+    /// Separate from `max_values`, which bounds what a person is shown. The
+    /// detector needs the repeats: how often a value recurs is what separates an
+    /// enum from a random string.
+    pub max_samples: usize,
 }
 
 impl Default for ExtractOptions {
@@ -71,6 +77,7 @@ impl Default for ExtractOptions {
             max_values: 8,
             max_depth: 6,
             min_occurrences: 1,
+            max_samples: 32,
         }
     }
 }
@@ -80,7 +87,17 @@ pub fn from_interactions(
     interactions: &[RecordedInteraction],
     options: &ExtractOptions,
 ) -> Vec<Candidate> {
-    let mut seen: FxHashMap<String, (Vec<String>, usize)> = FxHashMap::default();
+    /// What has been seen at one pointer so far.
+    #[derive(Default)]
+    struct Field {
+        /// Distinct values, for a person to read.
+        distinct: Vec<String>,
+        /// Values as they were seen, repeats and all, for the detector to read.
+        samples: Vec<String>,
+        occurrences: usize,
+    }
+
+    let mut seen: FxHashMap<String, Field> = FxHashMap::default();
 
     for interaction in interactions {
         let Ok(body) = serde_json::from_str::<JsonValue>(&interaction.response.body) else {
@@ -90,14 +107,20 @@ pub fn from_interactions(
         walk(&body, &mut String::new(), 0, options.max_depth, &mut fields);
 
         for (pointer, values) in fields {
-            let entry = seen.entry(pointer).or_insert_with(|| (Vec::new(), 0));
-            entry.1 += 1;
+            let entry = seen.entry(pointer).or_default();
+            entry.occurrences += 1;
             for value in values {
-                if entry.0.len() >= options.max_values {
-                    break;
+                // Repeats are kept for the detector. Low cardinality is the
+                // whole evidence that a field is an enum, and a deduplicated
+                // list of two values looks like two samples of a random string
+                // -- which is how an audit over a real recording reported
+                // missing enums that consolidation gets right, because
+                // consolidation sees every response.
+                if entry.samples.len() < options.max_samples {
+                    entry.samples.push(value.clone());
                 }
-                if !entry.0.contains(&value) {
-                    entry.0.push(value);
+                if entry.distinct.len() < options.max_values && !entry.distinct.contains(&value) {
+                    entry.distinct.push(value);
                 }
             }
         }
@@ -106,31 +129,19 @@ pub fn from_interactions(
     let detector = TypeDetector::new();
     let mut candidates: Vec<Candidate> = seen
         .into_iter()
-        .filter(|(_, (_, occurrences))| *occurrences >= options.min_occurrences)
-        .map(|(pointer, (values, occurrences))| {
-            let field_name = pointer
-                .rsplit('/')
-                .next()
-                .unwrap_or(&pointer)
-                .to_string();
+        .filter(|(_, field)| field.occurrences >= options.min_occurrences)
+        .map(|(pointer, field)| {
+            let field_name = pointer.rsplit('/').next().unwrap_or(&pointer).to_string();
 
-            let json: Vec<JsonValue> = values
-                .iter()
-                .map(|value| {
-                    serde_json::from_str(value)
-                        .ok()
-                        .filter(|parsed: &JsonValue| parsed.is_number() || parsed.is_boolean())
-                        .unwrap_or_else(|| JsonValue::String(value.clone()))
-                })
-                .collect();
-            let refs: Vec<&JsonValue> = json.iter().collect();
-            let (field_type, _) = detector.detect_type(&field_name, &refs);
+            let borrowed: Vec<&str> = field.samples.iter().map(String::as_str).collect();
+            let (field_type, _) =
+                crate::detector::detect(&detector, &crate::Field::new(&field_name, &borrowed));
 
             Candidate {
                 pointer,
                 field_name,
-                values,
-                occurrences,
+                values: field.distinct,
+                occurrences: field.occurrences,
                 suggestion: FieldLabel::from_field_type(&field_type),
                 label: None,
             }
@@ -209,7 +220,12 @@ fn walk(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use chrono::Utc;
@@ -240,6 +256,38 @@ mod tests {
         let interactions: Vec<RecordedInteraction> =
             bodies.iter().map(|b| interaction(b)).collect();
         from_interactions(&interactions, &ExtractOptions::default())
+    }
+
+    #[test]
+    fn repeats_reach_the_detector_even_though_a_reviewer_sees_them_once() {
+        // The distinction that decides whether an enum is recognisable. A
+        // reviewer wants the distinct values; the detector needs to know that
+        // two of them came back sixteen times each, or low cardinality looks
+        // like two samples of a random string.
+        let bodies: Vec<String> = (0..16)
+            .map(|n| {
+                let value = if n % 2 == 0 { "docx" } else { "pdf" };
+                format!(r#"{{"extension":"{value}"}}"#)
+            })
+            .collect();
+        let refs: Vec<&str> = bodies.iter().map(String::as_str).collect();
+
+        let candidates = extract(&refs);
+        let extension = candidates
+            .iter()
+            .find(|c| c.field_name == "extension")
+            .unwrap();
+
+        assert_eq!(
+            extension.values.len(),
+            2,
+            "a reviewer reads the distinct values"
+        );
+        assert_eq!(extension.occurrences, 16);
+        assert_eq!(
+            extension.suggestion, None,
+            "sixteen samples over two values is an enum, which has no flat label"
+        );
     }
 
     #[test]
@@ -286,9 +334,7 @@ mod tests {
 
     #[test]
     fn list_elements_collapse_to_one_field() {
-        let candidates = extract(&[
-            r#"{"items":[{"type":"a"},{"type":"b"},{"type":"c"}]}"#,
-        ]);
+        let candidates = extract(&[r#"{"items":[{"type":"a"},{"type":"b"},{"type":"c"}]}"#]);
 
         let types: Vec<&Candidate> = candidates
             .iter()

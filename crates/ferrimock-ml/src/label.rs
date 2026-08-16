@@ -143,13 +143,20 @@ impl FieldLabel {
             Self::Email => FieldType::Email,
             Self::Url => FieldType::Url,
             Self::ImageUrl => FieldType::ImageUrl,
-            Self::IsoDate => FieldType::IsoDate,
-            Self::Timestamp => FieldType::Timestamp,
+            Self::IsoDate => FieldType::IsoDate {
+                format: ferrimock::type_detector::DateFormat::Iso,
+            },
+            Self::Timestamp => FieldType::Timestamp {
+                format: ferrimock::type_detector::TimestampFormat::Rfc3339Utc,
+            },
             Self::UnixTimestamp => FieldType::UnixTimestamp,
             Self::PhoneNumber => FieldType::PhoneNumber,
             Self::IpAddress => FieldType::IpAddress,
             Self::Semver => FieldType::Semver,
-            Self::HexString => FieldType::HexString,
+            Self::HexString => FieldType::HexString {
+                length: None,
+                upper: false,
+            },
             Self::Base64 => FieldType::Base64,
             Self::CountryCode => FieldType::CountryCode,
             Self::CurrencyCode => FieldType::CurrencyCode,
@@ -183,19 +190,22 @@ impl FieldLabel {
     /// counted as `Opaque`.
     pub fn from_field_type(field_type: &FieldType) -> Option<Self> {
         Some(match field_type {
+            // The wrapper says how the value was written, not what it is; the
+            // label space is about the class.
+            FieldType::Stringified(inner) => return Self::from_field_type(inner),
             FieldType::Uuid => Self::Uuid,
             FieldType::Email => Self::Email,
             FieldType::Url | FieldType::ApiEndpoint | FieldType::PaginationUrl(_) => Self::Url,
             FieldType::ImageUrl | FieldType::DownloadUrl { .. } => Self::ImageUrl,
-            FieldType::IsoDate => Self::IsoDate,
-            FieldType::Timestamp => Self::Timestamp,
+            FieldType::IsoDate { .. } => Self::IsoDate,
+            FieldType::Timestamp { .. } => Self::Timestamp,
             FieldType::UnixTimestamp
             | FieldType::MillisecondTimestamp
             | FieldType::MicrosecondTimestamp => Self::UnixTimestamp,
             FieldType::PhoneNumber => Self::PhoneNumber,
             FieldType::IpAddress => Self::IpAddress,
             FieldType::Semver => Self::Semver,
-            FieldType::HexString => Self::HexString,
+            FieldType::HexString { .. } => Self::HexString,
             FieldType::Base64 | FieldType::DataUri { .. } => Self::Base64,
             FieldType::CountryCode => Self::CountryCode,
             FieldType::CurrencyCode => Self::CurrencyCode,

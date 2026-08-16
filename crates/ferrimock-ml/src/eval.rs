@@ -224,14 +224,10 @@ pub fn evaluate(classifier: &dyn Classifier, corpus: &Corpus) -> Evaluation {
     for example in &corpus.examples {
         per_class.entry(example.label).or_default().support += 1;
 
-        let Some((predicted, confidence)) =
-            classifier.classify(&example.field_name, &example.value_refs())
-        else {
+        let values = example.value_refs();
+        let Some((predicted, confidence)) = classifier.classify(&example.as_field(&values)) else {
             abstained += 1;
-            per_class
-                .entry(example.label)
-                .or_default()
-                .false_negatives += 1;
+            per_class.entry(example.label).or_default().false_negatives += 1;
             continue;
         };
 
@@ -240,10 +236,7 @@ pub fn evaluate(classifier: &dyn Classifier, corpus: &Corpus) -> Evaluation {
             per_class.entry(predicted).or_default().true_positives += 1;
         } else {
             per_class.entry(predicted).or_default().false_positives += 1;
-            per_class
-                .entry(example.label)
-                .or_default()
-                .false_negatives += 1;
+            per_class.entry(example.label).or_default().false_negatives += 1;
             *confusion.entry((example.label, predicted)).or_insert(0) += 1;
         }
 
@@ -263,7 +256,7 @@ pub fn evaluate(classifier: &dyn Classifier, corpus: &Corpus) -> Evaluation {
         }
     }
 
-        #[allow(clippy::cast_precision_loss)] // Bin counts are far below f64's exact range
+    #[allow(clippy::cast_precision_loss)] // Bin counts are far below f64's exact range
     let calibration = bins
         .into_iter()
         .enumerate()
@@ -289,6 +282,120 @@ pub fn evaluate(classifier: &dyn Classifier, corpus: &Corpus) -> Evaluation {
         confusion,
         calibration,
     }
+}
+
+/// How a classifier did on one API.
+#[derive(Debug, Clone)]
+pub struct SourceScore {
+    pub source: String,
+    pub examples: usize,
+    pub macro_f1: f64,
+    pub coverage_accuracy: f64,
+}
+
+/// Score a classifier separately on each API the corpus was drawn from.
+///
+/// An average over the whole corpus hides the case that matters: a model can
+/// score 0.99 overall while being useless on one family, and the family it is
+/// useless on is the one somebody is about to point it at. The number worth
+/// quoting is the worst row here, not the mean.
+pub fn per_source(classifier: &dyn Classifier, corpus: &Corpus) -> Vec<SourceScore> {
+    corpus
+        .sources()
+        .into_iter()
+        .map(|source| {
+            let slice = corpus.only_source(&source);
+            let evaluation = evaluate(classifier, &slice);
+            SourceScore {
+                source,
+                examples: slice.len(),
+                macro_f1: evaluation.macro_f1(),
+                coverage_accuracy: evaluation.coverage_accuracy(),
+            }
+        })
+        .collect()
+}
+
+/// What a model scored on an API that was kept out of its training.
+///
+/// The nearest thing to an answer to "will this work on a service nobody has
+/// seen". Everything else measured here is measured on data drawn the same way
+/// the training data was, and so says nothing about a convention the corpus does
+/// not contain.
+#[derive(Debug, Clone)]
+pub struct HeldOutScore {
+    pub source: String,
+    pub examples: usize,
+    /// The candidate's macro F1 on the family it never trained on.
+    pub candidate: f64,
+    /// The built-in detector's, on the same rows. It never trains at all, so it
+    /// is the floor a held-out score has to clear to mean anything.
+    pub heuristic: f64,
+}
+
+impl HeldOutScore {
+    pub fn beats_heuristic(&self) -> bool {
+        self.candidate > self.heuristic
+    }
+}
+
+/// Score a classifier on an API held out of its training, against the detector.
+pub fn held_out(
+    candidate: &dyn Classifier,
+    heuristic: &dyn Classifier,
+    corpus: &Corpus,
+    source: &str,
+) -> HeldOutScore {
+    let slice = corpus.only_source(source);
+    HeldOutScore {
+        source: source.to_string(),
+        examples: slice.len(),
+        candidate: evaluate(candidate, &slice).macro_f1(),
+        heuristic: evaluate(heuristic, &slice).macro_f1(),
+    }
+}
+
+/// Render a set of held-out results, worst first.
+///
+/// Worst first on purpose: the mean of these is the number that flatters, and
+/// the minimum is the number that predicts the next complaint.
+pub fn held_out_report(scores: &[HeldOutScore]) -> String {
+    let mut ranked: Vec<&HeldOutScore> = scores.iter().collect();
+    ranked.sort_by(|left, right| {
+        left.candidate
+            .partial_cmp(&right.candidate)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "held-out APIs (trained without each, then scored on it), worst first:"
+    );
+    for score in &ranked {
+        let verdict = if score.beats_heuristic() {
+            "beats the detector"
+        } else {
+            "LOSES to the detector"
+        };
+        let _ = writeln!(
+            out,
+            "  {:<24} {:>6} examples   candidate {:.3}  detector {:.3}   {verdict}",
+            score.source, score.examples, score.candidate, score.heuristic
+        );
+    }
+
+    if let Some(worst) = ranked.first() {
+        #[allow(clippy::cast_precision_loss)] // family counts are tiny
+        let mean = scores.iter().map(|score| score.candidate).sum::<f64>() / scores.len() as f64;
+        let _ = writeln!(
+            out,
+            "\n  worst {:.3} on {}, mean {:.3} -- the worst is the one that predicts what \
+             happens on an API nobody has measured",
+            worst.candidate, worst.source, mean
+        );
+    }
+    out
 }
 
 /// Whether a candidate has earned its place.
@@ -343,8 +450,7 @@ impl ShipGate {
         Self {
             beats_heuristic: candidate.macro_f1() > heuristic.macro_f1(),
             beats_baseline: candidate.macro_f1() > baseline.macro_f1(),
-            calibration_ok: candidate.expected_calibration_error()
-                <= Self::MAX_CALIBRATION_ERROR,
+            calibration_ok: candidate.expected_calibration_error() <= Self::MAX_CALIBRATION_ERROR,
             measured_on_real_data: reviewed.len() >= Self::MIN_REVIEWED_EXAMPLES,
         }
     }
@@ -380,8 +486,7 @@ impl ShipGate {
         }
         if !self.calibration_ok {
             reasons.push(
-                "confidence is not calibrated enough to compare against the detector's"
-                    .to_string(),
+                "confidence is not calibrated enough to compare against the detector's".to_string(),
             );
         }
         format!("does not ship: {}", reasons.join("; "))
@@ -399,7 +504,7 @@ mod tests {
         fn name(&self) -> &str {
             "always"
         }
-        fn classify(&self, _: &str, _: &[&str]) -> Option<(FieldLabel, f64)> {
+        fn classify(&self, _: &crate::Field<'_>) -> Option<(FieldLabel, f64)> {
             Some((self.0, self.1))
         }
     }
@@ -409,10 +514,10 @@ mod tests {
         fn name(&self) -> &str {
             "perfect"
         }
-        fn classify(&self, field_name: &str, _: &[&str]) -> Option<(FieldLabel, f64)> {
+        fn classify(&self, field: &crate::Field<'_>) -> Option<(FieldLabel, f64)> {
             FieldLabel::ALL
                 .iter()
-                .find(|label| label.name() == field_name)
+                .find(|label| label.name() == field.name)
                 .map(|label| (*label, 0.95))
         }
     }
@@ -422,7 +527,7 @@ mod tests {
         fn name(&self) -> &str {
             "silent"
         }
-        fn classify(&self, _: &str, _: &[&str]) -> Option<(FieldLabel, f64)> {
+        fn classify(&self, _: &crate::Field<'_>) -> Option<(FieldLabel, f64)> {
             None
         }
     }
@@ -505,6 +610,109 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_score_per_api_finds_the_family_an_average_would_hide() {
+        // Right about every family but one. The mean says the model is fine; the
+        // per-family table says which service is about to break.
+        let mut examples = Vec::new();
+        for _ in 0..100 {
+            examples.push(
+                Example::new(
+                    "email",
+                    vec!["v".to_string()],
+                    FieldLabel::Email,
+                    Provenance::Generated,
+                )
+                .from_source("good-family"),
+            );
+        }
+        for _ in 0..20 {
+            examples.push(
+                Example::new(
+                    "uuid",
+                    vec!["v".to_string()],
+                    FieldLabel::Uuid,
+                    Provenance::Generated,
+                )
+                .from_source("bad-family"),
+            );
+        }
+        let corpus = Corpus::new(examples);
+
+        let scores = per_source(&Always(FieldLabel::Email, 0.9), &corpus);
+        assert_eq!(scores.len(), 2);
+
+        let bad = scores
+            .iter()
+            .find(|score| score.source == "bad-family")
+            .unwrap();
+        let good = scores
+            .iter()
+            .find(|score| score.source == "good-family")
+            .unwrap();
+        assert_eq!(bad.macro_f1, 0.0);
+        assert!(good.macro_f1 > 0.99);
+        assert!(
+            evaluate(&Always(FieldLabel::Email, 0.9), &corpus).coverage_accuracy() > 0.8,
+            "the overall number has to look good, or this test proves nothing"
+        );
+    }
+
+    #[test]
+    fn a_held_out_score_is_reported_against_the_detector_that_never_trained() {
+        let corpus = Corpus::new(
+            (0..30)
+                .map(|_| {
+                    Example::new(
+                        FieldLabel::Uuid.name(),
+                        vec!["v".to_string()],
+                        FieldLabel::Uuid,
+                        Provenance::Generated,
+                    )
+                    .from_source("unseen-family")
+                })
+                .collect(),
+        );
+
+        let strong = held_out(
+            &Perfect,
+            &Always(FieldLabel::Email, 0.5),
+            &corpus,
+            "unseen-family",
+        );
+        assert_eq!(strong.examples, 30);
+        assert!(strong.beats_heuristic());
+
+        let weak = held_out(
+            &Always(FieldLabel::Email, 0.5),
+            &Perfect,
+            &corpus,
+            "unseen-family",
+        );
+        assert!(!weak.beats_heuristic());
+
+        let report = held_out_report(&[strong, weak]);
+        assert!(report.contains("LOSES to the detector"), "{report}");
+        assert!(report.contains("worst"), "{report}");
+    }
+
+    #[test]
+    fn a_held_out_report_ranks_the_worst_family_first() {
+        let score = |source: &str, candidate: f64| HeldOutScore {
+            source: source.to_string(),
+            examples: 100,
+            candidate,
+            heuristic: 0.5,
+        };
+        let report = held_out_report(&[score("fine", 0.95), score("broken", 0.20)]);
+        let broken = report.find("broken").unwrap_or(usize::MAX);
+        let fine = report.find("fine").unwrap_or(0);
+        assert!(
+            broken < fine,
+            "the worst family has to be read first:\n{report}"
+        );
+    }
+
     /// A test split of reviewed examples, large enough to satisfy the gate.
     fn reviewed_corpus() -> Corpus {
         let examples = (0..ShipGate::MIN_REVIEWED_EXAMPLES + 10)
@@ -559,7 +767,10 @@ mod tests {
             &generated,
         );
         assert!(!gate.measured_on_real_data);
-        assert!(!gate.passed(), "a perfect score on synthetic data is not a pass");
+        assert!(
+            !gate.passed(),
+            "a perfect score on synthetic data is not a pass"
+        );
         assert!(gate.explain().contains("generator"));
     }
 
@@ -574,7 +785,12 @@ mod tests {
         ));
         let corpus = Corpus::new(examples);
 
-        let gate = ShipGate::assess(&Perfect, &Always(FieldLabel::Uuid, 0.5), &Always(FieldLabel::Uuid, 0.5), &corpus);
+        let gate = ShipGate::assess(
+            &Perfect,
+            &Always(FieldLabel::Uuid, 0.5),
+            &Always(FieldLabel::Uuid, 0.5),
+            &corpus,
+        );
         assert!(!gate.measured_on_real_data);
     }
 

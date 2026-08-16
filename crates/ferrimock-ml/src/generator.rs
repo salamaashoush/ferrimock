@@ -5,312 +5,251 @@
 //! label is not an opinion about the value, it is a record of the value's
 //! origin.
 //!
-//! That is the difference from the earlier attempt, which asked the built-in
-//! detector to label synthetic data and then measured the resulting model
-//! against the detector. A student cannot outscore the teacher that graded the
-//! exam, and the scores said so without anyone noticing what they meant.
+//! That is the difference from the attempt before this one, which asked the
+//! built-in detector to label synthetic data and then measured the resulting
+//! model against the detector. A student cannot outscore the teacher that graded
+//! the exam, and the scores said so without anyone noticing what they meant.
 //!
-//! Synthetic data has a real limit: it can only contain what someone thought to
-//! generate, and a model trained on it learns the generator as much as the
-//! domain. It is the floor, not the corpus. [`crate::corpus::Provenance`] marks
-//! which examples came from here so a measurement over real, reviewed traffic
-//! can be reported separately.
+//! ## What makes a corpus wide
+//!
+//! Not its row count. A million rows drawn from one API, in one language, with
+//! one identifier shape, teach exactly as much as the few hundred distinct
+//! things they were drawn from. So generation is organised around the axes that
+//! actually vary between services:
+//!
+//! - the [`dialect`] a field belongs to: seventeen families of naming, id and
+//!   date conventions, modelled on the house styles real APIs are written in;
+//! - the [`lexicon`] its text is written in: twenty locales, most of them not
+//!   ASCII;
+//! - the [`names`] it goes by, including the ones that say nothing and the few
+//!   that say something false;
+//! - the [`values`] it holds, drawn from twenty-one identifier shapes and
+//!   sixteen date formats;
+//! - the [`noise`] a recording carries: empty samples, redactions, truncations,
+//!   placeholders.
+//!
+//! [`census`] counts what came out, per label, so "wide" is a measurement rather
+//! than a claim.
+//!
+//! ## Reproducible, and addressable by index
+//!
+//! An example is a pure function of its index and the corpus seed. Nothing is
+//! held in memory to reproduce a row, which is what makes a corpus of millions
+//! streamable, shardable across machines, and identical when regenerated.
+//!
+//! ## What synthetic data still cannot do
+//!
+//! It can only contain what someone thought to generate. Every convention here
+//! is one that was written down, and a model trained on it has learned this
+//! table as much as it has learned the domain. [`crate::eval::ShipGate`] is what
+//! stops that from being mistaken for evidence: a model still cannot ship on
+//! generated data, however wide the generation.
+//!
+//! The nearest honest approximation of "does this work on an API it has never
+//! seen" is to hold an entire family out of training and score on it --
+//! [`Recipe::without`] and [`crate::eval::per_source`] are that experiment.
 
-use crate::corpus::{Corpus, Example, Provenance};
+pub mod census;
+pub mod dialect;
+pub mod lexicon;
+pub mod names;
+pub mod noise;
+pub mod rng;
+pub mod values;
+
+use crate::corpus::{Corpus, Example, Provenance, ValueKind};
 use crate::label::FieldLabel;
+use dialect::ApiDialect;
+use rng::Rng;
+use std::path::Path;
 
-/// Deterministic value source. Seeded rather than random so a corpus can be
-/// regenerated exactly, which is what makes two training runs comparable.
-struct Rng(u64);
+/// How many samples a field carries, weighted towards the few that a recording
+/// usually has. The tail matters: agreement features say nothing about a field
+/// seen once, and everything about one seen ten times.
+const SAMPLE_COUNT_WEIGHTS: [u32; 10] = [14, 16, 16, 14, 12, 9, 7, 5, 4, 3];
 
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
-    fn below(&mut self, bound: usize) -> usize {
-        if bound == 0 {
-            0
-        } else {
-            (self.next() % bound as u64) as usize
-        }
-    }
-
-    /// Pick an option, falling back to `fallback` only if a table is empty --
-    /// which would be a bug in the table, not in the draw.
-    fn choose<'a>(&mut self, options: &'a [&'a str]) -> &'a str {
-        let index = self.below(options.len());
-        options.get(index).copied().unwrap_or("")
-    }
-
-    fn hex(&mut self, length: usize) -> String {
-        const DIGITS: &[u8] = b"0123456789abcdef";
-        (0..length)
-            .map(|_| {
-                let index = (self.next() % DIGITS.len() as u64) as usize;
-                char::from(DIGITS.get(index).copied().unwrap_or(b'0'))
-            })
-            .collect()
-    }
-
-    fn digits(&mut self, length: usize) -> String {
-        (0..length)
-            .map(|_| char::from(b'0' + (self.next() % 10) as u8))
-            .collect()
-    }
-
-    fn alnum(&mut self, length: usize) -> String {
-        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        (0..length)
-            .map(|_| {
-                let index = (self.next() % ALPHABET.len() as u64) as usize;
-                char::from(ALPHABET.get(index).copied().unwrap_or(b'a'))
-            })
-            .collect()
-    }
-}
-
-const WORDS: [&str; 12] = [
-    "alpha", "bravo", "delta", "echo", "kilo", "lima", "mike", "nova", "oscar", "romeo", "sierra",
-    "tango",
-];
-const FIRST_NAMES: [&str; 8] = [
-    "Ada", "Grace", "Alan", "Edsger", "Barbara", "Ken", "Radia", "Leslie",
-];
-const LAST_NAMES: [&str; 8] = [
-    "Lovelace", "Hopper", "Turing", "Dijkstra", "Liskov", "Thompson", "Perlman", "Lamport",
-];
-
-/// Build a corpus with `per_label` examples of each label.
+/// A corpus, described rather than materialised.
 ///
-/// Field names are drawn from several plausible spellings per label, including
-/// some that say nothing (`value`, `data`), so a model cannot pass by reading
-/// the name alone. Real recordings are full of fields named `value`.
-fn generate(per_label: usize, seed: u64) -> Vec<Example> {
-    let mut rng = Rng(seed | 1);
-    let mut examples = Vec::with_capacity(per_label * FieldLabel::ALL.len());
+/// Holds no examples: it is the rule for producing row `n`, which is what lets
+/// the same description answer for a thousand rows or ten million.
+#[derive(Debug, Clone)]
+pub struct Recipe {
+    /// How many examples the corpus holds.
+    pub count: usize,
+    pub seed: u64,
+    /// The families drawn from. Narrowing this is how a family is held out of
+    /// training so it can be scored as an API the model has never seen.
+    pub dialects: Vec<ApiDialect>,
+}
 
-    for label in FieldLabel::ALL {
-        for _ in 0..per_label {
-            let sample_count = 1 + rng.below(6);
-            let values: Vec<String> = (0..sample_count).map(|_| value_for(label, &mut rng)).collect();
-            let name = name_for(label, &mut rng);
-            examples.push(Example::new(name, values, label, Provenance::Generated));
+impl Recipe {
+    /// A corpus of `count` examples drawn from every family.
+    pub fn new(count: usize, seed: u64) -> Self {
+        Self {
+            count,
+            seed,
+            dialects: ApiDialect::ALL.to_vec(),
         }
     }
 
-    examples
-}
-
-fn name_for(label: FieldLabel, rng: &mut Rng) -> String {
-    // One name in five says nothing useful, so the model cannot lean entirely on
-    // the field name -- which is exactly what real traffic does to it.
-    let uninformative = ["value", "data", "field", "attr", "v"];
-    if rng.below(5) == 0 {
-        return (rng.choose(&uninformative)).to_string();
+    /// `per_label` examples of each label, from every family.
+    pub fn balanced(per_label: usize, seed: u64) -> Self {
+        Self::new(per_label * FieldLabel::ALL.len(), seed)
     }
 
-    let options: &[&str] = match label {
-        FieldLabel::Uuid => &["id", "uuid", "guid", "request_id", "traceId"],
-        FieldLabel::Email => &["email", "user_email", "contact", "emailAddress"],
-        FieldLabel::Url => &["url", "link", "href", "callback_url"],
-        FieldLabel::ImageUrl => &["avatar", "icon_url", "thumbnail", "image"],
-        FieldLabel::IsoDate => &["date", "due_date", "birthday", "startDate"],
-        FieldLabel::Timestamp => &["created_at", "updated_at", "timestamp", "modifiedAt"],
-        FieldLabel::UnixTimestamp => &["ts", "epoch", "created", "expires_at"],
-        FieldLabel::PhoneNumber => &["phone", "mobile", "tel", "phoneNumber"],
-        FieldLabel::IpAddress => &["ip", "client_ip", "remote_addr", "ipAddress"],
-        FieldLabel::Semver => &["version", "app_version", "semver"],
-        FieldLabel::HexString => &["hash", "sha1", "checksum", "digest"],
-        FieldLabel::Base64 => &["payload", "blob", "encoded", "content"],
-        FieldLabel::CountryCode => &["country", "country_code", "region"],
-        FieldLabel::CurrencyCode => &["currency", "currency_code"],
-        FieldLabel::LocaleCode => &["locale", "language", "lang"],
-        FieldLabel::Timezone => &["timezone", "tz", "time_zone"],
-        FieldLabel::PostalCode => &["zip", "postal_code", "postcode"],
-        FieldLabel::MimeType => &["content_type", "mime_type", "type"],
-        FieldLabel::FileName => &["filename", "name", "file"],
-        FieldLabel::FilePath => &["path", "location", "file_path"],
-        FieldLabel::Username => &["username", "login", "handle", "account"],
-        FieldLabel::PersonName => &["name", "full_name", "display_name", "owner"],
-        FieldLabel::Sentence => &["description", "summary", "message", "note"],
-        FieldLabel::NumericStringId => &["id", "file_id", "object_id", "parentId"],
-        FieldLabel::Token => &["token", "access_token", "api_key", "session"],
-        FieldLabel::ETag => &["etag", "revision", "_rev"],
-        FieldLabel::Boolean => &["enabled", "is_active", "deleted", "hasMore"],
-        FieldLabel::Number => &["count", "size", "total", "offset"],
-        FieldLabel::Opaque => &["ref", "code", "marker", "cursor"],
-    };
-    rng.choose(options).to_string()
+    /// The same corpus with one family left out.
+    #[must_use]
+    pub fn without(mut self, held_out: ApiDialect) -> Self {
+        self.dialects.retain(|dialect| *dialect != held_out);
+        if self.dialects.is_empty() {
+            self.dialects = vec![held_out];
+        }
+        self
+    }
+
+    /// The same corpus drawn only from the families named.
+    #[must_use]
+    pub fn only(mut self, dialects: Vec<ApiDialect>) -> Self {
+        if !dialects.is_empty() {
+            self.dialects = dialects;
+        }
+        self
+    }
+
+    /// The example at `index`.
+    ///
+    /// A pure function of the index and the seed, which is the whole basis of
+    /// streaming: nothing before row `n` has to exist for row `n` to.
+    pub fn example(&self, index: u64) -> Example {
+        let labels = FieldLabel::ALL.len() as u64;
+        let families = self.dialects.len().max(1) as u64;
+
+        // The label turns over fastest so that any prefix of the corpus is
+        // balanced across labels, and the family turns over once per lap so that
+        // each label meets every family in turn.
+        #[allow(clippy::cast_possible_truncation)] // both are moduli of small counts
+        let (label_index, dialect_index) = (
+            (index % labels) as usize,
+            ((index / labels) % families) as usize,
+        );
+        let label = FieldLabel::from_class_index(label_index).unwrap_or(FieldLabel::Opaque);
+        let dialect = self
+            .dialects
+            .get(dialect_index)
+            .copied()
+            .unwrap_or(ApiDialect::MixedLegacy);
+
+        let mut rng = Rng::for_index(self.seed, index);
+        build(label, dialect, &mut rng)
+    }
+
+    /// Every example, produced as it is asked for.
+    pub fn iter(&self) -> impl Iterator<Item = Example> + '_ {
+        (0..self.count as u64).map(|index| self.example(index))
+    }
+
+    /// Every example, materialised.
+    ///
+    /// Fine for the sizes a model is fitted on interactively. For millions,
+    /// prefer [`Self::iter`] or [`Self::write_jsonl`], which hold one example at
+    /// a time.
+    pub fn corpus(&self) -> Corpus {
+        Corpus::new(self.iter().collect())
+    }
+
+    /// Write the corpus as JSON Lines, one example at a time.
+    ///
+    /// Streamed rather than collected: a corpus of millions is larger than it is
+    /// worth holding in memory, and the point of an indexable recipe is that it
+    /// never has to be.
+    pub fn write_jsonl(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+        use std::io::{BufWriter, Write};
+
+        let file = std::fs::File::create(path)?;
+        let mut out = BufWriter::with_capacity(1 << 20, file);
+        for example in self.iter() {
+            serde_json::to_writer(&mut out, &example).map_err(std::io::Error::other)?;
+            out.write_all(b"\n")?;
+        }
+        out.flush()
+    }
+
+    /// A census over the first `sample` examples.
+    ///
+    /// Reading the whole of a large corpus to count its shapes costs as much as
+    /// generating it; a prefix is balanced across labels by construction and
+    /// says the same thing.
+    pub fn census(&self, sample: usize) -> census::Census {
+        let taken = sample.min(self.count);
+        census::Census::of(&Corpus::new(
+            (0..taken as u64).map(|index| self.example(index)).collect(),
+        ))
+    }
 }
 
-#[allow(clippy::too_many_lines)] // One arm per label; splitting it would only hide the table
-fn value_for(label: FieldLabel, rng: &mut Rng) -> String {
+/// One example: a name, the values it was seen holding, and what made them.
+fn build(label: FieldLabel, dialect: ApiDialect, rng: &mut Rng) -> Example {
+    let name = names::draw(label, dialect, rng);
+    let style = values::FieldStyle::draw(dialect, label, name.informative, rng);
+
+    let samples = rng.weighted(&SAMPLE_COUNT_WEIGHTS) + 1;
+    let mut drawn: Vec<String> = (0..samples)
+        .map(|_| values::value(label, style, rng))
+        .collect();
+    noise::disturb(&mut drawn, dialect.noise(), rng);
+
+    let kind = kind_of(label, &drawn, rng);
+    Example::new(name.text, drawn, label, Provenance::Generated)
+        .from_source(dialect.name())
+        .of_kind(kind)
+}
+
+/// The JSON kind a field of this label was recorded as.
+///
+/// Not a detail. A count and a numeric string id are the same digits, and the
+/// quotes around them are the only thing that tells them apart -- so a corpus
+/// that does not record this is asking the detector a question with no answer.
+fn kind_of(label: FieldLabel, values: &[String], rng: &mut Rng) -> ValueKind {
     match label {
-        FieldLabel::Uuid => format!(
-            "{}-{}-4{}-{}{}-{}",
-            rng.hex(8),
-            rng.hex(4),
-            rng.hex(3),
-            rng.choose(&["8", "9", "a", "b"]),
-            rng.hex(3),
-            rng.hex(12)
-        ),
-        FieldLabel::Email => format!(
-            "{}.{}@{}.{}",
-            rng.choose(&WORDS),
-            rng.choose(&WORDS),
-            rng.choose(&["example", "test", "mail"]),
-            rng.choose(&["com", "org", "net"])
-        ),
-        FieldLabel::Url => format!(
-            "https://{}.example.com/{}/{}",
-            rng.choose(&WORDS),
-            rng.choose(&WORDS),
-            rng.digits(3)
-        ),
-        FieldLabel::ImageUrl => format!(
-            "https://cdn.example.com/{}/{}.{}",
-            rng.choose(&WORDS),
-            rng.hex(8),
-            rng.choose(&["png", "jpg", "webp", "svg"])
-        ),
-        FieldLabel::IsoDate => format!(
-            "20{:02}-{:02}-{:02}",
-            rng.below(30),
-            1 + rng.below(12),
-            1 + rng.below(28)
-        ),
-        FieldLabel::Timestamp => format!(
-            "20{:02}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-            rng.below(30),
-            1 + rng.below(12),
-            1 + rng.below(28),
-            rng.below(24),
-            rng.below(60),
-            rng.below(60)
-        ),
-        FieldLabel::UnixTimestamp => (1_600_000_000 + rng.below(90_000_000)).to_string(),
-        FieldLabel::PhoneNumber => format!(
-            "+{} {} {}",
-            1 + rng.below(60),
-            rng.digits(3),
-            rng.digits(7)
-        ),
-        FieldLabel::IpAddress => format!(
-            "{}.{}.{}.{}",
-            rng.below(256),
-            rng.below(256),
-            rng.below(256),
-            rng.below(256)
-        ),
-        FieldLabel::Semver => format!(
-            "{}.{}.{}",
-            rng.below(10),
-            rng.below(30),
-            rng.below(20)
-        ),
-        FieldLabel::HexString => rng.hex(40),
-        FieldLabel::Base64 => {
-            let length = 20 + rng.below(20);
-            format!("{}==", rng.alnum(length))
-        }
-        FieldLabel::CountryCode => (rng.choose(&[
-            "US", "GB", "DE", "FR", "JP", "BR", "IN", "AU", "CA", "NL",
-        ]))
-        .to_string(),
-        FieldLabel::CurrencyCode => (rng.choose(&[
-            "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "SEK",
-        ]))
-        .to_string(),
-        FieldLabel::LocaleCode => (rng.choose(&[
-            "en-US", "en-GB", "de-DE", "fr-FR", "ja-JP", "pt-BR", "es-ES",
-        ]))
-        .to_string(),
-        FieldLabel::Timezone => (rng.choose(&[
-            "America/New_York",
-            "Europe/London",
-            "Europe/Berlin",
-            "Asia/Tokyo",
-            "Australia/Sydney",
-        ]))
-        .to_string(),
-        FieldLabel::PostalCode => {
-            if rng.below(2) == 0 {
-                rng.digits(5)
+        // A flag is a JSON boolean only when it is spelled as one. `yes`, `Y` and
+        // `True` are strings, and that is why the detector has to read them.
+        FieldLabel::Boolean => {
+            if values
+                .iter()
+                .all(|value| value == "true" || value == "false")
+            {
+                ValueKind::Boolean
             } else {
-                let outward = rng.alnum(3).to_uppercase();
-                let inward = rng.alnum(3).to_uppercase();
-                format!("{outward} {inward}")
+                ValueKind::String
             }
         }
-        FieldLabel::MimeType => (rng.choose(&[
-            "application/json",
-            "text/html",
-            "image/png",
-            "application/pdf",
-            "text/plain",
-        ]))
-        .to_string(),
-        FieldLabel::FileName => format!(
-            "{}_{}.{}",
-            rng.choose(&WORDS),
-            rng.digits(3),
-            rng.choose(&["pdf", "docx", "png", "csv", "zip"])
-        ),
-        FieldLabel::FilePath => format!(
-            "/{}/{}/{}.{}",
-            rng.choose(&WORDS),
-            rng.choose(&WORDS),
-            rng.choose(&WORDS),
-            rng.choose(&["txt", "json", "yaml"])
-        ),
-        FieldLabel::Username => format!("{}{}", rng.choose(&WORDS), rng.digits(2)),
-        FieldLabel::PersonName => format!("{} {}", rng.choose(&FIRST_NAMES), rng.choose(&LAST_NAMES)),
-        FieldLabel::Sentence => format!(
-            "The {} {} was {} by the {}.",
-            rng.choose(&WORDS),
-            rng.choose(&WORDS),
-            rng.choose(&["updated", "removed", "shared", "renamed"]),
-            rng.choose(&WORDS)
-        ),
-        FieldLabel::NumericStringId => {
-            let length = 11 + rng.below(3);
-            rng.digits(length)
+        FieldLabel::UnixTimestamp => ValueKind::Number,
+        // Most counts are numbers, and a minority come back quoted -- a price as
+        // `"12.50"`, a total as `"42"`. Both happen, and a corpus with only the
+        // first teaches that digits are always a number.
+        FieldLabel::Number => {
+            if rng.chance(5, 6) {
+                ValueKind::Number
+            } else {
+                ValueKind::String
+            }
         }
-        FieldLabel::Token => format!(
-            "{}.{}.{}",
-            rng.alnum(16),
-            rng.alnum(32),
-            rng.alnum(24)
-        ),
-        FieldLabel::ETag => {
-            let length = 1 + rng.below(2);
-            rng.digits(length)
-        }
-        FieldLabel::Boolean => (rng.choose(&["true", "false"])).to_string(),
-        FieldLabel::Number => rng.below(100_000).to_string(),
-        // The residual, and the only class that must not look like anything:
-        // short opaque handles with no structure to find.
-        FieldLabel::Opaque => {
-            let length = 4 + rng.below(8);
-            rng.alnum(length)
-        }
+        // Everything else is text, including the identifiers made of digits --
+        // which is the whole reason they are identifiers rather than numbers.
+        _ => ValueKind::String,
     }
 }
 
-/// Wrap generated examples into a corpus.
+/// `per_label` examples of each label, from every family.
 pub fn generate_corpus(per_label: usize, seed: u64) -> Corpus {
-    Corpus::new(generate(per_label, seed))
+    Recipe::balanced(per_label, seed).corpus()
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use rustc_hash::FxHashSet;
 
     #[test]
     fn every_label_is_represented_equally() {
@@ -318,42 +257,264 @@ mod tests {
         let counts = corpus.label_counts();
 
         assert_eq!(counts.len(), FieldLabel::ALL.len());
-        assert!(counts.values().all(|count| *count == 20));
+        assert!(
+            counts.values().all(|count| *count == 20),
+            "labels came out uneven: {counts:?}"
+        );
     }
 
     #[test]
-    fn the_same_seed_gives_the_same_corpus() {
-        let first = generate_corpus(5, 42);
-        let second = generate_corpus(5, 42);
+    fn every_family_is_represented() {
+        let corpus = generate_corpus(40, 2);
+        let sources: FxHashSet<&str> = corpus
+            .examples
+            .iter()
+            .filter_map(|example| example.source.as_deref())
+            .collect();
+        assert_eq!(
+            sources.len(),
+            ApiDialect::ALL.len(),
+            "a family never appeared: {sources:?}"
+        );
+    }
 
-        let render = |c: &Corpus| -> Vec<String> {
-            c.examples
+    #[test]
+    fn a_held_out_family_never_appears() {
+        // The basis of the only honest test of generalisation there is: train
+        // without a family, then score on it.
+        let recipe = Recipe::new(4_000, 3).without(ApiDialect::PaymentsPlatform);
+        assert!(
+            recipe.iter().all(|example| {
+                example.source.as_deref() != Some(ApiDialect::PaymentsPlatform.name())
+            }),
+            "the held-out family leaked into training"
+        );
+
+        let only = Recipe::new(500, 3).only(vec![ApiDialect::PaymentsPlatform]);
+        assert!(only.iter().all(|example| {
+            example.source.as_deref() == Some(ApiDialect::PaymentsPlatform.name())
+        }));
+    }
+
+    #[test]
+    fn holding_every_family_out_leaves_one_rather_than_nothing() {
+        // Silently producing an empty corpus would read as a model that scored
+        // perfectly on no data.
+        let mut recipe = Recipe::new(100, 1);
+        for dialect in ApiDialect::ALL {
+            recipe = recipe.without(dialect);
+        }
+        assert_eq!(recipe.dialects.len(), 1);
+        assert_eq!(recipe.iter().count(), 100);
+    }
+
+    #[test]
+    fn a_row_is_a_function_of_its_index_and_seed_alone() {
+        let recipe = Recipe::new(1_000_000, 42);
+        let far = recipe.example(999_999);
+        let again = recipe.example(999_999);
+
+        assert_eq!(far.field_name, again.field_name);
+        assert_eq!(far.values, again.values);
+        assert_eq!(far.label, again.label);
+        assert_eq!(far.source, again.source);
+    }
+
+    #[test]
+    fn the_same_seed_gives_the_same_corpus_and_a_different_one_does_not() {
+        let render = |corpus: &Corpus| -> Vec<String> {
+            corpus
+                .examples
                 .iter()
-                .map(|e| format!("{}={}", e.field_name, e.values.join(",")))
+                .map(|example| format!("{}={}", example.field_name, example.values.join(",")))
                 .collect()
         };
-        assert_eq!(render(&first), render(&second));
+
+        assert_eq!(
+            render(&generate_corpus(5, 42)),
+            render(&generate_corpus(5, 42))
+        );
+        assert_ne!(
+            render(&generate_corpus(5, 1)),
+            render(&generate_corpus(5, 2))
+        );
     }
 
     #[test]
-    fn a_different_seed_gives_different_values() {
-        let first = generate_corpus(5, 1);
-        let second = generate_corpus(5, 2);
-        let values = |c: &Corpus| -> Vec<String> {
-            c.examples.iter().flat_map(|e| e.values.clone()).collect()
+    fn a_prefix_of_a_large_corpus_is_already_balanced() {
+        // What makes a census over a sample worth reading, and what makes a
+        // streamed corpus safe to stop early.
+        let recipe = Recipe::new(10_000_000, 7);
+        let prefix = Corpus::new((0..2_900_u64).map(|index| recipe.example(index)).collect());
+        let counts = prefix.label_counts();
+
+        assert_eq!(counts.len(), FieldLabel::ALL.len());
+        assert!(counts.values().all(|count| *count == 100), "{counts:?}");
+    }
+
+    #[test]
+    fn the_corpus_is_wide_along_every_axis_it_claims_to_be() {
+        // The claim this whole module exists to make, stated as a measurement
+        // rather than left to the reader.
+        let census = Recipe::new(60_000, 11).census(60_000);
+
+        assert!(
+            census.distinct_names > 1_500,
+            "only {} distinct field names",
+            census.distinct_names
+        );
+        assert!(
+            census.distinct_shapes > 4_000,
+            "only {} distinct value shapes",
+            census.distinct_shapes
+        );
+        assert_eq!(census.sources.len(), ApiDialect::ALL.len());
+        assert!(
+            census.non_ascii_share > 0.02,
+            "only {:.3} of values are non-ASCII",
+            census.non_ascii_share
+        );
+        assert!(
+            census.placeholder_share > 0.002,
+            "only {:.4} of values are empty or a placeholder",
+            census.placeholder_share
+        );
+        assert!(
+            census.mean_samples > 2.0,
+            "fields carry only {:.1} samples on average",
+            census.mean_samples
+        );
+    }
+
+    #[test]
+    fn no_label_is_covered_by_only_a_handful_of_names_or_shapes() {
+        // A label reachable by four names and two shapes has been memorised
+        // rather than learned, however many rows carry it. The shape floor is
+        // the lower of the two because some labels have few shapes to have: a
+        // country code is two letters, and covering both cases is covering all
+        // of it.
+        let census = Recipe::new(60_000, 13).census(60_000);
+        let thin = census.thin(25, 15);
+        assert!(
+            thin.is_empty(),
+            "these labels are too narrowly covered: {:?}",
+            thin.iter()
+                .map(|(label, coverage)| format!(
+                    "{} ({} names, {} shapes)",
+                    label.name(),
+                    coverage.distinct_names,
+                    coverage.distinct_shapes
+                ))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn generation_is_fast_enough_that_millions_is_a_real_option() {
+        // Not a benchmark -- a guard. If a row ever costs a millisecond, the
+        // streaming design stops being usable and nobody finds out until they
+        // ask for ten million.
+        let recipe = Recipe::new(20_000, 17);
+        let started = std::time::Instant::now();
+        let produced = recipe.iter().count();
+        let elapsed = started.elapsed();
+
+        assert_eq!(produced, 20_000);
+        assert!(
+            elapsed.as_secs_f64() < 6.0,
+            "20k rows took {elapsed:?}, so a million would take minutes"
+        );
+    }
+
+    #[test]
+    fn a_streamed_corpus_reads_back_as_the_one_that_was_written() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("corpus.jsonl");
+
+        let recipe = Recipe::new(500, 19);
+        recipe.write_jsonl(&path).unwrap();
+        let loaded = Corpus::load(&path).unwrap();
+        let generated = recipe.corpus();
+
+        assert_eq!(loaded.len(), generated.len());
+        for (read, made) in loaded.examples.iter().zip(generated.examples.iter()) {
+            assert_eq!(read.field_name, made.field_name);
+            assert_eq!(read.values, made.values);
+            assert_eq!(read.label, made.label);
+            assert_eq!(read.source, made.source);
+        }
+    }
+
+    #[test]
+    fn a_field_records_the_json_kind_it_was_drawn_as() {
+        // The evidence a numeric string id and a count differ by, and the only
+        // place it can live: not in the text, which is identical.
+        let corpus = generate_corpus(60, 21);
+        let kind_of_label = |label: FieldLabel| -> Vec<ValueKind> {
+            let mut kinds: Vec<ValueKind> = corpus
+                .examples
+                .iter()
+                .filter(|example| example.label == label)
+                .map(|example| example.kind)
+                .collect();
+            kinds.sort_by_key(|kind| format!("{kind:?}"));
+            kinds.dedup();
+            kinds
         };
-        assert_ne!(values(&first), values(&second));
+
+        assert_eq!(
+            kind_of_label(FieldLabel::NumericStringId),
+            vec![ValueKind::String],
+            "a numeric string id is text, or it is not one"
+        );
+        assert_eq!(
+            kind_of_label(FieldLabel::UnixTimestamp),
+            vec![ValueKind::Number]
+        );
+        assert!(
+            kind_of_label(FieldLabel::Number).contains(&ValueKind::Number),
+            "most counts are numbers"
+        );
+        assert!(
+            kind_of_label(FieldLabel::Boolean).contains(&ValueKind::String),
+            "`yes` and `Y` are flags spelled as text, and the corpus has to carry them"
+        );
+    }
+
+    #[test]
+    fn a_flag_is_a_json_boolean_only_when_it_is_spelled_as_one() {
+        let corpus = generate_corpus(120, 23);
+        for example in corpus
+            .examples
+            .iter()
+            .filter(|example| example.label == FieldLabel::Boolean)
+        {
+            let spelled_as_json = example
+                .values
+                .iter()
+                .all(|value| value == "true" || value == "false");
+            assert_eq!(
+                example.kind == ValueKind::Boolean,
+                spelled_as_json,
+                "{:?} was recorded as {:?}",
+                example.values,
+                example.kind
+            );
+        }
     }
 
     #[test]
     fn some_fields_are_named_uninformatively() {
         // Otherwise the corpus teaches a model that the name always gives it
-        // away, which real traffic will immediately disprove.
+        // away, which real traffic immediately disproves.
         let corpus = generate_corpus(40, 3);
         let vague = corpus
             .examples
             .iter()
-            .filter(|e| ["value", "data", "field", "attr", "v"].contains(&e.field_name.as_str()))
+            .filter(|example| {
+                ["value", "data", "field", "attr", "v", "item", "payload"]
+                    .contains(&example.field_name.as_str())
+            })
             .count();
 
         assert!(
@@ -363,37 +524,18 @@ mod tests {
     }
 
     #[test]
-    fn generated_values_look_like_what_they_claim() {
-        // Spot-check the shapes a downstream feature extractor keys on. This is
-        // not the detector grading the generator -- it is the generator being
-        // held to its own contract.
-        let corpus = generate_corpus(30, 9);
-        for example in &corpus.examples {
-            for value in &example.values {
-                match example.label {
-                    FieldLabel::Email => assert!(value.contains('@'), "{value}"),
-                    FieldLabel::Url | FieldLabel::ImageUrl => {
-                        assert!(value.starts_with("https://"), "{value}");
-                    }
-                    FieldLabel::Uuid => assert_eq!(value.len(), 36, "{value}"),
-                    FieldLabel::Boolean => {
-                        assert!(value == "true" || value == "false", "{value}");
-                    }
-                    FieldLabel::IpAddress => {
-                        assert_eq!(value.split('.').count(), 4, "{value}");
-                    }
-                    _ => assert!(!value.is_empty(), "{:?} produced nothing", example.label),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_field_carries_more_than_one_sample_sometimes() {
+    fn a_field_carries_more_than_one_sample_most_of_the_time() {
         let corpus = generate_corpus(30, 11);
+        let multi = corpus
+            .examples
+            .iter()
+            .filter(|example| example.values.len() > 1)
+            .count();
         assert!(
-            corpus.examples.iter().any(|e| e.values.len() > 1),
-            "multi-sample fields are where agreement features mean anything"
+            multi * 2 > corpus.len(),
+            "only {multi} of {} fields carry more than one sample, and agreement features \
+             say nothing about the rest",
+            corpus.len()
         );
     }
 }

@@ -12,10 +12,15 @@
 //! useful one -- it says the features are the ceiling, and effort belongs in
 //! reading raw values rather than in more layers.
 
+// A classifier answering `name()` with a literal reads as needlessly bound
+// against the `&str` the trait must return for models that name themselves after
+// the artifact they were loaded from.
+#![allow(clippy::unnecessary_literal_bound)]
+
+use crate::Classifier;
 use crate::corpus::Corpus;
 use crate::features::{FEATURE_COUNT, FEATURE_LAYOUT_VERSION};
 use crate::label::FieldLabel;
-use crate::Classifier;
 
 use burn::backend::Autodiff;
 use burn::backend::ndarray::{NdArray, NdArrayDevice};
@@ -23,7 +28,7 @@ use burn::module::{AutodiffModule, Module};
 use burn::nn::loss::CrossEntropyLossConfig;
 use burn::nn::{Linear, LinearConfig, Relu};
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::tensor::backend::{AutodiffBackend, Backend};
+use burn::tensor::backend::Backend;
 use burn::tensor::{Int, Tensor, TensorData};
 
 /// CPU backend. Training here is seconds on a corpus this size, and a mock
@@ -123,6 +128,8 @@ impl NeuralClassifier {
                         continue;
                     };
                     features.extend_from_slice(row);
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+                    // a class index, far below i32
                     targets.push(*label as i32);
                 }
                 if targets.is_empty() {
@@ -173,14 +180,14 @@ impl Classifier for NeuralClassifier {
         "neural"
     }
 
-    fn classify(&self, field_name: &str, values: &[&str]) -> Option<(FieldLabel, f64)> {
+    fn classify(&self, field: &crate::Field<'_>) -> Option<(FieldLabel, f64)> {
         // A model fitted under another layout would read every dimension as
         // something else, so it declines rather than guesses.
         if self.feature_layout_version != FEATURE_LAYOUT_VERSION {
             return None;
         }
 
-        let features = crate::features::extract(field_name, values);
+        let features = crate::features::extract(field);
         let probabilities = self.probabilities(&features);
 
         let (index, confidence) = probabilities
@@ -246,7 +253,9 @@ mod tests {
             },
         );
 
-        let (label, confidence) = model.classify("email", &["someone@example.com"]).unwrap();
+        let (label, confidence) = model
+            .classify(&crate::Field::new("email", &["someone@example.com"]))
+            .unwrap();
         assert_eq!(label, FieldLabel::Email);
         assert!(confidence > 0.5, "confidence was {confidence}");
     }
@@ -254,7 +263,7 @@ mod tests {
     #[test]
     fn probabilities_are_a_distribution() {
         let model = NeuralClassifier::train(&separable(), &NeuralConfig::default());
-        let features = crate::features::extract("email", &["a@b.com"]);
+        let features = crate::features::extract(&crate::Field::new("email", &["a@b.com"]));
         let total: f32 = model.probabilities(&features).iter().sum();
         assert!((total - 1.0).abs() < 1e-3, "summed to {total}");
     }
@@ -262,7 +271,7 @@ mod tests {
     #[test]
     fn an_untrained_model_still_answers_a_distribution() {
         let model = NeuralClassifier::train(&Corpus::new(Vec::new()), &NeuralConfig::default());
-        let answer = model.classify("email", &["a@b.com"]);
+        let answer = model.classify(&crate::Field::new("email", &["a@b.com"]));
         assert!(answer.is_some(), "an empty fit must not panic");
     }
 
@@ -270,6 +279,10 @@ mod tests {
     fn a_model_from_another_feature_layout_declines_rather_than_guesses() {
         let mut model = NeuralClassifier::train(&separable(), &NeuralConfig::default());
         model.feature_layout_version = FEATURE_LAYOUT_VERSION + 1;
-        assert!(model.classify("email", &["a@b.com"]).is_none());
+        assert!(
+            model
+                .classify(&crate::Field::new("email", &["a@b.com"]))
+                .is_none()
+        );
     }
 }

@@ -18,6 +18,11 @@
 //! model to the ground the detector conceded, which is the ground it was trained
 //! to cover.
 
+// A classifier answering `name()` with a literal reads as needlessly bound
+// against the `&str` the trait must return for models that name themselves after
+// the artifact they were loaded from.
+#![allow(clippy::unnecessary_literal_bound)]
+
 use crate::{Classifier, label::FieldLabel};
 use ferrimock::profile::ConsolidationProfile;
 use ferrimock::type_detector::{FieldType, TypeDetector};
@@ -85,7 +90,7 @@ impl<C: Classifier + Send + Sync> ConsolidationProfile for LearnedProfile<C> {
             .collect();
         let refs: Vec<&str> = rendered.iter().map(String::as_str).collect();
 
-        let (label, confidence) = self.classifier.classify(field, &refs)?;
+        let (label, confidence) = self.classifier.classify(&crate::Field::new(field, &refs))?;
         if confidence < self.minimum_confidence || label == FieldLabel::Opaque {
             // `Opaque` is what the detector already said. Repeating it back
             // gains nothing and would only overwrite its confidence.
@@ -106,13 +111,15 @@ mod tests {
         fn name(&self) -> &str {
             "fixed"
         }
-        fn classify(&self, _: &str, _: &[&str]) -> Option<(FieldLabel, f64)> {
+        fn classify(&self, _: &crate::Field<'_>) -> Option<(FieldLabel, f64)> {
             Some((self.0, self.1))
         }
     }
 
     fn values(raw: &[&str]) -> Vec<JsonValue> {
-        raw.iter().map(|v| JsonValue::String((*v).to_string())).collect()
+        raw.iter()
+            .map(|v| JsonValue::String((*v).to_string()))
+            .collect()
     }
 
     #[test]
@@ -172,8 +179,8 @@ mod tests {
         let strict = LearnedProfile::new(Fixed(FieldLabel::Token, 0.5));
         assert!(strict.classify_field("blob", &refs).is_none());
 
-        let lenient = LearnedProfile::new(Fixed(FieldLabel::Token, 0.5))
-            .with_minimum_confidence(0.4);
+        let lenient =
+            LearnedProfile::new(Fixed(FieldLabel::Token, 0.5)).with_minimum_confidence(0.4);
         assert!(lenient.classify_field("blob", &refs).is_some());
     }
 

@@ -26,8 +26,15 @@
 //! beats both the detector and the baseline. `report` prints the comparison so
 //! that claim is checkable rather than asserted.
 
+// A classifier answering `name()` with a literal reads as needlessly bound
+// against the `&str` the trait must return for models that name themselves after
+// the artifact they were loaded from.
+#![allow(clippy::unnecessary_literal_bound)]
+
 pub mod artifact;
+pub mod audit;
 pub mod corpus;
+pub mod detector;
 pub mod eval;
 pub mod extract;
 pub mod features;
@@ -37,16 +44,65 @@ pub mod linear;
 pub mod merge;
 pub mod neural;
 pub mod profile;
+pub mod shape;
 
 pub use artifact::ModelArtifact;
-pub use corpus::{Corpus, Example, Split};
-pub use eval::{Evaluation, evaluate};
+pub use audit::{Audit, Defect};
+pub use corpus::{Corpus, Example, Split, ValueKind};
+pub use eval::{
+    Evaluation, HeldOutScore, SourceScore, evaluate, held_out, held_out_report, per_source,
+};
 pub use features::{FEATURE_COUNT, FEATURE_LAYOUT_VERSION};
+pub use generator::Recipe;
+pub use generator::census::Census;
+pub use generator::dialect::ApiDialect;
 pub use label::FieldLabel;
 pub use linear::LinearClassifier;
 pub use merge::{MERGE_FEATURE_COUNT, MERGE_FEATURE_LAYOUT_VERSION, MergeExample};
 pub use neural::{NeuralClassifier, NeuralConfig};
 pub use profile::LearnedProfile;
+
+/// One field, as everything that reads it sees it.
+///
+/// A struct rather than a pair of arguments because what a field *is* keeps
+/// growing: it started as a name and some text, gained the JSON kind those
+/// values were recorded as, and will gain where the field sits in the response
+/// and what the request asked for. Every one of those is evidence, and adding
+/// evidence should not mean changing every signature that carries it.
+#[derive(Debug, Clone, Copy)]
+pub struct Field<'a> {
+    pub name: &'a str,
+    /// The values as text, however they were recorded.
+    pub values: &'a [&'a str],
+    /// The JSON kind they were recorded as. A count and a numeric string id are
+    /// the same digits and differ only in this.
+    pub kind: corpus::ValueKind,
+}
+
+impl<'a> Field<'a> {
+    /// A field whose values were recorded as JSON strings.
+    pub fn new(name: &'a str, values: &'a [&'a str]) -> Self {
+        Self {
+            name,
+            values,
+            kind: corpus::ValueKind::String,
+        }
+    }
+
+    #[must_use]
+    pub fn of_kind(mut self, kind: corpus::ValueKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// The values, back in the JSON kinds they were recorded as.
+    pub fn json_values(&self) -> Vec<serde_json::Value> {
+        self.values
+            .iter()
+            .map(|value| self.kind.as_json(value))
+            .collect()
+    }
+}
 
 /// Anything that can name a field's type from its name and sampled values.
 ///
@@ -61,7 +117,7 @@ pub trait Classifier {
     ///
     /// Confidence must mean the same thing across implementations -- roughly,
     /// the probability the label is right -- because callers compare them.
-    fn classify(&self, field_name: &str, values: &[&str]) -> Option<(FieldLabel, f64)>;
+    fn classify(&self, field: &Field<'_>) -> Option<(FieldLabel, f64)>;
 }
 
 /// The engine's built-in detector, wrapped so it can be scored like a model.
@@ -88,24 +144,8 @@ impl Classifier for HeuristicClassifier {
         "heuristic"
     }
 
-    fn classify(&self, field_name: &str, values: &[&str]) -> Option<(FieldLabel, f64)> {
-        let json: Vec<serde_json::Value> = values
-            .iter()
-            .map(|value| {
-                // A recorded value arrives as text. Numbers and booleans have to
-                // go back to their JSON kinds or the detector never sees them as
-                // anything but strings.
-                serde_json::from_str(value)
-                    .ok()
-                    .filter(|parsed: &serde_json::Value| {
-                        parsed.is_number() || parsed.is_boolean()
-                    })
-                    .unwrap_or_else(|| serde_json::Value::String((*value).to_string()))
-            })
-            .collect();
-        let refs: Vec<&serde_json::Value> = json.iter().collect();
-
-        let (field_type, confidence) = self.detector.detect_type(field_name, &refs);
+    fn classify(&self, field: &Field<'_>) -> Option<(FieldLabel, f64)> {
+        let (field_type, confidence) = detector::detect(&self.detector, field);
         FieldLabel::from_field_type(&field_type).map(|label| (label, confidence))
     }
 }

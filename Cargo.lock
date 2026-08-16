@@ -2000,6 +2000,7 @@ dependencies = [
  "burn",
  "chrono",
  "ferrimock",
+ "har",
  "regex",
  "rustc-hash",
  "serde",

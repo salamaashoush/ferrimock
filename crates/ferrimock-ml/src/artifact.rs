@@ -32,7 +32,10 @@ pub enum LoadError {
     Malformed(serde_json::Error),
     /// The artifact was trained against a different feature layout. Retraining
     /// is the only fix; there is no safe way to reinterpret the weights.
-    LayoutMismatch { artifact: u32, current: u32 },
+    LayoutMismatch {
+        artifact: u32,
+        current: u32,
+    },
 }
 
 impl std::fmt::Display for LoadError {
@@ -129,9 +132,11 @@ mod tests {
         let loaded = ModelArtifact::load(&path).unwrap();
 
         assert_eq!(loaded.note, "test");
+        let values = ["a@b.com"];
+        let field = crate::Field::new("email", &values);
         assert_eq!(
-            model.classify("email", &["a@b.com"]),
-            loaded.model.classify("email", &["a@b.com"]),
+            model.classify(&field),
+            loaded.model.classify(&field),
             "a reloaded model must answer identically"
         );
     }
