@@ -106,7 +106,12 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             extract_bodies,
             body_threshold_kb,
             flatten_repeats,
+            no_delays,
         } => {
+            // An explicit `--format` wins; otherwise the extension the caller
+            // typed is what they meant, and writing YAML into a file called
+            // `.json` produces something nothing downstream will read back.
+            let format = format.unwrap_or_else(|| convert::format_for(&output));
             convert::convert_har(convert::ConvertHarOptions {
                 input,
                 output,
@@ -123,6 +128,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                 extract_bodies,
                 body_threshold_kb,
                 sequence_repeated_requests: !flatten_repeats,
+                preserve_latency: !no_delays,
             })
             .await
         }
@@ -137,6 +143,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
             format,
             min_pattern,
             no_templates,
+            generalize,
             verify,
             fail_under,
             verbose,
@@ -147,6 +154,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                 format,
                 min_pattern,
                 enable_templates: !no_templates,
+                generalize,
                 verify,
                 fail_under,
                 verbose,

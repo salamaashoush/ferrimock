@@ -22,6 +22,26 @@ pub struct ConvertHarOptions {
     pub extract_bodies: bool,
     pub body_threshold_kb: usize,
     pub sequence_repeated_requests: bool,
+    pub preserve_latency: bool,
+}
+
+/// The serialisation format an output path asks for.
+///
+/// YAML unless the caller named a JSON file. Writing YAML into `mocks.json`
+/// produced a file the loader refused to read back, which is a confusing way to
+/// find out the format was never inferred.
+pub fn format_for(output: &str) -> String {
+    let extension = std::path::Path::new(output)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if extension == "json" {
+        "json".to_string()
+    } else {
+        "yaml".to_string()
+    }
 }
 
 pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
@@ -70,6 +90,7 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
         strip_infrastructure_headers: opts.strip_infrastructure_headers,
         strip_sensitive_query_params: opts.strip_sensitive_headers,
         sequence_repeated_requests: opts.sequence_repeated_requests,
+        preserve_latency: opts.preserve_latency,
         body_output_dir,
         body_size_threshold: opts.body_threshold_kb * 1024,
     };
@@ -250,4 +271,22 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
     crate::say!("{}", ui::kv("Mocks", &ui::number(collection.mocks.len())));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_for;
+
+    #[test]
+    fn the_output_extension_decides_the_format() {
+        // Writing YAML into a file called `.json` produced something the mock
+        // loader refused to read back, which is a confusing way to discover the
+        // format was never inferred.
+        assert_eq!(format_for("mocks.json"), "json");
+        assert_eq!(format_for("mocks.JSON"), "json");
+        assert_eq!(format_for("mocks.yaml"), "yaml");
+        assert_eq!(format_for("mocks.yml"), "yaml");
+        assert_eq!(format_for("mocks"), "yaml");
+        assert_eq!(format_for("/tmp/a.b/mocks.json"), "json");
+    }
 }

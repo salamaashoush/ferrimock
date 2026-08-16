@@ -13,6 +13,7 @@ pub struct ConsolidateArgs {
     pub format: String,
     pub min_pattern: usize,
     pub enable_templates: bool,
+    pub generalize: bool,
     pub verify: Option<String>,
     pub fail_under: Option<f64>,
     pub verbose: bool,
@@ -25,6 +26,7 @@ pub async fn consolidate_mocks(args: ConsolidateArgs) -> anyhow::Result<()> {
         format,
         min_pattern,
         enable_templates,
+        generalize,
         verify,
         fail_under,
         verbose,
@@ -52,6 +54,10 @@ pub async fn consolidate_mocks(args: ConsolidateArgs) -> anyhow::Result<()> {
             "{}",
             ui::kv("  Template extraction", &enable_templates.to_string())
         );
+        crate::say!(
+            "{}",
+            ui::kv("  Generalize lone recordings", &generalize.to_string())
+        );
         crate::say!();
     }
 
@@ -59,6 +65,7 @@ pub async fn consolidate_mocks(args: ConsolidateArgs) -> anyhow::Result<()> {
         enable_consolidation: true,
         enable_templates,
         min_pattern_threshold: min_pattern,
+        generalize,
         enable_stateful_pagination: true,
         pagination_storage_key_template: "api.{path}.total".to_string(),
         ..ConsolidatorOptions::default()
@@ -161,7 +168,10 @@ fn print_stats(consolidator: &MockConsolidator) {
     );
     crate::say!(
         "{}",
-        ui::kv("  Consolidated mocks", &ui::number(stats.consolidated_count))
+        ui::kv(
+            "  Consolidated mocks",
+            &ui::number(stats.consolidated_count)
+        )
     );
     crate::say!(
         "{}",
@@ -176,7 +186,10 @@ fn print_stats(consolidator: &MockConsolidator) {
     );
     crate::say!(
         "{}",
-        ui::kv("  Duplicates removed", &ui::number(stats.duplicates_removed))
+        ui::kv(
+            "  Duplicates removed",
+            &ui::number(stats.duplicates_removed)
+        )
     );
     crate::say!(
         "{}",
@@ -190,20 +203,25 @@ fn print_stats(consolidator: &MockConsolidator) {
 /// into one would score 99% -- so this is the half that says whether the
 /// collection still behaves like the traffic it came from.
 fn print_fidelity(report: &FidelityReport, verbose: bool) {
-    crate::say!("{}", ui::header("Fidelity (replayed against the recording)"));
+    crate::say!(
+        "{}",
+        ui::header("Fidelity (replayed against the recording)")
+    );
 
     let level = |label: &str, part: usize, total: usize, ratio: f64| {
         crate::say!(
             "{}",
-            ui::kv(
-                label,
-                &format!("{part}/{total} ({:.1}%)", ratio * 100.0)
-            )
+            ui::kv(label, &format!("{part}/{total} ({:.1}%)", ratio * 100.0))
         );
     };
 
     let total = report.score.total;
-    level("  Matched", report.score.matched, total, report.score.matched_ratio());
+    level(
+        "  Matched",
+        report.score.matched,
+        total,
+        report.score.matched_ratio(),
+    );
     level(
         "  Right lineage",
         report.score.no_cross_talk,
@@ -227,6 +245,23 @@ fn print_fidelity(report: &FidelityReport, verbose: bool) {
         report.score.constants_held,
         total,
         report.score.constants_held_ratio(),
+    );
+    // The level templating deliberately trades away, and the one a request-echo
+    // wins back. Without it on screen, a template that answers about the thing
+    // that was asked for looks identical to one that invents a value.
+    level(
+        "  Values equal",
+        report.score.value_equal,
+        total,
+        report.score.value_equal_ratio(),
+    );
+    // Whole-response equality is all-or-nothing, so one field answering
+    // correctly moves nothing. Per-leaf agreement is where that shows.
+    level(
+        "  Leaf values equal",
+        report.score.leaves_equal,
+        report.score.leaves,
+        report.score.leaves_equal_ratio(),
     );
     crate::say!();
     crate::say!(
@@ -300,9 +335,7 @@ fn print_fidelity(report: &FidelityReport, verbose: bool) {
                 "{}",
                 ui::dim(&format!(
                     "  {label:<10} {} {} :: {}",
-                    divergence.interaction.method,
-                    divergence.interaction.target,
-                    divergence.detail
+                    divergence.interaction.method, divergence.interaction.target, divergence.detail
                 ))
             );
         }

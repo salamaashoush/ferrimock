@@ -265,9 +265,10 @@ pub enum MockAction {
         #[arg(value_name = "OUTPUT")]
         output: String,
 
-        /// Output format: json, yaml
-        #[arg(short = 'f', long, value_name = "FORMAT", value_parser = ["json", "yaml"], default_value = "yaml")]
-        format: String,
+        /// Output format: json, yaml. Defaults to the output file's extension,
+        /// then to yaml.
+        #[arg(short = 'f', long, value_name = "FORMAT", value_parser = ["json", "yaml"])]
+        format: Option<String>,
 
         /// Matching: exact (preserve URLs), pattern (detect IDs/UUIDs)
         #[arg(short = 'm', long, value_name = "STRATEGY", value_parser = ["exact", "pattern"], default_value = "pattern")]
@@ -322,6 +323,15 @@ pub enum MockAction {
         /// instead of replaying the recorded answers in order
         #[arg(long)]
         flatten_repeats: bool,
+
+        /// Drop each entry's recorded latency instead of keeping it as a delay.
+        ///
+        /// A recording made against a real service carries its real latency, so
+        /// mocks converted from one wait exactly as long as the service did.
+        /// That is what you want for a demonstration and never what you want in
+        /// a test suite.
+        #[arg(long)]
+        no_delays: bool,
     },
 
     /// Export mock collection to HAR format
@@ -380,6 +390,17 @@ pub enum MockAction {
         /// Skip template extraction
         #[arg(long)]
         no_templates: bool,
+
+        /// Template endpoints recorded only once, reading each value for what it
+        /// is rather than as a fixed answer
+        ///
+        /// A lone recording is otherwise reproduced verbatim, so its mock
+        /// answers that one request and nothing else. This widens paths whose
+        /// segments read as identifiers and generates the fields whose values
+        /// the detector can place, at the cost of no longer replaying the
+        /// recording exactly.
+        #[arg(long)]
+        generalize: bool,
 
         /// Replay a recording through the consolidated mocks and report what changed
         ///
