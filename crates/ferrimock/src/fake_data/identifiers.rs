@@ -69,6 +69,25 @@ pub fn fake_md5() -> String {
     })
 }
 
+/// Generate a hexadecimal string of a given width and case.
+///
+/// The width is carried because a field of forty-character SHA-1s answered with
+/// a thirty-two character MD5 is the wrong value, however right the class is.
+pub fn fake_hex(length: usize, upper: bool) -> String {
+    use std::fmt::Write;
+
+    let width = length.clamp(1, 512);
+    (0..width).fold(String::with_capacity(width), |mut output, _| {
+        let digit = rng().random_range(0..16);
+        let _ = if upper {
+            write!(output, "{digit:X}")
+        } else {
+            write!(output, "{digit:x}")
+        };
+        output
+    })
+}
+
 /// Generate a base64 encoded string
 pub fn fake_base64() -> String {
     use base64::{Engine as _, engine::general_purpose};

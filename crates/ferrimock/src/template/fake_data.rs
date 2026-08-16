@@ -357,6 +357,20 @@ fn build_registry() -> HashMap<&'static str, Generator> {
         Ok(Value::from(crate::fake_data::identifiers::fake_md5()))
     });
 
+    // Width and case are arguments because a template has to reproduce the field
+    // it replaced, not a digest of some other length.
+    register("fake_hex", |args: &Args| -> Result<Value> {
+        let length = args
+            .get("length")
+            .and_then(Value::as_u64)
+            .unwrap_or(32)
+            .min(512) as usize;
+        let upper = args.get("upper").and_then(Value::as_bool).unwrap_or(false);
+        Ok(Value::from(crate::fake_data::identifiers::fake_hex(
+            length, upper,
+        )))
+    });
+
     register("fake_base64", |_: &Args| -> Result<Value> {
         Ok(Value::from(crate::fake_data::identifiers::fake_base64()))
     });
@@ -374,8 +388,36 @@ fn build_registry() -> HashMap<&'static str, Generator> {
         Ok(Value::from(crate::fake_data::datetime::fake_time()))
     });
 
-    register("fake_iso_date", |_: &Args| -> Result<Value> {
-        Ok(Value::from(crate::fake_data::datetime::fake_iso_date()))
+    // The format is an argument for the same reason: a `17/03/2024` field
+    // answered with `2024-03-17` is the wrong value.
+    register("fake_iso_date", |args: &Args| -> Result<Value> {
+        use crate::type_detector::DateFormat;
+        let format = match args.get("format").and_then(Value::as_str) {
+            Some("slash") => DateFormat::Slash,
+            Some("dotted") => DateFormat::Dotted,
+            Some("compact") => DateFormat::Compact,
+            _ => DateFormat::Iso,
+        };
+        Ok(Value::from(crate::fake_data::datetime::fake_date_in(
+            format,
+        )))
+    });
+
+    register("fake_timestamp", |args: &Args| -> Result<Value> {
+        use crate::type_detector::TimestampFormat;
+        let format = match args.get("format").and_then(Value::as_str) {
+            Some("rfc3339_offset") => TimestampFormat::Rfc3339Offset,
+            Some("rfc3339_millis") => TimestampFormat::Rfc3339Millis,
+            Some("rfc3339_nanos") => TimestampFormat::Rfc3339Nanos,
+            Some("sql") => TimestampFormat::SqlDateTime,
+            Some("rfc2822") => TimestampFormat::Rfc2822,
+            Some("http") => TimestampFormat::HttpDate,
+            Some("epoch_fractional") => TimestampFormat::EpochFractional,
+            _ => TimestampFormat::Rfc3339Utc,
+        };
+        Ok(Value::from(crate::fake_data::datetime::fake_timestamp_in(
+            format,
+        )))
     });
 
     register("fake_unix_timestamp", |_: &Args| -> Result<Value> {
