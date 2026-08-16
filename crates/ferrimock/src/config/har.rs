@@ -28,10 +28,36 @@ use super::{GraphQLMatchConfig, MatchConfig, MockConfig, ResponseConfig};
 /// "invalid type: map, expected f64". Picking the version manually and
 /// deserializing the plain (non-untagged) `Log` struct avoids the
 /// buffering entirely.
+/// A HAR document with its version enum bypassed, for [`parse_har`].
+#[derive(serde::Deserialize)]
+struct HarDocument {
+    log: v1_2::Log,
+}
+
 pub fn parse_har(content: &str) -> Result<Har> {
     if let Ok(har) = serde_json::from_str::<Har>(content) {
         return Ok(har);
     }
+
+    // Straight from the text into the 1.2 log, around the `Spec` enum.
+    //
+    // Both paths below buffer through a `serde_json::Value` -- `Spec` is
+    // untagged, and the one after this deserialises a `Value` it built. Either
+    // is fine until something in the dependency graph turns on serde_json's
+    // `arbitrary_precision`, at which point every number in a `Value` is held as
+    // a map and each of the HAR's `f64` timings fails with "invalid type: map,
+    // expected f64". Feature unification makes that somebody else's decision:
+    // ferrimock's own build is unaffected, and a consumer that enables the
+    // scripting feature -- which brings a bundler that wants arbitrary precision
+    // -- silently loses the ability to read a HAR at all.
+    //
+    // Deserialising from the string skips the buffering and so the question.
+    if let Ok(document) = serde_json::from_str::<HarDocument>(content) {
+        return Ok(Har {
+            log: Spec::V1_2(document.log),
+        });
+    }
+
     let value: serde_json::Value = serde_json::from_str(content)?;
     let log = value
         .get("log")
@@ -70,6 +96,56 @@ fn graphql_operation(entry: &v1_2::Entries) -> Option<String> {
     object.get("query")?.as_str()?;
     let name = object.get("operationName")?.as_str()?;
     (!name.is_empty()).then(|| name.to_string())
+}
+
+/// What a recorded GraphQL request matches on.
+///
+/// The operation name alone is not the request. Every call to `GetFolder` posts
+/// to the same URL with the same operation and a different folder in its
+/// variables, so matching on the name gives a pile of mocks that cannot be told
+/// apart -- one answers everything and the rest are dead.
+///
+/// Only scalar variables are pinned. They are what identify a request; a nested
+/// input object is usually the payload rather than the identity, and pinning a
+/// whole object makes a mock that matches nothing but itself.
+fn graphql_matcher(entry: &v1_2::Entries) -> Option<GraphQLMatchConfig> {
+    let operation = graphql_operation(entry)?;
+
+    let variables = entry
+        .request
+        .post_data
+        .as_ref()
+        .and_then(|data| data.text.as_ref())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .and_then(|body| body.get("variables").cloned())
+        .and_then(|variables| variables.as_object().cloned())
+        .map(|variables| {
+            variables
+                .into_iter()
+                .filter(|(_, value)| {
+                    matches!(
+                        value,
+                        serde_json::Value::String(_)
+                            | serde_json::Value::Number(_)
+                            | serde_json::Value::Bool(_)
+                    )
+                })
+                .collect::<FxHashMap<String, serde_json::Value>>()
+        })
+        .unwrap_or_default();
+
+    if variables.is_empty() {
+        return Some(GraphQLMatchConfig::Simple(operation));
+    }
+
+    Some(GraphQLMatchConfig::Structured {
+        operation: Some(operation),
+        query: None,
+        mutation: None,
+        subscription: None,
+        introspection: None,
+        variables,
+    })
 }
 
 /// Narrow a recorded status to a real HTTP one.
@@ -368,6 +444,14 @@ pub struct HarLoadOptions {
     pub body_output_dir: Option<PathBuf>,
     /// Size threshold for body extraction (default: 100KB)
     pub body_size_threshold: usize,
+    /// Keep each entry's recorded latency as a `delay` on the mock
+    /// (default: true).
+    ///
+    /// Worth turning off whenever the mocks are for a test suite rather than a
+    /// demonstration: a recording made against a real service carries its real
+    /// latency, and replaying it honestly means waiting through every recorded
+    /// second.
+    pub preserve_latency: bool,
 }
 
 impl Default for HarLoadOptions {
@@ -385,6 +469,7 @@ impl Default for HarLoadOptions {
             sequence_repeated_requests: true,
             body_output_dir: None,
             body_size_threshold: DEFAULT_BODY_SIZE_THRESHOLD,
+            preserve_latency: true,
         }
     }
 }
@@ -413,6 +498,7 @@ impl std::fmt::Debug for HarLoadOptions {
             )
             .field("body_output_dir", &self.body_output_dir)
             .field("body_size_threshold", &self.body_size_threshold)
+            .field("preserve_latency", &self.preserve_latency)
             .finish()
     }
 }
@@ -732,7 +818,7 @@ impl HarLoader {
                 headers: FxHashMap::default(),
                 query: pinned_query,
                 body: FxHashMap::default(),
-                graphql: graphql_operation(entry).map(GraphQLMatchConfig::Simple),
+                graphql: graphql_matcher(entry),
             }),
             request: None,
             response_config: Some(ResponseConfig::Structured {
@@ -747,7 +833,7 @@ impl HarLoader {
                 json: Box::new(serde_json::Value::Null),
             }),
             patch: None,
-            delay: if delay_ms > 0 {
+            delay: if self.options.preserve_latency && delay_ms > 0 {
                 Some(format!("{delay_ms}ms"))
             } else {
                 None
@@ -1757,5 +1843,159 @@ mod tests {
 
         // google.com filtered out
         assert_eq!(mocks.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn recorded_latency_can_be_left_out() {
+        // A recording made against a real service carries its real latency, so
+        // mocks converted from one wait exactly as long as the service did.
+        // That is what you want for a demonstration and never in a test suite.
+        let har = sample_har_with_timing(1_500.0);
+
+        let kept = HarLoader::new()
+            .convert_har_to_mocks(parse_har(&har).expect("valid har"))
+            .await
+            .expect("converts");
+        assert!(
+            kept.iter().any(|mock| mock.delay.is_some()),
+            "the default keeps what was recorded"
+        );
+
+        let dropped = HarLoader::with_options(HarLoadOptions {
+            preserve_latency: false,
+            ..HarLoadOptions::default()
+        })
+        .convert_har_to_mocks(parse_har(&har).expect("valid har"))
+        .await
+        .expect("converts");
+        assert!(
+            dropped.iter().all(|mock| mock.delay.is_none()),
+            "asking for no delays has to actually drop them"
+        );
+    }
+
+    fn sample_har_with_timing(wait_ms: f64) -> String {
+        serde_json::json!({
+            "log": {
+                "version": "1.2",
+                "creator": { "name": "test", "version": "1" },
+                "entries": [{
+                    "startedDateTime": "2024-03-17T09:41:22.000Z",
+                    "time": wait_ms,
+                    "request": {
+                        "method": "GET",
+                        "url": "https://api.example.com/v2/files/1",
+                        "httpVersion": "HTTP/1.1",
+                        "cookies": [],
+                        "headers": [],
+                        "queryString": [],
+                        "headersSize": -1,
+                        "bodySize": -1
+                    },
+                    "response": {
+                        "status": 200,
+                        "statusText": "OK",
+                        "httpVersion": "HTTP/1.1",
+                        "cookies": [],
+                        "headers": [{ "name": "content-type", "value": "application/json" }],
+                        "content": {
+                            "size": 12,
+                            "mimeType": "application/json",
+                            "text": "{\"id\":\"1\"}"
+                        },
+                        "redirectURL": "",
+                        "headersSize": -1,
+                        "bodySize": -1
+                    },
+                    "cache": {},
+                    "timings": { "send": 0.0, "wait": wait_ms, "receive": 0.0 }
+                }]
+            }
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_graphql_request_is_matched_by_its_variables_too() {
+        // The operation name alone is not the request: every call to
+        // `GetFolder` posts the same operation with a different folder, and
+        // matching on the name gives mocks nothing can tell apart.
+        let har = graphql_har();
+        let mocks = HarLoader::new()
+            .convert_har_to_mocks(parse_har(&har).expect("valid har"))
+            .await
+            .expect("converts");
+
+        let matcher = mocks
+            .first()
+            .and_then(|mock| mock.match_config.as_ref())
+            .and_then(|match_config| match_config.graphql.as_ref())
+            .expect("a graphql matcher");
+
+        match matcher {
+            GraphQLMatchConfig::Structured {
+                operation,
+                variables,
+                ..
+            } => {
+                assert_eq!(operation.as_deref(), Some("GetFolder"));
+                assert_eq!(variables.get("folderID"), Some(&serde_json::json!("9848")));
+                assert!(
+                    !variables.contains_key("filter"),
+                    "a nested object is the payload, not the identity, and pinning it \
+                     makes a mock that matches nothing but itself"
+                );
+            }
+            other => panic!("expected variables to be pinned, got {other:?}"),
+        }
+    }
+
+    fn graphql_har() -> String {
+        let post = serde_json::json!({
+            "operationName": "GetFolder",
+            "query": "query GetFolder($folderID: ID!) { folder(id: $folderID) { id } }",
+            "variables": { "folderID": "9848", "first": 20, "filter": { "kind": "file" } }
+        })
+        .to_string();
+
+        serde_json::json!({
+            "log": {
+                "version": "1.2",
+                "creator": { "name": "test", "version": "1" },
+                "entries": [{
+                    "startedDateTime": "2024-03-17T09:41:22.000Z",
+                    "time": 10.0,
+                    "request": {
+                        "method": "POST",
+                        "url": "https://api.example.com/app-api/graphql",
+                        "httpVersion": "HTTP/1.1",
+                        "cookies": [],
+                        "headers": [],
+                        "queryString": [],
+                        "postData": { "mimeType": "application/json", "text": post },
+                        "headersSize": -1,
+                        "bodySize": -1
+                    },
+                    "response": {
+                        "status": 200,
+                        "statusText": "OK",
+                        "httpVersion": "HTTP/1.1",
+                        "cookies": [],
+                        "headers": [{ "name": "content-type", "value": "application/json" }],
+                        "content": {
+                            "size": 12,
+                            "mimeType": "application/json",
+                            "text": "{\"id\":\"9848\"}"
+                        },
+                        "redirectURL": "",
+                        "headersSize": -1,
+                        "bodySize": -1
+                    },
+                    "cache": {},
+                    "timings": { "send": 0.0, "wait": 10.0, "receive": 0.0 }
+                }]
+            }
+        })
+        .to_string()
     }
 }

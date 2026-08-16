@@ -18,8 +18,8 @@
 use super::MockConfig;
 use super::har::{MatchKey, match_key};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::fmt::Write;
 use serde_json::Value as JsonValue;
+use std::fmt::Write;
 
 /// Longest request body pinned verbatim when no single field discriminates.
 const MAX_VERBATIM_BODY: usize = 2048;
@@ -105,8 +105,7 @@ fn discriminate_by_field(bodies: &[&str]) -> Option<Vec<FxHashMap<String, JsonVa
         .map(|body| serde_json::from_str::<JsonValue>(body).ok())
         .collect::<Option<Vec<_>>>()?;
 
-    let flattened: Vec<FxHashMap<String, JsonValue>> =
-        parsed.iter().map(flatten_scalars).collect();
+    let flattened: Vec<FxHashMap<String, JsonValue>> = parsed.iter().map(flatten_scalars).collect();
 
     let first = flattened.first()?;
     let mut candidates: Vec<&String> = first
@@ -291,12 +290,7 @@ mod tests {
         let mut entries: Vec<(String, JsonValue)> = mock
             .match_config
             .as_ref()
-            .map(|m| {
-                m.body
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect()
-            })
+            .map(|m| m.body.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries
