@@ -24,7 +24,7 @@ async fn call_handler(
     ctx: RequestContext,
 ) -> ferrimock::Result<ferrimock::types::DynamicResponse> {
     match &mock.response.body {
-        BodySource::Handler(f) => f(ctx).await,
+        BodySource::Handler { handler, .. } => handler(ctx).await,
         other => panic!("expected handler body, got {other:?}"),
     }
 }

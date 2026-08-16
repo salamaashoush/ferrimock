@@ -103,11 +103,35 @@ impl RequestContext {
         headers: &HeaderMap,
         body: Option<&[u8]>,
     ) -> Self {
-        let mut ctx = Self::from_request_selective(method, uri, query, headers, body, true, false);
-        match body.map(std::str::from_utf8) {
-            Some(Ok(s)) => ctx.body = Some(s.to_string()),
-            Some(Err(_)) => ctx.body_bytes = body.map(Bytes::copy_from_slice),
-            None => {}
+        Self::from_request_for_handler_selective(
+            method,
+            uri,
+            query,
+            headers,
+            body,
+            ContextNeeds::ALL,
+        )
+    }
+
+    /// [`Self::from_request_for_handler`] restricted to what the handler declared
+    /// it reads. A native handler that never looks at the body does not pay for
+    /// copying it.
+    pub fn from_request_for_handler_selective(
+        method: &str,
+        uri: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+        needs: ContextNeeds,
+    ) -> Self {
+        let mut ctx =
+            Self::from_request_selective(method, uri, query, headers, body, needs.headers, false);
+        if needs.body {
+            match body.map(std::str::from_utf8) {
+                Some(Ok(s)) => ctx.body = Some(s.to_string()),
+                Some(Err(_)) => ctx.body_bytes = body.map(Bytes::copy_from_slice),
+                None => {}
+            }
         }
         ctx
     }
@@ -1221,7 +1245,8 @@ impl ResponseGenerator {
     /// Create a new response generator with the given status and body
     pub fn new(status: StatusCode, body: BodySource) -> Self {
         let structured_response = body.may_produce_structured_response();
-        let (context_uses_headers, context_uses_body) = body.context_needs();
+        let needs = body.context_needs();
+        let (context_uses_headers, context_uses_body) = (needs.headers, needs.body);
         Self {
             status,
             headers: FxHashMap::default(),
@@ -1258,9 +1283,9 @@ impl ResponseGenerator {
     /// Replace the body source and recalculate the structured response flag
     pub fn set_body(&mut self, body: BodySource) {
         self.structured_response = body.may_produce_structured_response();
-        let (uses_headers, uses_body) = body.context_needs();
-        self.context_uses_headers = uses_headers;
-        self.context_uses_body = uses_body;
+        let needs = body.context_needs();
+        self.context_uses_headers = needs.headers;
+        self.context_uses_body = needs.body;
         self.body = body;
     }
 
@@ -1290,7 +1315,7 @@ impl ResponseGenerator {
             BodySource::Template { .. } => Err(crate::mp_err!(
                 "Template rendering not available in mock-types. Use mock-template or mock-engine."
             )),
-            BodySource::Handler(_) => Err(crate::mp_err!(
+            BodySource::Handler { .. } | BodySource::ForeignHandler(_) => Err(crate::mp_err!(
                 "Handler-based responses require generate_dynamic(). Use the engine's ResponseGeneratorExt."
             )),
         }
@@ -1305,6 +1330,43 @@ impl ResponseGenerator {
             header_map.insert(header_name, header_value);
         }
         Ok(header_map)
+    }
+}
+
+/// Which request-context fields a response body reads.
+///
+/// Bodies that read nothing let the matching lanes skip marshalling entirely,
+/// so a handler that only needs the URL costs no more than a static one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextNeeds {
+    pub headers: bool,
+    pub body: bool,
+}
+
+impl ContextNeeds {
+    pub const ALL: Self = Self {
+        headers: true,
+        body: true,
+    };
+    pub const NONE: Self = Self {
+        headers: false,
+        body: false,
+    };
+
+    #[must_use]
+    pub const fn headers_only() -> Self {
+        Self {
+            headers: true,
+            body: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn body_only() -> Self {
+        Self {
+            headers: false,
+            body: true,
+        }
     }
 }
 
@@ -1330,12 +1392,24 @@ pub enum BodySource {
         #[serde(skip)]
         hash: u64,
     },
-    /// Function-based response handler (programmatic MSW-style API).
+    /// Response produced by a Rust closure, resolved in Rust on every lane.
     ///
-    /// Receives the full [`RequestContext`] and returns a [`DynamicResponse`].
-    /// Only created programmatically via the handler builder API, never from config files.
+    /// Receives a [`RequestContext`] built to `needs` and returns a
+    /// [`DynamicResponse`]. Only created programmatically, never from config files.
     #[serde(skip)]
-    Handler(HandlerFn),
+    Handler {
+        handler: HandlerFn,
+        needs: ContextNeeds,
+    },
+    /// Response produced by a host-language function (the JS resolvers behind
+    /// `http.get(path, fn)`).
+    ///
+    /// The closure works on every lane, but a host that registered a faster
+    /// direct call path keys on this variant to take it: the NAPI interceptor
+    /// resolves these through its `FunctionRef` map rather than the closure.
+    /// Its needs are opaque, so it always gets the full context.
+    #[serde(skip)]
+    ForeignHandler(HandlerFn),
 }
 
 impl std::fmt::Debug for BodySource {
@@ -1349,7 +1423,14 @@ impl std::fmt::Debug for BodySource {
                 .field("source", source)
                 .field("hash", hash)
                 .finish(),
-            BodySource::Handler(_) => f.debug_tuple("Handler").field(&"<fn>").finish(),
+            BodySource::Handler { needs, .. } => f
+                .debug_struct("Handler")
+                .field("handler", &"<fn>")
+                .field("needs", needs)
+                .finish(),
+            BodySource::ForeignHandler(_) => {
+                f.debug_tuple("ForeignHandler").field(&"<fn>").finish()
+            }
         }
     }
 }
@@ -1389,25 +1470,59 @@ impl BodySource {
         BodySource::Template { source, hash }
     }
 
-    /// Create a handler body source from a function
+    /// Create a handler body source that reads the whole request context
     pub fn handler(f: HandlerFn) -> Self {
-        BodySource::Handler(f)
+        BodySource::Handler {
+            handler: f,
+            needs: ContextNeeds::ALL,
+        }
     }
 
-    /// Which request-context fields this body may reference: `(headers, body)`.
+    /// Create a handler body source that reads only the declared parts of the
+    /// request context
+    pub fn handler_with_needs(f: HandlerFn, needs: ContextNeeds) -> Self {
+        BodySource::Handler { handler: f, needs }
+    }
+
+    /// Create a host-resolved handler body source from a function
+    pub fn foreign_handler(f: HandlerFn) -> Self {
+        BodySource::ForeignHandler(f)
+    }
+
+    /// The closure behind either handler variant
+    pub fn as_handler(&self) -> Option<&HandlerFn> {
+        match self {
+            BodySource::Handler { handler, .. } | BodySource::ForeignHandler(handler) => {
+                Some(handler)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this body is produced by a closure rather than by content
+    pub fn is_handler(&self) -> bool {
+        matches!(
+            self,
+            BodySource::Handler { .. } | BodySource::ForeignHandler(_)
+        )
+    }
+
+    /// Which request-context fields this body may reference.
     ///
     /// For templates this is a substring scan of the source — template *functions*
     /// (fake/store) never read the request context, so the only access path to
     /// headers/body is the `{{ headers }}` / `{{ body }}` / `{{ body_json }}`
     /// variables, both of which contain "header"/"body". A false positive only
-    /// costs a little extra work; there is no false-negative path. Non-template
-    /// bodies (handlers, etc.) get the full context.
-    fn context_needs(&self) -> (bool, bool) {
+    /// costs a little extra work; there is no false-negative path. A native
+    /// handler declares its own; everything else gets the full context.
+    fn context_needs(&self) -> ContextNeeds {
         match self {
-            BodySource::Template { source, .. } => {
-                (source.contains("header"), source.contains("body"))
-            }
-            _ => (true, true),
+            BodySource::Template { source, .. } => ContextNeeds {
+                headers: source.contains("header"),
+                body: source.contains("body"),
+            },
+            BodySource::Handler { needs, .. } => *needs,
+            _ => ContextNeeds::ALL,
         }
     }
 
@@ -1421,7 +1536,7 @@ impl BodySource {
                     || source.contains("\"body\"")
             }
             // Handlers return DynamicResponse directly, which already has structured fields
-            BodySource::Handler(_) => true,
+            BodySource::Handler { .. } | BodySource::ForeignHandler(_) => true,
             _ => false,
         }
     }

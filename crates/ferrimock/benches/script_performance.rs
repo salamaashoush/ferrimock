@@ -27,7 +27,7 @@ http.get('/async', async () => {
 
 fn handler_of(mock: &MockDefinition) -> HandlerFn {
     match &mock.response.body {
-        BodySource::Handler(f) => std::sync::Arc::clone(f),
+        BodySource::Handler { handler, .. } => std::sync::Arc::clone(handler),
         other => panic!("expected handler body, got {other:?}"),
     }
 }

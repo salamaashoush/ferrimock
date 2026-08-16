@@ -131,8 +131,8 @@ impl ResponseGeneratorExt for ResponseGenerator {
                     render_to_dynamic(source, *hash, context, None, self.structured_response)?;
                 Ok(dynamic.body)
             }
-            BodySource::Handler(handler_fn) => {
-                let dynamic = handler_fn(context.clone()).await?;
+            BodySource::Handler { handler, .. } | BodySource::ForeignHandler(handler) => {
+                let dynamic = handler(context.clone()).await?;
                 Ok(dynamic.body)
             }
         }
@@ -168,12 +168,20 @@ impl ResponseGeneratorExt for ResponseGenerator {
                 context.vars = vars.cloned();
                 render_to_dynamic(source, *hash, &context, None, self.structured_response)
             }
-            BodySource::Handler(handler_fn) => {
+            BodySource::Handler { handler, needs } => {
+                let mut context = RequestContext::from_request_for_handler_selective(
+                    method, uri, query, headers, body, *needs,
+                );
+                context.captures = captures;
+                context.vars = vars.cloned();
+                handler(context).await
+            }
+            BodySource::ForeignHandler(handler) => {
                 let mut context =
                     RequestContext::from_request_for_handler(method, uri, query, headers, body);
                 context.captures = captures;
                 context.vars = vars.cloned();
-                handler_fn(context).await
+                handler(context).await
             }
             _ => {
                 let body_bytes = self.generate().await?;
@@ -198,7 +206,9 @@ impl ResponseGeneratorExt for ResponseGenerator {
         }
 
         match &self.body {
-            BodySource::File(_) | BodySource::Handler(_) => Err(crate::mp_err!("NEEDS_ASYNC")),
+            BodySource::File(_) | BodySource::Handler { .. } | BodySource::ForeignHandler(_) => {
+                Err(crate::mp_err!("NEEDS_ASYNC"))
+            }
             BodySource::Template { source, hash } => {
                 let mut context = RequestContext::from_request_selective(
                     method,
@@ -220,6 +230,6 @@ impl ResponseGeneratorExt for ResponseGenerator {
     }
 
     fn can_generate_sync(&self) -> bool {
-        self.delay.is_none() && !matches!(&self.body, BodySource::File(_) | BodySource::Handler(_))
+        self.delay.is_none() && !matches!(&self.body, BodySource::File(_)) && !self.body.is_handler()
     }
 }

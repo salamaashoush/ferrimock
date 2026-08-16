@@ -155,9 +155,9 @@ pub fn sse(
     ));
     mock.once = options.and_then(|o| o.once).unwrap_or(false);
 
-    Ok(RequestHandler {
-        inner: Some(mock),
-        fn_ref: Some(bridge.fn_ref),
-        pattern: Some(pattern),
-    })
+    Ok(RequestHandler::host_resolved(
+        mock,
+        bridge.fn_ref,
+        Some(pattern),
+    ))
 }

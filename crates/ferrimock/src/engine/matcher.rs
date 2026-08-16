@@ -241,7 +241,7 @@ impl MockMatcher {
                             && mock.request.query_matchers.is_empty()
                             && mock.request.header_matchers.is_empty()
                             && mock.request.body_matcher.is_none()
-                            && !matches!(mock.response.body, crate::types::BodySource::Handler(_));
+                            && !mock.response.body.is_handler();
 
                         if is_cacheable {
                             self.record_call_if_needed(&mock, method, path, query, headers, body);
@@ -933,8 +933,9 @@ impl MockMatcher {
         // Generate the response (may include dynamic status/headers from templates/handlers)
         let dynamic_result = if matches!(
             response_generator.body,
-            crate::types::BodySource::Template { .. } | crate::types::BodySource::Handler(_)
-        ) {
+            crate::types::BodySource::Template { .. }
+        ) || response_generator.body.is_handler()
+        {
             // For templates and handlers, use generate_dynamic which returns DynamicResponse
             response_generator
                 .generate_dynamic(

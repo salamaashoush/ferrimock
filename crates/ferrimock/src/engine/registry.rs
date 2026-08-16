@@ -197,8 +197,13 @@ pub struct MockRegistry {
     /// Only populated for mocks with exact URL patterns and no conditional matchers.
     /// Keyed by (method_str, exact_path) for O(1) lookup.
     exact_match_index: Arc<RwLock<ExactMatchIndex>>,
-    /// Version counter for the exact match index (tracks when to rebuild)
-    exact_index_version: Arc<AtomicU64>,
+    /// Bumped by every mock mutation. The index is current only while the
+    /// epoch it was built from is still the live one — a counter the rebuild
+    /// reads *before* the mocks, so a mutation landing mid-rebuild is not
+    /// mistaken for one the rebuild already saw.
+    exact_index_epoch: Arc<AtomicU64>,
+    /// The epoch the current index was built from.
+    exact_index_built_epoch: Arc<AtomicU64>,
     /// Single-flight guard: ensures only one thread rebuilds the exact index at
     /// a time, preventing a thundering-herd rebuild when the index goes stale
     /// under concurrent load (e.g. after a `once` mock is consumed).
@@ -418,7 +423,8 @@ impl MockRegistry {
                 let idx = HashMap::with_hasher(BuildNoHashHasher::default());
                 Arc::new(RwLock::new(idx))
             },
-            exact_index_version: Arc::new(AtomicU64::new(0)),
+            exact_index_epoch: Arc::new(AtomicU64::new(1)),
+            exact_index_built_epoch: Arc::new(AtomicU64::new(0)),
             index_rebuild_lock: Arc::new(Mutex::new(())),
             has_conditional_mocks: Arc::new(AtomicBool::new(false)),
             has_body_dependent_mocks: Arc::new(AtomicBool::new(false)),
@@ -808,19 +814,19 @@ impl MockRegistry {
 
     /// Invalidate the exact match index (called when mocks change)
     fn invalidate_exact_index(&self) {
-        self.exact_index_version.fetch_add(1, Ordering::Release);
+        self.exact_index_epoch.fetch_add(1, Ordering::Release);
     }
 
     /// Returns true when the exact index is current (no rebuild needed).
+    ///
+    /// Comparing the index against the *sorted cache's* version cannot work:
+    /// invalidation bumps both, so once the sorted cache is refreshed the two
+    /// agree again and a stale index reads as current — which let a retired
+    /// `once` mock keep matching from the index.
     #[inline]
     fn exact_index_is_current(&self) -> bool {
-        let sorted_version = self.sorted_mocks_cache.version.load(Ordering::Acquire);
-        let sorted_cached = self
-            .sorted_mocks_cache
-            .cached_version
-            .load(Ordering::Acquire);
-        let index_version = self.exact_index_version.load(Ordering::Acquire);
-        sorted_version == sorted_cached && index_version == sorted_version
+        self.exact_index_built_epoch.load(Ordering::Acquire)
+            == self.exact_index_epoch.load(Ordering::Acquire)
     }
 
     /// Rebuild the exact match index if needed.
@@ -842,6 +848,11 @@ impl MockRegistry {
             return;
         }
 
+        // Read the epoch BEFORE the mocks: a mutation landing between here and
+        // the store below advances it, so the index is not marked current for
+        // an epoch it never saw.
+        let epoch = self.exact_index_epoch.load(Ordering::Acquire);
+
         // Rebuild: get all enabled mocks sorted by priority
         let enabled = self.get_enabled_mocks_arc();
 
@@ -853,28 +864,38 @@ impl MockRegistry {
         let mut has_href_regex = false;
 
         for mock in enabled.iter() {
-            // Body/graphql matchers need the body; handler mocks may read it
-            // (opaque JS), so treat them as body-dependent too (conservative).
-            let body_dependent = mock.request.body_matcher.is_some()
-                || mock.request.graphql_matcher.is_some()
-                || matches!(mock.response.body, crate::types::BodySource::Handler(_));
-            if body_dependent {
+            // Two different questions, kept apart. *Conditional* is about
+            // matching: whether a mock can be picked by (method, path) alone.
+            // *Dependent* is about response generation: whether the caller has
+            // to marshal headers/body before matching at all. Handler mocks
+            // answer the second, never the first — their matching predicate is
+            // whatever matchers they carry, and folding handler-ness into
+            // `is_conditional` disabled the O(1) exact index registry-wide for
+            // every other mock in the process.
+            let matches_on_body =
+                mock.request.body_matcher.is_some() || mock.request.graphql_matcher.is_some();
+
+            // A handler reads whatever it declared; a foreign one is opaque and
+            // declares everything. Static and template bodies are left out on
+            // purpose — that is the pre-existing rule, and widening it here
+            // would make every inline mock force body marshalling.
+            let handler_reads_body = match &mock.response.body {
+                crate::types::BodySource::Handler { needs, .. } => needs.body,
+                crate::types::BodySource::ForeignHandler(_) => true,
+                _ => false,
+            };
+
+            if matches_on_body || handler_reads_body {
                 has_body_dependent = true;
             }
 
-            // Header matchers need headers; handler mocks may read them, and
-            // header-referencing templates do (same conservative rule).
-            if !mock.request.header_matchers.is_empty()
-                || mock.response.context_uses_headers
-                || matches!(mock.response.body, crate::types::BodySource::Handler(_))
-            {
+            if !mock.request.header_matchers.is_empty() || mock.response.context_uses_headers {
                 has_header_dependent = true;
             }
 
             let is_conditional = !mock.request.header_matchers.is_empty()
-                || body_dependent
-                || !mock.request.query_matchers.is_empty()
-                || matches!(mock.response.body, crate::types::BodySource::Handler(_));
+                || matches_on_body
+                || !mock.request.query_matchers.is_empty();
 
             if is_conditional {
                 has_conditional = true;
@@ -919,10 +940,7 @@ impl MockRegistry {
         self.has_href_regex_mocks
             .store(has_href_regex, Ordering::Release);
         *self.exact_match_index.write() = index;
-        // Record that our index is now built at the current sorted version
-        let current_sorted = self.sorted_mocks_cache.version.load(Ordering::Acquire);
-        self.exact_index_version
-            .store(current_sorted, Ordering::Release);
+        self.exact_index_built_epoch.store(epoch, Ordering::Release);
     }
 
     /// Try to find an exact match via the index. O(1) lookup, zero allocation.
@@ -1618,6 +1636,113 @@ mod tests {
             response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("{}")),
             vars: None,
             streaming: None,
+        }
+    }
+
+    fn handler_body(needs: crate::types::ContextNeeds) -> BodySource {
+        BodySource::handler_with_needs(
+            std::sync::Arc::new(|_ctx| {
+                Box::pin(async {
+                    Ok(crate::types::DynamicResponse::body_only(
+                        bytes::Bytes::from_static(b"{}"),
+                    ))
+                })
+            }),
+            needs,
+        )
+    }
+
+    fn exact_mock(id: &str, path: &str, body: BodySource) -> MockDefinition {
+        let mut mock = create_test_mock(id, 100, true);
+        mock.request.url_patterns = smallvec![crate::types::UrlPattern::Exact(path.to_string())];
+        mock.response = ResponseGenerator::new(StatusCode::OK, body);
+        mock
+    }
+
+    #[test]
+    fn handler_mocks_do_not_disable_the_exact_index() {
+        let registry = MockRegistry::with_mocks(vec![
+            exact_mock("inline", "/a", BodySource::inline("{}")),
+            exact_mock("handler", "/b", handler_body(crate::types::ContextNeeds::ALL)),
+        ]);
+
+        // A handler matches on method+path like any other mock; treating it as
+        // conditional used to bail the O(1) path for every mock in the process.
+        assert!(!registry.has_conditional_mocks());
+        assert!(
+            registry
+                .try_exact_match_simple(&Method::GET, "/a")
+                .is_some_and(|m| m.id == "inline")
+        );
+        assert!(
+            registry
+                .try_exact_match_simple(&Method::GET, "/b")
+                .is_some_and(|m| m.id == "handler")
+        );
+    }
+
+    #[test]
+    fn declared_handler_needs_narrow_body_marshalling() {
+        let registry = MockRegistry::with_mocks(vec![exact_mock(
+            "handler",
+            "/b",
+            handler_body(crate::types::ContextNeeds::headers_only()),
+        )]);
+        assert!(!registry.needs_request_body());
+        assert!(registry.needs_request_headers());
+
+        let opaque = MockRegistry::with_mocks(vec![exact_mock(
+            "foreign",
+            "/b",
+            BodySource::foreign_handler(std::sync::Arc::new(|_ctx| {
+                Box::pin(async {
+                    Ok(crate::types::DynamicResponse::body_only(
+                        bytes::Bytes::from_static(b"{}"),
+                    ))
+                })
+            })),
+        )]);
+        assert!(opaque.needs_request_body());
+    }
+
+    /// A retired `once` mock must not keep matching from the exact index.
+    /// It did: invalidation bumped the index version to exactly what a rebuild
+    /// would store, so as soon as anything refreshed the sorted cache the stale
+    /// index read as current.
+    #[test]
+    fn retired_once_mock_leaves_the_exact_index() {
+        for body in [
+            BodySource::inline("{}"),
+            handler_body(crate::types::ContextNeeds::ALL),
+        ] {
+            let mut once_mock = exact_mock("once", "/api/once", body.clone());
+            once_mock.once = true;
+            let fallback = exact_mock("fallback", "/api/once", body);
+
+            let registry = MockRegistry::with_mocks(vec![once_mock, fallback]);
+            let matcher = crate::engine::matcher::MockMatcher::new(registry);
+            let hm = http::HeaderMap::new();
+
+            let first = matcher
+                .find_match(&Method::GET, "/api/once", None, &hm, None)
+                .map(|m| m.mock.id.to_string());
+            assert_eq!(first.as_deref(), Some("once"));
+
+            // The NAPI lane keeps walking the chain after the first hit, and
+            // that walk takes the slow path, which refreshes the sorted cache.
+            let _ = matcher.find_match_excluding(
+                &Method::GET,
+                "/api/once",
+                None,
+                &hm,
+                None,
+                &["once".to_string()],
+            );
+
+            let second = matcher
+                .find_match(&Method::GET, "/api/once", None, &hm, None)
+                .map(|m| m.mock.id.to_string());
+            assert_eq!(second.as_deref(), Some("fallback"));
         }
     }
 

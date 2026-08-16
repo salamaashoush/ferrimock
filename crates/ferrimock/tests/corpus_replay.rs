@@ -457,7 +457,10 @@ fn parse_query(raw: &str) -> BTreeMap<String, String> {
 fn inline_body(source: &BodySource) -> Option<&[u8]> {
     match source {
         BodySource::Inline(bytes) | BodySource::FileCached(bytes) => Some(bytes.as_ref()),
-        BodySource::File(_) | BodySource::Template { .. } | BodySource::Handler(_) => None,
+        BodySource::File(_)
+        | BodySource::Template { .. }
+        | BodySource::Handler { .. }
+        | BodySource::ForeignHandler(_) => None,
     }
 }
 

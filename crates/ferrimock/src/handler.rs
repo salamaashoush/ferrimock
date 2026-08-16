@@ -459,7 +459,7 @@ mod tests {
         assert_eq!(mock.priority, 100);
         assert_eq!(mock.request.methods.len(), 1);
         assert_eq!(mock.request.methods[0], Method::GET);
-        assert!(matches!(mock.response.body, BodySource::Handler(_)));
+        assert!(mock.response.body.is_handler());
     }
 
     #[test]
@@ -556,7 +556,7 @@ mod tests {
         let mock_match = result.unwrap();
         assert!(matches!(
             mock_match.mock.response.body,
-            BodySource::Handler(_)
+            BodySource::Handler { .. }
         ));
     }
 

@@ -49,6 +49,30 @@ impl RequestHandler {
 }
 
 impl RequestHandler {
+    /// Build a handler whose body is resolved by the host.
+    ///
+    /// Carrying a `FunctionRef` is exactly what makes a handler host-resolved:
+    /// `matchRequest` looks the resolver up in the per-mock map rather than
+    /// calling the Rust closure, and a mock reaching that lookup without an
+    /// entry is an error. Marking the body here keeps the two in step for
+    /// every namespace that produces one.
+    pub(crate) fn host_resolved(
+        mut mock_def: MockDefinition,
+        fn_ref: Arc<HandlerFnRef>,
+        pattern: Option<String>,
+    ) -> Self {
+        if let Some(f) = mock_def.response.body.as_handler().cloned() {
+            mock_def
+                .response
+                .set_body(ferrimock::types::BodySource::foreign_handler(f));
+        }
+        Self {
+            inner: Some(mock_def),
+            fn_ref: Some(fn_ref),
+            pattern,
+        }
+    }
+
     /// Take the inner MockDefinition, leaving None.
     pub(crate) fn take(&mut self) -> Result<MockDefinition> {
         self.inner
@@ -69,11 +93,7 @@ pub(crate) fn finish_handler(
     pattern: Option<String>,
 ) -> RequestHandler {
     mock_def.once = options.and_then(|o| o.once).unwrap_or(false);
-    RequestHandler {
-        inner: Some(mock_def),
-        fn_ref: Some(bridge.fn_ref),
-        pattern,
-    }
+    RequestHandler::host_resolved(mock_def, bridge.fn_ref, pattern)
 }
 
 /// JS RegExp flags filtered to the set the regex crate honors inline

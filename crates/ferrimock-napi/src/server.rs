@@ -606,7 +606,7 @@ impl FerrimockServer {
                     let mock_def = &mock_match.mock;
                     let captures = mock_match.captures;
 
-                    if matches!(&mock_def.response.body, BodySource::Handler(_)) {
+                    if matches!(&mock_def.response.body, BodySource::ForeignHandler(_)) {
                         let mut context = RequestContext::from_request_for_handler(
                             method.as_str(),
                             &path,
