@@ -11,6 +11,7 @@ mod list;
 mod recordings;
 mod reload;
 mod serve;
+pub mod spec;
 mod show;
 mod test;
 pub mod ui;

@@ -32,6 +32,9 @@ pub struct MockServerConfig {
     pub verbose: bool,
     pub open_browser: bool,
     pub explain_unmatched: bool,
+    /// Mocks built in memory rather than loaded from a file — a spec-derived
+    /// backend, for instance.
+    pub extra_mocks: Vec<ferrimock::types::MockDefinition>,
 }
 
 /// Shared state for the mock server
@@ -58,6 +61,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         verbose,
         open_browser,
         explain_unmatched,
+        extra_mocks,
     } = config;
 
     crate::say!("{}", ui::header("Mock Server"));
@@ -65,6 +69,11 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
 
     let registry = Arc::new(MockRegistry::new());
     let mut total_count = 0usize;
+
+    for mock in extra_mocks {
+        registry.add_mock(mock);
+        total_count += 1;
+    }
 
     // Load mocks from directory if provided
     if let Some(ref dir) = mocks_dir {
@@ -84,7 +93,7 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
                 ui::path(dir)
             ))
         );
-    } else if mock_file.is_none() {
+    } else if mock_file.is_none() && total_count == 0 {
         // Default directory if neither --mocks nor --mock-file given
         let default_dir = crate::config::mocks_dir();
         let spinner = ui::spinner(&format!("Loading mocks from {}...", ui::path(&default_dir)));

@@ -187,6 +187,7 @@ pub async fn execute(cmd: MockCommand) -> anyhow::Result<()> {
                 verbose,
                 open_browser: open,
                 explain_unmatched: !no_explain,
+                extra_mocks: Vec::new(),
             })
             .await
         }
