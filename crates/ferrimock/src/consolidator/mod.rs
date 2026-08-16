@@ -10,12 +10,12 @@ pub mod pattern;
 pub mod provenance;
 pub mod shape;
 
-pub use fidelity::{FidelityOptions, FidelityReport, FidelityScore};
-pub use merge::{MergeCandidate, MergeScorer, SizeThreshold};
 pub use crate::profile::{
     CompositeProfile, ConsolidationProfile, DefaultProfile, PaginationDialect, Placeholder,
     SegmentContext,
 };
+pub use fidelity::{FidelityOptions, FidelityReport, FidelityScore};
+pub use merge::{MergeCandidate, MergeScorer, SizeThreshold};
 pub use provenance::Provenance;
 
 #[cfg(test)]
@@ -34,7 +34,7 @@ mod tests;
 
 use crate::Result;
 use crate::codegen::TemplateGenerator;
-use crate::config::{MockCollectionConfig, MockConfig, ReturnConfig};
+use crate::config::{GraphQLMatchConfig, MockCollectionConfig, MockConfig, ReturnConfig};
 use crate::error::Context;
 use crate::recorder::RecordedInteraction;
 use analysis::{ResponseAnalysis, ResponseAnalyzer};
@@ -55,7 +55,6 @@ pub struct ConsolidationStats {
     pub templates_created: usize,
 }
 
-
 /// Consolidator configuration options
 #[derive(Clone)]
 pub struct ConsolidatorOptions {
@@ -65,6 +64,16 @@ pub struct ConsolidatorOptions {
     pub enable_templates: bool,
     /// Minimum number of similar requests to form a pattern
     pub min_pattern_threshold: usize,
+    /// Read a value seen once as evidence of what it is, rather than as a
+    /// constant.
+    ///
+    /// Off, a lone recording is reproduced exactly: a value agrees with itself,
+    /// so every field reads as fixed and the mock answers the one request it was
+    /// recorded at. On, each value is asked what it is, the path is widened
+    /// where a segment reads as an identifier, and the result is a template that
+    /// answers the whole family of requests -- at the cost of no longer
+    /// reproducing the recording verbatim.
+    pub generalize: bool,
     /// Enable stateful pagination using persistent storage
     pub enable_stateful_pagination: bool,
     /// Template for storage key pattern (e.g., "api.{path}.total")
@@ -90,7 +99,11 @@ impl std::fmt::Debug for ConsolidatorOptions {
             .field("enable_consolidation", &self.enable_consolidation)
             .field("enable_templates", &self.enable_templates)
             .field("min_pattern_threshold", &self.min_pattern_threshold)
-            .field("enable_stateful_pagination", &self.enable_stateful_pagination)
+            .field("generalize", &self.generalize)
+            .field(
+                "enable_stateful_pagination",
+                &self.enable_stateful_pagination,
+            )
             .field(
                 "pagination_storage_key_template",
                 &self.pagination_storage_key_template,
@@ -111,6 +124,7 @@ impl Default for ConsolidatorOptions {
             enable_consolidation: true,
             enable_templates: true,
             min_pattern_threshold: 3,
+            generalize: false,
             enable_stateful_pagination: true,
             pagination_storage_key_template: "api.{path}.total".to_string(),
             profile: crate::profile::default_profile(),
@@ -138,11 +152,14 @@ impl MockConsolidator {
 
     /// Create a new consolidator with custom options
     pub fn with_options(options: ConsolidatorOptions) -> Self {
+        let generalize = options.generalize;
         let response_analyzer = ResponseAnalyzer::with_profile(
             options.enable_stateful_pagination,
             Arc::clone(&options.profile),
-        );
-        let pattern_detector = PatternDetector::with_profile(Arc::clone(&options.profile));
+        )
+        .generalizing(generalize);
+        let pattern_detector =
+            PatternDetector::with_profile(Arc::clone(&options.profile)).generalizing(generalize);
         let template_generator =
             TemplateGenerator::new(options.pagination_storage_key_template.clone());
 
@@ -239,7 +256,10 @@ impl MockConsolidator {
         group_id: usize,
         group: &[MockConfig],
     ) -> Result<Vec<MockConfig>> {
-        if group.len() == 1 {
+        // A lone recording is kept as it was unless it is to be generalized, in
+        // which case it goes through the same analysis as any other group and
+        // comes back as a template.
+        if group.len() == 1 && !self.options.generalize {
             self.record_identity_lineage(group);
             return Ok(group.to_vec());
         }
@@ -321,7 +341,7 @@ impl MockConsolidator {
     /// but the last replays them in turn. A mock standing in for several
     /// recordings answers for all of them and cannot retire, so it goes last
     /// and stays.
-    fn sequence_identical_matchers(&self, mocks: &mut Vec<MockConfig>) {
+    fn sequence_identical_matchers(&self, mocks: &mut [MockConfig]) {
         let mut positions: FxHashMap<String, Vec<usize>> = FxHashMap::default();
         for (index, mock) in mocks.iter().enumerate() {
             positions
@@ -336,6 +356,11 @@ impl MockConsolidator {
             // -- inventing a sequence where the recording described none would
             // retire a mock that was meant to keep answering. All that is undone
             // here is the shadowing.
+            //
+            // Forcing a chain here was tried against a real recording and made
+            // fidelity worse: lineage fell further than shape rose, because a
+            // retired mock sends the next request somewhere the recording never
+            // sent it.
             let mut ordered = indices.clone();
             // A mock standing in for several recordings answers for all of them
             // and cannot retire, so it is the one left holding the endpoint.
@@ -386,10 +411,21 @@ impl MockConsolidator {
         }
         methods.sort_unstable();
 
-        let mut urls = match_config.urls.clone();
-        if let Some(url) = match_config.url.as_ref() {
-            urls.push(url.clone());
-        }
+        let mut urls: Vec<String> = match_config
+            .urls
+            .iter()
+            .chain(match_config.url.as_ref())
+            // `exact:/app-api/graphql` and `/app-api/graphql` are the same URL
+            // asked for two ways, and they compete for the same requests. Left
+            // unnormalised they hash apart, and a templated mock standing for
+            // fourteen recordings sits in its own bucket while the two exact
+            // leftovers outrank it -- so the template never answers anything.
+            //
+            // Only an identical string collapses: a pattern with a placeholder
+            // in it is a different string from any exact URL, and stays in its
+            // own bucket.
+            .map(|url| url.strip_prefix("exact:").unwrap_or(url).to_string())
+            .collect();
         urls.sort_unstable();
 
         // The pinned *values* are what tell two recordings of one URL apart --
@@ -442,7 +478,7 @@ impl MockConsolidator {
             }
         }
 
-        let merging = group.len() >= self.options.min_pattern_threshold;
+        let merging = self.options.generalize || group.len() >= self.options.min_pattern_threshold;
         if !merging {
             tracing::debug!(
                 mocks = group.len(),
@@ -462,7 +498,9 @@ impl MockConsolidator {
         }
 
         let url_pattern = self.pattern_detector.generate_smart_url_pattern(group);
-        let response_analysis = self.response_analyzer.analyze_response_patterns(group)?;
+        let response_analysis = self
+            .response_analyzer
+            .analyze_response_patterns(group, &url_pattern)?;
 
         // Analyze GraphQL variables if this is a GraphQL group
         let graphql_analysis = ResponseAnalyzer::analyze_graphql_variables(group);
@@ -493,6 +531,9 @@ impl MockConsolidator {
                 match_config.url = None;
             }
             Self::relax_match_to_group(&mut consolidated, group);
+            if self.options.generalize {
+                Self::pin_lasting_query(&mut consolidated, group);
+            }
             Ok(vec![consolidated])
         } else if self.options.enable_templates && response_analysis.is_json {
             self.stats.patterns_detected += 1;
@@ -516,6 +557,86 @@ impl MockConsolidator {
             self.record_identity_lineage(group);
             Ok(group.to_vec())
         }
+    }
+
+    /// Pin the query parameters that say what was asked for, and drop the ones
+    /// that only say when it was asked.
+    ///
+    /// A recorded URL carries the whole query, cache buster and all. Pinned as
+    /// recorded, the mock waits for `_=1786715224166` -- a number the app
+    /// regenerates on every load -- and answers nothing, however well its body
+    /// is templated. What is worth keeping names a resource or narrows a search;
+    /// a timestamp, a nonce and a session id name the moment.
+    ///
+    /// The parameters that survive move into `query`, which matches a subset, so
+    /// the mock stops caring about the ones it dropped instead of demanding
+    /// their absence.
+    /// Only a lone recording is rewritten. A merged mock's matcher was already
+    /// decided by what its members varied over, which is stronger evidence than
+    /// anything a parameter's own shape can offer, and widening it further
+    /// measured worse: mocks began answering for each other.
+    fn pin_lasting_query(consolidated: &mut MockConfig, group: &[MockConfig]) {
+        let [only] = group else {
+            return;
+        };
+
+        let recorded = Self::query_of(only);
+        // Nothing to throw away means nothing to loosen. Moving a query out of
+        // the URL trades an exact match for a subset one, and a mock that keeps
+        // its exact match answers its own recording and no one else's.
+        if !recorded
+            .iter()
+            .any(|(name, value)| pattern::is_volatile_parameter(name, value))
+        {
+            return;
+        }
+
+        let lasting: FxHashMap<String, String> = recorded
+            .into_iter()
+            .filter(|(name, value)| !pattern::is_volatile_parameter(name, value))
+            .collect();
+
+        let Some(match_config) = consolidated.match_config.as_mut() else {
+            return;
+        };
+        match_config.query = lasting;
+        // The parameters that survive move into `query`, which matches a subset,
+        // so the mock stops caring about the ones it dropped rather than
+        // demanding their absence.
+        for url in &mut match_config.urls {
+            if let Some((path, _)) = url.split_once('?') {
+                *url = path.to_string();
+            }
+        }
+        if let Some(url) = match_config.url.as_mut()
+            && let Some((path, _)) = url.split_once('?')
+        {
+            *url = path.to_string();
+        }
+    }
+
+    /// Every query parameter a recording matched on, from its URL and from the
+    /// parameters the converter pinned one by one.
+    fn query_of(mock: &MockConfig) -> Vec<(String, String)> {
+        let url = pattern::request_url(mock);
+        let mut parameters: Vec<(String, String)> = url
+            .split_once('?')
+            .map(|(_, query)| {
+                url::form_urlencoded::parse(query.as_bytes())
+                    .map(|(name, value)| (name.into_owned(), value.into_owned()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if let Some(match_config) = mock.match_config.as_ref() {
+            parameters.extend(
+                match_config
+                    .query
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone())),
+            );
+        }
+        parameters
     }
 
     /// Relax a merged mock's request matchers to cover its whole group.
@@ -548,6 +669,41 @@ impl MockConsolidator {
                     .is_some_and(|other| other == value)
             })
         });
+
+        // A GraphQL variable is pinned for the same reason a URL segment is
+        // literal: it identifies the request. One that varies across the group
+        // is the group's placeholder, and keeping it pinned leaves a mock that
+        // stands for fourteen recordings matching only the one it was built
+        // from -- while the other thirteen match nothing at all.
+        if let Some(GraphQLMatchConfig::Structured {
+            operation,
+            variables,
+            ..
+        }) = match_config.graphql.as_mut()
+        {
+            variables.retain(|name, value| {
+                group.iter().all(|mock| {
+                    Self::graphql_variables(mock)
+                        .is_some_and(|other| other.get(name) == Some(value))
+                })
+            });
+
+            // Nothing left to pin: the operation name is the whole matcher, and
+            // saying so plainly beats an empty structured form.
+            if variables.is_empty()
+                && let Some(operation) = operation.clone()
+            {
+                match_config.graphql = Some(GraphQLMatchConfig::Simple(operation));
+            }
+        }
+    }
+
+    /// The variables a recorded GraphQL mock pins, if it pins any.
+    fn graphql_variables(mock: &MockConfig) -> Option<&FxHashMap<String, serde_json::Value>> {
+        match mock.match_config.as_ref()?.graphql.as_ref()? {
+            GraphQLMatchConfig::Structured { variables, .. } => Some(variables),
+            _ => None,
+        }
     }
 
     /// Every mock in the group survives under its own id.
@@ -559,10 +715,8 @@ impl MockConsolidator {
 
     /// One mock now answers for the whole group.
     fn record_group_lineage(&mut self, consolidated_id: &str, group: &[MockConfig]) {
-        self.provenance.record(
-            consolidated_id,
-            group.iter().map(|mock| mock.id.clone()),
-        );
+        self.provenance
+            .record(consolidated_id, group.iter().map(|mock| mock.id.clone()));
     }
 
     /// Create a smart template-based mock using Tera templates
@@ -607,6 +761,9 @@ impl MockConsolidator {
             match_config.url = None;
         }
         Self::relax_match_to_group(&mut template_mock, group);
+        if self.options.generalize {
+            Self::pin_lasting_query(&mut template_mock, group);
+        }
 
         // Extract common headers and status from the group
         let common_status = Self::extract_common_status(group);

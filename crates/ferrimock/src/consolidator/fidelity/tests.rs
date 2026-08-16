@@ -104,9 +104,21 @@ fn options() -> FidelityOptions {
 #[tokio::test]
 async fn an_unconsolidated_recording_replays_exactly() {
     let interactions = vec![
-        get("i1", "/api/users/1", r#"{"id":1,"name":"Ann","role":"admin"}"#),
-        get("i2", "/api/users/2", r#"{"id":2,"name":"Bob","role":"admin"}"#),
-        get("i3", "/api/users/3", r#"{"id":3,"name":"Cid","role":"admin"}"#),
+        get(
+            "i1",
+            "/api/users/1",
+            r#"{"id":1,"name":"Ann","role":"admin"}"#,
+        ),
+        get(
+            "i2",
+            "/api/users/2",
+            r#"{"id":2,"name":"Bob","role":"admin"}"#,
+        ),
+        get(
+            "i3",
+            "/api/users/3",
+            r#"{"id":3,"name":"Cid","role":"admin"}"#,
+        ),
     ];
     let collection = recorded_collection(&interactions);
 
@@ -140,9 +152,21 @@ async fn an_unconsolidated_recording_replays_exactly() {
 #[tokio::test]
 async fn consolidating_a_uniform_group_preserves_behaviour() {
     let interactions = vec![
-        get("i1", "/api/users/1", r#"{"id":1,"name":"Ann","role":"admin"}"#),
-        get("i2", "/api/users/2", r#"{"id":2,"name":"Bob","role":"admin"}"#),
-        get("i3", "/api/users/3", r#"{"id":3,"name":"Cid","role":"admin"}"#),
+        get(
+            "i1",
+            "/api/users/1",
+            r#"{"id":1,"name":"Ann","role":"admin"}"#,
+        ),
+        get(
+            "i2",
+            "/api/users/2",
+            r#"{"id":2,"name":"Bob","role":"admin"}"#,
+        ),
+        get(
+            "i3",
+            "/api/users/3",
+            r#"{"id":3,"name":"Cid","role":"admin"}"#,
+        ),
     ];
     let original = recorded_collection(&interactions);
 
@@ -415,7 +439,10 @@ async fn a_value_the_group_never_varied_must_not_start_varying() {
     .await
     .expect("verification runs");
 
-    assert_eq!(report.score.shape_equal, 2, "shape is intact; only a value moved");
+    assert_eq!(
+        report.score.shape_equal, 2,
+        "shape is intact; only a value moved"
+    );
     assert_eq!(report.score.constants_held, 0);
     assert!(
         report.constant_drift[0].detail.contains("/role"),
@@ -435,7 +462,11 @@ async fn a_value_the_group_never_varied_must_not_start_varying() {
 async fn a_value_every_list_element_agreed_on_must_not_be_invented() {
     // Lists of different lengths, but every entry in every one is a "file".
     let interactions = vec![
-        get("i1", "/api/folders/1", r#"{"entries":[{"type":"file","id":1}]}"#),
+        get(
+            "i1",
+            "/api/folders/1",
+            r#"{"entries":[{"type":"file","id":1}]}"#,
+        ),
         get(
             "i2",
             "/api/folders/2",
@@ -496,8 +527,16 @@ async fn an_element_field_the_group_varied_is_free_to_vary_on_replay() {
     // `type` is a real discriminator here, so a replay is not bound to any one
     // value for it.
     let interactions = vec![
-        get("i1", "/api/folders/1", r#"{"entries":[{"type":"file","id":1}]}"#),
-        get("i2", "/api/folders/2", r#"{"entries":[{"type":"folder","id":2}]}"#),
+        get(
+            "i1",
+            "/api/folders/1",
+            r#"{"entries":[{"type":"file","id":1}]}"#,
+        ),
+        get(
+            "i2",
+            "/api/folders/2",
+            r#"{"entries":[{"type":"folder","id":2}]}"#,
+        ),
     ];
     let original = recorded_collection(&interactions);
 
@@ -651,7 +690,10 @@ fn an_emptied_array_is_reported_even_when_length_is_not_strict() {
         strict_array_len: true,
         ..FidelityOptions::default()
     };
-    assert_eq!(shape(r#"{"items":[1,2,3]}"#, r#"{"items":[7]}"#, &strict).len(), 1);
+    assert_eq!(
+        shape(r#"{"items":[1,2,3]}"#, r#"{"items":[7]}"#, &strict).len(),
+        1
+    );
 }
 
 #[test]
@@ -704,8 +746,7 @@ fn only_the_head_of_a_long_array_is_probed() {
 
 #[test]
 fn leaves_are_addressed_by_json_pointer() {
-    let value: JsonValue =
-        serde_json::from_str(r#"{"a":{"b":"deep"},"c":true}"#).unwrap();
+    let value: JsonValue = serde_json::from_str(r#"{"a":{"b":"deep"},"c":true}"#).unwrap();
     let leaves = flatten_leaves(&value, 64);
 
     assert_eq!(leaves.get("/a/b"), Some(&serde_json::json!("deep")));
@@ -732,10 +773,8 @@ fn an_array_is_one_leaf_not_one_per_element() {
 
 #[test]
 fn leaf_collection_stops_at_the_budget() {
-    let value: JsonValue = serde_json::from_str(
-        r#"{"a":"1","b":"2","c":"3","d":"4","e":"5","f":"6"}"#,
-    )
-    .unwrap();
+    let value: JsonValue =
+        serde_json::from_str(r#"{"a":"1","b":"2","c":"3","d":"4","e":"5","f":"6"}"#).unwrap();
     assert_eq!(flatten_leaves(&value, 4).len(), 4);
 }
 
@@ -873,4 +912,43 @@ fn passes_compares_against_the_behavioural_ratio() {
     assert!(report.passes(0.75));
     assert!(!report.passes(0.8));
     assert!((report.behavioral_delta() + 0.25).abs() < f64::EPSILON);
+}
+
+/// Verification asks what a mock answers, not when.
+///
+/// Found by replaying a real recording: the HAR converter keeps each entry's
+/// measured latency as a `delay`, and honouring it made a 361-interaction
+/// recording take over ten minutes to verify instead of a second. Nothing in a
+/// fidelity report reads the clock, so nothing here should wait for one.
+#[tokio::test]
+async fn verification_does_not_wait_out_recorded_latency() {
+    let interactions = vec![
+        get("i1", "/v2/files/1", r#"{"id":"1"}"#),
+        get("i2", "/v2/files/2", r#"{"id":"2"}"#),
+        get("i3", "/v2/files/3", r#"{"id":"3"}"#),
+    ];
+
+    let mut original = recorded_collection(&interactions);
+    // Two seconds each. Honoured, this test takes six; ignored, it is instant.
+    for mock in &mut original.mocks {
+        mock.delay = Some("2s".to_string());
+    }
+
+    let started = std::time::Instant::now();
+    let report = verify(
+        &interactions,
+        &original,
+        &original,
+        &Provenance::default(),
+        &options(),
+    )
+    .await
+    .expect("verification runs");
+    let elapsed = started.elapsed();
+
+    assert_eq!(report.score.matched, 3);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "verification waited {elapsed:?}, so it is sleeping through recorded latency"
+    );
 }

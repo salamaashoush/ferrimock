@@ -101,6 +101,15 @@ pub struct FidelityScore {
     pub shape_equal: usize,
     pub constants_held: usize,
     pub value_equal: usize,
+    /// Scalar leaves the recordings carried, across every interaction.
+    ///
+    /// `value_equal` is all-or-nothing per interaction: a response whose id now
+    /// answers correctly still scores nothing while any other field is
+    /// generated. Counting leaves says how much of each answer is right, which
+    /// is the only way a change to one field shows up at all.
+    pub leaves: usize,
+    /// Leaves the replay answered with the recorded value.
+    pub leaves_equal: usize,
     /// Interactions clearing every level except `value_equal` -- the headline
     /// number, since templating deliberately varies values.
     pub behavioral: usize,
@@ -138,6 +147,11 @@ impl FidelityScore {
 
     pub fn value_equal_ratio(&self) -> f64 {
         Self::ratio(self.value_equal, self.total)
+    }
+
+    /// Fraction of recorded leaves the replay answered with the recorded value.
+    pub fn leaves_equal_ratio(&self) -> f64 {
+        Self::ratio(self.leaves_equal, self.leaves)
     }
 
     /// Fraction of interactions that survived consolidation behaviourally.
@@ -338,7 +352,9 @@ async fn evaluate(
         if lineage_ok {
             eval.score.no_cross_talk += 1;
         } else {
-            let expected_origin = origin.as_ref().map_or_else(String::new, ToString::to_string);
+            let expected_origin = origin
+                .as_ref()
+                .map_or_else(String::new, ToString::to_string);
             push_capped(
                 &mut eval.cross_talk,
                 &mut eval.examples_capped,
@@ -463,6 +479,16 @@ async fn evaluate(
             eval.score.value_equal += 1;
         }
 
+        if let (Some(recorded), Some(replayed)) = (&recorded_json, &replayed_json) {
+            let recorded_leaves = flatten_leaves(recorded, options.leaf_budget);
+            let replayed_leaves = flatten_leaves(replayed, options.leaf_budget);
+            eval.score.leaves += recorded_leaves.len();
+            eval.score.leaves_equal += recorded_leaves
+                .iter()
+                .filter(|(pointer, expected)| replayed_leaves.get(*pointer) == Some(*expected))
+                .count();
+        }
+
         if lineage_ok && status_ok && shape_ok && constants_ok {
             eval.score.behavioral += 1;
         }
@@ -543,7 +569,9 @@ fn merge_targets(provenance: &Provenance) -> FxHashMap<LeanString, LeanString> {
     let mut targets = FxHashMap::default();
     for (consolidated, origins) in provenance.entries() {
         for origin in origins {
-            targets.entry(origin.clone()).or_insert(consolidated.clone());
+            targets
+                .entry(origin.clone())
+                .or_insert(consolidated.clone());
         }
     }
     targets
@@ -586,13 +614,7 @@ fn agreed_constants_by_group(
         let elements = collect_element_fields(&body);
         match by_group.get_mut(group) {
             None => {
-                by_group.insert(
-                    group.clone(),
-                    GroupConstants {
-                        leaves,
-                        elements,
-                    },
-                );
+                by_group.insert(group.clone(), GroupConstants { leaves, elements });
             }
             Some(agreed) => {
                 agreed
@@ -628,11 +650,25 @@ async fn build_matcher(
     collection: &MockCollectionConfig,
     base_dir: Option<&Path>,
 ) -> Result<MockMatcher> {
+    let mut collection = collection.clone();
+    // Verification asks what a mock answers, not when. A recording made against
+    // a real service carries its latency, and the HAR converter keeps it -- so
+    // replaying honestly means sleeping through every recorded second, and a
+    // few hundred interactions take an afternoon. Fidelity is not a timing
+    // measurement, and nothing here reads the clock.
+    strip_delays(&mut collection);
+
     let definitions = collection
-        .clone()
         .into_mock_definitions_with_dir(base_dir, None)
         .await?;
     Ok(MockMatcher::new(MockRegistry::with_mocks(definitions)))
+}
+
+/// Drop every configured delay from a collection about to be replayed.
+fn strip_delays(collection: &mut MockCollectionConfig) {
+    for mock in &mut collection.mocks {
+        mock.delay = None;
+    }
 }
 
 fn interaction_ref(interaction: &RecordedInteraction) -> InteractionRef {
@@ -757,8 +793,8 @@ fn walk_shape(
     let replayed_kind = Kind::of(replayed, options.strict_numbers);
 
     if recorded_kind != replayed_kind {
-        let nullable = !options.strict_null
-            && (recorded_kind == Kind::Null || replayed_kind == Kind::Null);
+        let nullable =
+            !options.strict_null && (recorded_kind == Kind::Null || replayed_kind == Kind::Null);
         if !nullable {
             out.push(format!(
                 "{here}: recorded {} but replayed {}",
@@ -882,8 +918,8 @@ impl ElementFields {
             .filter_map(|(key, (seen, occurrences))| {
                 let array = key.split("[]/").next()?;
                 let elements = self.elements.get(array)?;
-                let only = (seen.len() == 1 && occurrences == elements)
-                    .then(|| seen.iter().next())??;
+                let only =
+                    (seen.len() == 1 && occurrences == elements).then(|| seen.iter().next())??;
                 Some((key.clone(), only.clone()))
             })
             .collect()
@@ -948,10 +984,7 @@ fn walk_elements(value: &JsonValue, pointer: &mut String, out: &mut ElementField
 }
 
 /// Every element field in `value` that disagrees with an established constant.
-fn element_constant_drift(
-    value: &JsonValue,
-    constants: &FxHashMap<String, String>,
-) -> Vec<String> {
+fn element_constant_drift(value: &JsonValue, constants: &FxHashMap<String, String>) -> Vec<String> {
     let observed = collect_element_fields(value);
     let mut drift = Vec::new();
 

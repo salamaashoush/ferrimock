@@ -1,5 +1,10 @@
 //! Comprehensive tests for mock consolidation
 
+// Test scorers answer `name()` with a literal, which reads as needlessly
+// bound against the `&str` the trait must return for scorers that name
+// themselves after the artifact they were loaded from.
+#![allow(clippy::unnecessary_literal_bound)]
+
 use super::{ConsolidatorOptions, MockConsolidator};
 use crate::config::{MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig};
 use crate::template::{render_template, validate_template};
@@ -659,9 +664,24 @@ async fn a_merged_template_is_not_outranked_by_a_recording_it_was_built_from() {
         enabled: true,
         vars: None,
         mocks: vec![
-            create_test_mock("m1", "GET", "/v2/status", r#"{"state": "ready", "count": 1}"#),
-            create_test_mock("m2", "GET", "/v2/status", r#"{"state": "ready", "count": 2}"#),
-            create_test_mock("m3", "GET", "/v2/status", r#"{"state": "ready", "count": 3}"#),
+            create_test_mock(
+                "m1",
+                "GET",
+                "/v2/status",
+                r#"{"state": "ready", "count": 1}"#,
+            ),
+            create_test_mock(
+                "m2",
+                "GET",
+                "/v2/status",
+                r#"{"state": "ready", "count": 2}"#,
+            ),
+            create_test_mock(
+                "m3",
+                "GET",
+                "/v2/status",
+                r#"{"state": "ready", "count": 3}"#,
+            ),
             create_test_mock("m4", "GET", "/v2/status", r#"{"error": "unavailable"}"#),
         ],
     };
@@ -801,7 +821,11 @@ async fn a_scorer_decides_ahead_of_the_size_threshold() {
             merge_scorer: scorer,
             ..ConsolidatorOptions::default()
         });
-        consolidator.consolidate(collection(mocks)).unwrap().mocks.len()
+        consolidator
+            .consolidate(collection(mocks))
+            .unwrap()
+            .mocks
+            .len()
     };
 
     assert_eq!(
@@ -1498,3 +1522,708 @@ async fn test_consolidation_preserves_collection_metadata() {
 
 // Note: End-to-end recording -> consolidation test is in mock-recorder
 // (test_streaming_output_loadable_by_consolidator) since it needs the recorder crate.
+
+/// A GraphQL request is its operation *and* its variables.
+///
+/// Found by consolidating a real recording: sixteen `GetFolderMinimal` calls,
+/// each for a different folder, all matched on the operation name alone. That
+/// left several mocks nothing could tell apart, so one answered every folder
+/// request and the rest were dead.
+mod graphql_identity {
+    use super::*;
+    use crate::config::GraphQLMatchConfig;
+
+    fn gql_mock(id: &str, folder: &str, body: &str) -> MockConfig {
+        let mut variables = rustc_hash::FxHashMap::default();
+        variables.insert("folderID".to_string(), serde_json::json!(folder));
+        variables.insert("first".to_string(), serde_json::json!(20));
+
+        MockConfig {
+            id: id.into(),
+            match_config: Some(MatchConfig {
+                method: Some("POST".to_string()),
+                url: Some("/app-api/graphql".to_string()),
+                graphql: Some(GraphQLMatchConfig::Structured {
+                    operation: Some("GetFolderMinimal".to_string()),
+                    query: None,
+                    mutation: None,
+                    subscription: None,
+                    introspection: None,
+                    variables,
+                }),
+                ..MatchConfig::default()
+            }),
+            response_config: Some(ReturnConfig::Structured {
+                status: Some(200),
+                headers: rustc_hash::FxHashMap::default(),
+                body: Some(body.to_string()),
+                template: None,
+                file: None,
+                template_file: None,
+                json: Box::new(serde_json::Value::Null),
+            }),
+            ..MockConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_variable_that_varies_across_the_group_stops_being_pinned() {
+        let group = [
+            gql_mock("g1", "111", r#"{"id":"111","name":"a"}"#),
+            gql_mock("g2", "222", r#"{"id":"222","name":"b"}"#),
+            gql_mock("g3", "333", r#"{"id":"333","name":"c"}"#),
+        ];
+
+        let mut merged = group[0].clone();
+        MockConsolidator::relax_match_to_group(&mut merged, &group);
+
+        let matcher = merged
+            .match_config
+            .as_ref()
+            .and_then(|m| m.graphql.as_ref())
+            .expect("still a graphql matcher");
+
+        match matcher {
+            GraphQLMatchConfig::Structured {
+                operation,
+                variables,
+                ..
+            } => {
+                assert_eq!(operation.as_deref(), Some("GetFolderMinimal"));
+                assert!(
+                    !variables.contains_key("folderID"),
+                    "the folder is what varies, so it is the group's placeholder"
+                );
+                assert!(
+                    variables.contains_key("first"),
+                    "a variable every member shares still identifies the request"
+                );
+            }
+            other => panic!("expected a structured matcher, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nothing_left_to_pin_becomes_the_operation_name_alone() {
+        let mut first = gql_mock("g1", "111", "{}");
+        let mut second = gql_mock("g2", "222", "{}");
+        for mock in [&mut first, &mut second] {
+            if let Some(GraphQLMatchConfig::Structured { variables, .. }) =
+                mock.match_config.as_mut().and_then(|m| m.graphql.as_mut())
+            {
+                variables.remove("first");
+            }
+        }
+
+        let group = [first.clone(), second];
+        let mut merged = first;
+        MockConsolidator::relax_match_to_group(&mut merged, &group);
+
+        assert!(
+            matches!(
+                merged.match_config.and_then(|m| m.graphql),
+                Some(GraphQLMatchConfig::Simple(operation)) if operation == "GetFolderMinimal"
+            ),
+            "an empty structured matcher says the same thing less plainly"
+        );
+    }
+}
+
+/// A merged mock has to answer about the thing that was asked for.
+///
+/// Found by asking what a template does with a request parameter: a group of
+/// `/v2/files/{id}` recordings became one mock that answered every request with
+/// the same invented id, so a client reading the id back found it did not match
+/// what it asked for. The echo existed but only fired for a field literally
+/// named `id` whose value was a JSON *number* -- and most APIs
+/// return ids as strings.
+mod request_echo {
+    use super::*;
+    use crate::codegen::EchoSource;
+    use crate::config::matcher::{GraphQLMatchConfig, HeaderMatchConfig};
+    use crate::consolidator::analysis::ResponseAnalyzer;
+
+    fn recorded(url: &str, body: &str) -> MockConfig {
+        MockConfig {
+            id: url.into(),
+            match_config: Some(MatchConfig {
+                method: Some("GET".to_string()),
+                url: Some(format!("exact:{url}")),
+                ..MatchConfig::default()
+            }),
+            response_config: Some(ReturnConfig::Structured {
+                status: Some(200),
+                headers: rustc_hash::FxHashMap::default(),
+                body: Some(body.to_string()),
+                template: None,
+                file: None,
+                template_file: None,
+                json: Box::new(serde_json::Value::Null),
+            }),
+            ..MockConfig::default()
+        }
+    }
+
+    fn echoes(group: &[MockConfig], pattern: &str) -> Vec<(String, EchoSource, String, bool)> {
+        let analysis = ResponseAnalyzer::new(false)
+            .analyze_response_patterns(group, pattern)
+            .expect("analyses");
+        let mut found: Vec<(String, EchoSource, String, bool)> = analysis
+            .echoed_fields
+            .into_iter()
+            .map(|(field, echo)| (field, echo.source, echo.name, echo.quoted))
+            .collect();
+        found.sort();
+        found
+    }
+
+    fn capture(path: &str, name: &str, quoted: bool) -> (String, EchoSource, String, bool) {
+        (
+            path.to_string(),
+            EchoSource::Capture,
+            name.to_string(),
+            quoted,
+        )
+    }
+
+    #[test]
+    fn a_string_id_echoes_the_capture_it_repeated() {
+        let group: Vec<MockConfig> = (101..=104)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/files/{n}"),
+                    &format!(r#"{{"id":"{n}","type":"file"}}"#),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/files/{id}"),
+            vec![capture("id", "id", true)],
+            "a quoted id is the common case and was the one that never fired"
+        );
+    }
+
+    #[test]
+    fn a_number_echoes_without_quoting_it() {
+        let group: Vec<MockConfig> = (101..=104)
+            .map(|n| recorded(&format!("/v2/files/{n}"), &format!(r#"{{"id":{n}}}"#)))
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/files/{id}"),
+            vec![capture("id", "id", false)],
+            "quoting a JSON number would change its type in the answer"
+        );
+    }
+
+    #[test]
+    fn a_uuid_capture_echoes_as_readily_as_a_numeric_one() {
+        let ids = [
+            "550e8400-e29b-41d4-a716-446655440001",
+            "550e8400-e29b-41d4-a716-446655440002",
+            "550e8400-e29b-41d4-a716-446655440003",
+        ];
+        let group: Vec<MockConfig> = ids
+            .iter()
+            .map(|id| recorded(&format!("/v2/users/{id}"), &format!(r#"{{"id":"{id}"}}"#)))
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/users/{uuid}"),
+            vec![capture("id", "uuid", true)]
+        );
+    }
+
+    #[test]
+    fn any_field_may_echo_not_only_one_called_id() {
+        let group: Vec<MockConfig> = (7..=10)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/folders/{n}/items"),
+                    &format!(r#"{{"parent_folder_id":"{n}","total":3}}"#),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/folders/{id}/items"),
+            vec![capture("parent_folder_id", "id", true)]
+        );
+    }
+
+    #[test]
+    fn a_field_that_only_sometimes_matches_is_a_coincidence_not_an_echo() {
+        // One recording agreeing is chance; the endpoint is only echoing when
+        // every recording of it did.
+        let group = vec![
+            recorded("/v2/files/1", r#"{"id":"1","rev":"1"}"#),
+            recorded("/v2/files/2", r#"{"id":"2","rev":"9"}"#),
+            recorded("/v2/files/3", r#"{"id":"3","rev":"4"}"#),
+        ];
+
+        let found = echoes(&group, "/v2/files/{id}");
+        assert!(
+            found.iter().all(|(field, ..)| field != "rev"),
+            "`rev` matched the capture once and must not be read as an echo: {found:?}"
+        );
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn a_lone_recording_says_nothing_about_what_varies() {
+        let group = vec![recorded("/v2/files/1", r#"{"id":"1"}"#)];
+        assert!(echoes(&group, "/v2/files/{id}").is_empty());
+    }
+
+    #[test]
+    fn a_query_parameter_echoes_the_same_way_a_capture_does() {
+        // Nothing about the correspondence changes because the client put the
+        // id after a `?` instead of in a path segment.
+        let group: Vec<MockConfig> = (7001..=7004)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/search?folder_id={n}&limit=20"),
+                    &format!(r#"{{"folder_id":"{n}","found":2}}"#),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/search"),
+            vec![(
+                "folder_id".to_string(),
+                EchoSource::Query,
+                "folder_id".to_string(),
+                true
+            )]
+        );
+    }
+
+    #[test]
+    fn a_query_parameter_pinned_one_by_one_is_read_too() {
+        // The converter moves a query out of the URL and into `query` when it
+        // can pin the parameters separately.
+        let group: Vec<MockConfig> = (7001..=7003)
+            .map(|n| {
+                let mut mock = recorded("/v2/search", &format!(r#"{{"folder_id":"{n}"}}"#));
+                mock.id = format!("search-{n}").into();
+                if let Some(match_config) = mock.match_config.as_mut() {
+                    match_config
+                        .query
+                        .insert("folder_id".to_string(), n.to_string());
+                }
+                mock
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/search"),
+            vec![(
+                "folder_id".to_string(),
+                EchoSource::Query,
+                "folder_id".to_string(),
+                true
+            )]
+        );
+    }
+
+    #[test]
+    fn a_graphql_variable_echoes_into_the_field_that_repeated_it() {
+        let group: Vec<MockConfig> = (9848..=9851)
+            .map(|n| {
+                let mut mock = recorded(
+                    "/app-api/graphql",
+                    &format!(r#"{{"data":{{"folder":{{"id":"{n}","name":"f"}}}}}}"#),
+                );
+                mock.id = format!("folder-{n}").into();
+                if let Some(match_config) = mock.match_config.as_mut() {
+                    let mut variables = rustc_hash::FxHashMap::default();
+                    variables.insert(
+                        "folderID".to_string(),
+                        serde_json::Value::String(n.to_string()),
+                    );
+                    match_config.graphql = Some(GraphQLMatchConfig::Structured {
+                        operation: Some("GetFolder".to_string()),
+                        query: None,
+                        mutation: None,
+                        subscription: None,
+                        introspection: None,
+                        variables,
+                    });
+                }
+                mock
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/app-api/graphql"),
+            vec![(
+                "data.folder.id".to_string(),
+                EchoSource::Body,
+                "variables.folderID".to_string(),
+                true
+            )],
+            "the id lives three levels down, which is where GraphQL puts it"
+        );
+    }
+
+    #[test]
+    fn a_header_the_endpoint_hands_back_is_an_echo() {
+        let group: Vec<MockConfig> = ["req-a1", "req-b2", "req-c3"]
+            .iter()
+            .map(|token| {
+                let mut mock = recorded("/v2/events", &format!(r#"{{"request_id":"{token}"}}"#));
+                mock.id = (*token).to_string().into();
+                if let Some(match_config) = mock.match_config.as_mut() {
+                    match_config.headers.insert(
+                        "X-Request-Id".to_string(),
+                        HeaderMatchConfig::Exact((*token).to_string()),
+                    );
+                }
+                mock
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/events"),
+            vec![(
+                "request_id".to_string(),
+                EchoSource::Header,
+                "x-request-id".to_string(),
+                true
+            )],
+            "headers reach a template lowercased"
+        );
+    }
+
+    #[test]
+    fn a_value_nested_under_the_top_level_is_reached() {
+        let group: Vec<MockConfig> = (7..=10)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/folders/{n}/items"),
+                    &format!(r#"{{"parent":{{"id":"{n}","type":"folder"}},"total":3}}"#),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/folders/{id}/items"),
+            vec![capture("parent.id", "id", true)]
+        );
+    }
+
+    #[test]
+    fn a_value_every_element_of_an_array_repeats_is_an_echo() {
+        let group: Vec<MockConfig> = (7..=10)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/folders/{n}/items"),
+                    &format!(
+                        r#"{{"entries":[{{"id":"a","parent":{{"id":"{n}"}}}},{{"id":"b","parent":{{"id":"{n}"}}}}]}}"#
+                    ),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/folders/{id}/items"),
+            vec![capture("entries[].parent.id", "id", true)],
+            "every entry named the folder that was asked for; their own ids did not"
+        );
+    }
+
+    #[test]
+    fn an_array_whose_elements_disagree_echoes_nothing() {
+        // One entry matching the capture says nothing about the position: the
+        // others at the same path carried something else.
+        let group: Vec<MockConfig> = (7..=10)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/folders/{n}/items"),
+                    &format!(r#"{{"entries":[{{"id":"{n}"}},{{"id":"other"}}]}}"#),
+                )
+            })
+            .collect();
+
+        assert!(echoes(&group, "/v2/folders/{id}/items").is_empty());
+    }
+
+    #[test]
+    fn a_capture_outranks_a_query_parameter_carrying_the_same_value() {
+        let group: Vec<MockConfig> = (101..=104)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/files/{n}?id={n}"),
+                    &format!(r#"{{"id":"{n}"}}"#),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            echoes(&group, "/v2/files/{id}"),
+            vec![capture("id", "id", true)],
+            "the path is the most direct statement of what was asked for"
+        );
+    }
+
+    #[test]
+    fn a_field_that_wraps_the_id_echoes_it_inside_the_wrapper() {
+        // Some APIs write a folder's typed id as `d_<id>`. Answering it with a value
+        // of its own contradicts the request as plainly as getting the id wrong.
+        let group: Vec<MockConfig> = (9_848_115_997_u64..=9_848_116_000)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/folders/{n}"),
+                    &format!(r#"{{"id":"{n}","typedId":"d_{n}"}}"#),
+                )
+            })
+            .collect();
+
+        let found = echoes(&group, "/v2/folders/{id}");
+        let typed = found
+            .iter()
+            .find(|(path, ..)| path == "typedId")
+            .expect("the typed id repeats the folder that was asked for");
+        assert_eq!((typed.1, typed.2.as_str()), (EchoSource::Capture, "id"));
+
+        let template = crate::codegen::EchoedField {
+            source: typed.1,
+            name: typed.2.clone(),
+            quoted: typed.3,
+            prefix: "d_".to_string(),
+            suffix: String::new(),
+        }
+        .expression();
+        assert_eq!(template, "\"d_{{ captures.id }}\"");
+    }
+
+    #[test]
+    fn a_wrapper_is_not_read_around_a_value_short_enough_to_appear_by_chance() {
+        // `7` turns up inside half the strings an API returns.
+        let group: Vec<MockConfig> = (7..=10)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/folders/{n}"),
+                    &format!(r#"{{"label":"item {n} of 12"}}"#),
+                )
+            })
+            .collect();
+
+        assert!(echoes(&group, "/v2/folders/{id}").is_empty());
+    }
+
+    #[test]
+    fn a_repeated_query_parameter_names_no_single_value() {
+        let group: Vec<MockConfig> = (1..=3)
+            .map(|n| {
+                recorded(
+                    &format!("/v2/batch?ids=a{n}&ids=b{n}"),
+                    &format!(r#"{{"first":"a{n}"}}"#),
+                )
+            })
+            .collect();
+
+        assert!(
+            echoes(&group, "/v2/batch").is_empty(),
+            "`ids` carried two values; a template reading it back would get one of them"
+        );
+    }
+}
+
+/// Reading a lone recording for what its values are, rather than reproducing it.
+mod generalizing {
+    use super::*;
+
+    fn generalized(mocks: Vec<MockConfig>) -> MockCollectionConfig {
+        let collection = MockCollectionConfig {
+            name: None,
+            description: None,
+            enabled: true,
+            vars: None,
+            mocks,
+        };
+        MockConsolidator::with_options(ConsolidatorOptions {
+            generalize: true,
+            ..ConsolidatorOptions::default()
+        })
+        .consolidate(collection)
+        .expect("consolidates")
+    }
+
+    fn template_of(collection: &MockCollectionConfig) -> String {
+        collection
+            .mocks
+            .first()
+            .and_then(|mock| mock.response_config.as_ref())
+            .and_then(|response| response.template())
+            .map(ToString::to_string)
+            .unwrap_or_default()
+    }
+
+    fn url_of(collection: &MockCollectionConfig) -> String {
+        collection
+            .mocks
+            .first()
+            .and_then(|mock| mock.match_config.as_ref())
+            .and_then(|match_config| match_config.urls.first().or(match_config.url.as_ref()))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_shape_the_recording_usually_had_is_the_shape_it_answers_with() {
+        // A field null in most samples is answered null, and one most samples
+        // did not carry is answered without it. Both minimise the divergence a
+        // client sees, because most of what it checks against is the common
+        // shape.
+        let group = vec![
+            create_test_mock(
+                "a",
+                "GET",
+                "exact:/v2/items/1",
+                r#"{"thumb":null,"rare":1}"#,
+            ),
+            create_test_mock("b", "GET", "exact:/v2/items/2", r#"{"thumb":null}"#),
+            create_test_mock("c", "GET", "exact:/v2/items/3", r#"{"thumb":"u"}"#),
+        ];
+        let analysis = crate::consolidator::analysis::ResponseAnalyzer::new(false)
+            .analyze_response_patterns(&group, "/v2/items/{id}")
+            .expect("analyses");
+
+        assert!(
+            analysis
+                .constant_fields
+                .iter()
+                .any(|(field, value)| field == "thumb" && value.is_null()),
+            "two of three recordings had nothing there: {:?}",
+            analysis.constant_fields
+        );
+        assert!(
+            !analysis
+                .varying_fields
+                .iter()
+                .any(|(field, _)| field == "rare")
+                && !analysis
+                    .constant_fields
+                    .iter()
+                    .any(|(field, _)| field == "rare"),
+            "a field one recording in three carried is not part of the answer"
+        );
+    }
+
+    #[test]
+    fn one_recording_becomes_a_template_of_what_its_values_are() {
+        // Left alone, a lone recording is reproduced exactly: every field agrees
+        // with itself and so reads as fixed.
+        let consolidated = generalized(vec![create_test_mock(
+            "file",
+            "GET",
+            "exact:/v2/files/27977065362",
+            r#"{"id":"27977065362","name":"Report","created_at":"2024-04-16T09:25:57Z","type":"file"}"#,
+        )]);
+
+        let template = template_of(&consolidated);
+        assert!(
+            template.contains("fake_timestamp"),
+            "a timestamp is a timestamp whether or not it was seen twice: {template}"
+        );
+        assert!(
+            template.contains(r#""type": "file""#),
+            "a value the detector cannot place stays as it was recorded: {template}"
+        );
+        assert_eq!(
+            url_of(&consolidated),
+            "/v2/files/{id}",
+            "the mock has to answer the family of requests, not the one it saw"
+        );
+        assert!(
+            template.contains("captures.id"),
+            "the id the URL names is the id the answer carries: {template}"
+        );
+    }
+
+    #[test]
+    fn a_cache_buster_is_not_something_to_wait_for() {
+        // The app regenerates `_` on every load, so a mock pinned to the
+        // recorded one answers the recording and nothing afterwards.
+        let consolidated = generalized(vec![create_test_mock(
+            "notes",
+            "GET",
+            "exact:/inbox_notes?limit=30&_=1786715224166",
+            r#"{"count":3}"#,
+        )]);
+
+        let mock = consolidated.mocks.first().expect("one mock");
+        let match_config = mock.match_config.as_ref().expect("a matcher");
+        assert_eq!(url_of(&consolidated), "/inbox_notes");
+        assert_eq!(
+            match_config.query.get("limit").map(String::as_str),
+            Some("30"),
+            "the parameter that narrows the search still has to hold"
+        );
+        assert!(
+            !match_config.query.contains_key("_"),
+            "the cache buster names the moment, not the request: {:?}",
+            match_config.query
+        );
+    }
+
+    #[test]
+    fn a_query_worth_keeping_is_left_exactly_as_it_was() {
+        // Moving a query out of the URL trades an exact match for a subset one.
+        // With nothing to throw away there is nothing to pay for that.
+        let consolidated = generalized(vec![create_test_mock(
+            "search",
+            "GET",
+            "exact:/v2/search?folder_id=7001&limit=20",
+            r#"{"found":2}"#,
+        )]);
+
+        assert_eq!(url_of(&consolidated), "/v2/search?folder_id=7001&limit=20");
+    }
+
+    #[test]
+    fn a_short_number_in_a_path_is_not_an_identifier() {
+        // An API version and a page number are as numeric as an id. Widening
+        // them would let one mock claim every endpoint under the prefix.
+        let consolidated = generalized(vec![create_test_mock(
+            "versioned",
+            "GET",
+            "exact:/api/2/status",
+            r#"{"uptime":"2024-04-16T09:25:57Z"}"#,
+        )]);
+
+        assert_eq!(url_of(&consolidated), "/api/2/status");
+    }
+
+    #[test]
+    fn a_lone_recording_still_reproduces_what_it_cannot_generalize() {
+        let consolidated = generalized(vec![create_test_mock(
+            "flags",
+            "GET",
+            "exact:/v2/flags",
+            r#"{"enabled":true,"tier":"premium","note":null,"items":[]}"#,
+        )]);
+
+        let answer = consolidated
+            .mocks
+            .first()
+            .and_then(|mock| mock.response_config.as_ref())
+            .and_then(|response| response.template().or_else(|| response.body()))
+            .map(ToString::to_string)
+            .unwrap_or_default();
+
+        for kept in [
+            r#""enabled": true"#,
+            r#""tier": "premium""#,
+            r#""note": null"#,
+        ] {
+            assert!(
+                answer.contains(kept) || answer.contains(&kept.replace(": ", ":")),
+                "{kept} is not something to invent, and was lost: {answer}"
+            );
+        }
+    }
+}

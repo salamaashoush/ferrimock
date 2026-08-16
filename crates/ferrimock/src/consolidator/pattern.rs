@@ -85,6 +85,82 @@ static ISO_DATE_SEGMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("Failed to compile ISO date segment pattern")
 });
 
+/// The path and query a recording matched on, without the `exact:` marker or
+/// the scheme and host.
+pub(crate) fn request_url(mock: &MockConfig) -> String {
+    let raw = mock
+        .match_config
+        .as_ref()
+        .and_then(|match_config| match_config.urls.first().or(match_config.url.as_ref()))
+        .map_or("", String::as_str);
+    let without_marker = raw.strip_prefix("exact:").unwrap_or(raw);
+    let without_scheme = without_marker
+        .split_once("://")
+        .map_or(without_marker, |(_, rest)| {
+            rest.split_once('/').map_or("", |(_, path)| path)
+        });
+    if without_marker.contains("://") {
+        format!("/{without_scheme}")
+    } else {
+        without_marker.to_string()
+    }
+}
+
+/// Whether a query parameter names the moment a request was made rather than
+/// what it asked for.
+///
+/// These are the parameters a client regenerates every time: the cache buster
+/// appended to defeat a proxy, the nonce, the id of the session that happened to
+/// be open. A mock that pins one answers the recording and nothing afterwards.
+pub(crate) fn is_volatile_parameter(name: &str, value: &str) -> bool {
+    /// Names a client uses for a value whose only job is to be different.
+    const THROWAWAY_NAMES: [&str; 11] = [
+        "_",
+        "t",
+        "ts",
+        "cb",
+        "rand",
+        "nonce",
+        "nocache",
+        "cachebuster",
+        "sid",
+        "requestid",
+        "reqid",
+    ];
+    /// Shortest run of characters that can carry enough entropy to be a nonce
+    /// rather than a word.
+    const SHORTEST_NONCE: usize = 16;
+
+    let plain: String = name
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect();
+    if THROWAWAY_NAMES.contains(&plain.as_str()) || (plain.is_empty() && !name.is_empty()) {
+        return true;
+    }
+
+    if UUID_SEGMENT.is_match(value) {
+        return true;
+    }
+
+    // A clock reading, in seconds or milliseconds. Both are digits and nothing
+    // else, and both sit in a range no identifier of ours occupies by accident.
+    if value.bytes().all(|b| b.is_ascii_digit())
+        && matches!(value.len(), 10 | 13)
+        && value.starts_with(['1', '2'])
+    {
+        return true;
+    }
+
+    // A run long enough, and mixed enough, to have been drawn at random.
+    value.len() >= SHORTEST_NONCE
+        && value.bytes().all(|b| b.is_ascii_alphanumeric())
+        && value.bytes().any(|b| b.is_ascii_uppercase())
+        && value.bytes().any(|b| b.is_ascii_lowercase())
+        && value.bytes().any(|b| b.is_ascii_digit())
+}
+
 /// Analysis of query parameter variations in a group
 #[derive(Debug)]
 pub struct QueryParamAnalysis {
@@ -101,6 +177,7 @@ pub struct QueryParamAnalysis {
 /// Pattern detection engine for grouping and analyzing mocks
 pub struct PatternDetector {
     profile: Arc<dyn ConsolidationProfile>,
+    generalize: bool,
 }
 
 impl Default for PatternDetector {
@@ -114,12 +191,27 @@ impl PatternDetector {
     pub fn new() -> Self {
         Self {
             profile: crate::profile::default_profile(),
+            generalize: false,
         }
     }
 
     /// A detector that asks `profile` before applying the built-in rules.
     pub fn with_profile(profile: Arc<dyn ConsolidationProfile>) -> Self {
-        Self { profile }
+        Self {
+            profile,
+            generalize: false,
+        }
+    }
+
+    /// Read a path seen once as evidence of the shape of its endpoint.
+    ///
+    /// Without this a lone recording keeps the exact URL it was recorded at, so
+    /// the mock answers that one request and nothing else -- however well its
+    /// response is templated.
+    #[must_use]
+    pub fn generalizing(mut self, generalize: bool) -> Self {
+        self.generalize = generalize;
+        self
     }
 
     /// Group mocks by similar URL patterns
@@ -343,10 +435,82 @@ impl PatternDetector {
         }
     }
 
+    /// A pattern for a path seen once.
+    ///
+    /// With no sibling to compare against there is no observed variation to
+    /// read, so the only evidence is the segment itself: `9848115997` is an
+    /// identifier and `v2` is not. Short numbers stay literal -- an API version,
+    /// a shard and a page number are as numeric as an id, and generalising them
+    /// would let one mock claim every endpoint under the same prefix.
+    ///
+    /// The query is carried through untouched. Which of its parameters still
+    /// identify a request is a different question, and `pin_lasting_query`
+    /// answers it -- only for the recordings that carried something worth
+    /// dropping.
+    fn generalize_lone_path(&self, url: &str) -> String {
+        let (path, query) = url
+            .split_once('?')
+            .map_or((url, None), |(path, query)| (path, Some(query)));
+
+        let segments: Vec<&str> = path.split('/').collect();
+        let siblings: Vec<Vec<&str>> = segments.iter().map(|segment| vec![*segment]).collect();
+        let (rewritten, settled) =
+            apply_profile_normalizers(&segments, path, self.profile.as_ref(), &siblings);
+
+        let mut counters: FxHashMap<&'static str, usize> = FxHashMap::default();
+        let generalized: Vec<String> = rewritten
+            .into_iter()
+            .enumerate()
+            .map(|(index, segment)| {
+                if settled.get(index).copied().unwrap_or(false) {
+                    return segment;
+                }
+                let Some(kind) = Self::lone_segment_kind(&segment) else {
+                    return segment;
+                };
+                let counter = counters.entry(kind).or_insert(0);
+                *counter += 1;
+                if *counter == 1 {
+                    format!("{{{kind}}}")
+                } else {
+                    format!("{{{kind}{counter}}}")
+                }
+            })
+            .collect();
+
+        let pattern = generalized.join("/");
+        match query {
+            Some(query) => format!("{pattern}?{query}"),
+            None => pattern,
+        }
+    }
+
+    /// The placeholder kind a segment earns on its own evidence.
+    fn lone_segment_kind(segment: &str) -> Option<&'static str> {
+        /// Fewest digits that read as an identifier rather than as a version, a
+        /// page or a shard. Real resource ids are far longer than this; the
+        /// numbers that are not ids are far shorter.
+        const SHORTEST_LONE_ID: usize = 6;
+
+        if UUID_SEGMENT.is_match(segment) {
+            Some("uuid")
+        } else if ISO_DATE_SEGMENT.is_match(segment) {
+            Some("date")
+        } else if segment.len() >= SHORTEST_LONE_ID && segment.bytes().all(|b| b.is_ascii_digit()) {
+            Some("id")
+        } else {
+            None
+        }
+    }
+
     /// Generate a smart URL pattern based on the URLs in the group
     /// Returns clean URLs without prefixes - system will auto-detect matching strategy
     #[allow(clippy::indexing_slicing)] // `group[0]` safe: callers ensure non-empty group; `.windows(2)` guarantees 2-element slices
     pub fn generate_smart_url_pattern(&self, group: &[MockConfig]) -> String {
+        if group.len() == 1 && self.generalize {
+            return self.generalize_lone_path(&request_url(&group[0]));
+        }
+
         let base_path = Self::extract_base_path(&group[0]);
 
         let query_analysis = Self::analyze_query_param_variations(group);

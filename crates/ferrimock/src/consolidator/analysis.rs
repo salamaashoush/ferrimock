@@ -1,21 +1,17 @@
 //! Response analysis and pagination detection for mock consolidation
 
 use crate::Result;
+use crate::codegen::EchoSource;
 use crate::config::MockConfig;
+use crate::config::matcher::HeaderMatchConfig;
 use crate::consolidator::pattern::QueryParamAnalysis;
 use crate::type_detector::{FieldType, TypeDetector};
-use regex::Regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
-use std::sync::LazyLock;
 use std::sync::Arc;
 use url::form_urlencoded;
 
 use crate::profile::{ConsolidationProfile, PaginationDialect};
-
-#[allow(clippy::expect_used)] // Static regex literal -- panic on invalid pattern is correct
-static PATH_ID_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"/(\d+)(?:/|\?|$)").expect("Failed to compile path ID regex"));
 
 /// Query parameters that move a cursor through a collection rather than
 /// describing what is being asked for. Dropped when a pagination URL's static
@@ -52,6 +48,16 @@ pub struct PaginationPattern {
     pub pagination_type: PaginationType,
     /// Static query parameters (non-pagination params that should be preserved in URLs)
     pub static_query_params: String,
+    /// The query parameter the client sends a cursor back in, when the
+    /// recordings showed one.
+    pub cursor_param: Option<String>,
+    /// Where the recording's own `next` and `previous` links pointed, without
+    /// their query.
+    ///
+    /// A link the client is expected to follow has to lead somewhere. Inventing
+    /// a host produces a different one on every render -- `next` and `previous`
+    /// in the same answer disagree -- and nothing follows either of them.
+    pub link_base: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +67,21 @@ pub enum PaginationType {
     Page,
 }
 
+/// A response field that repeated something the request carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EchoedCapture {
+    /// Where in the request the repeated value came from.
+    pub source: EchoSource,
+    /// The capture, query parameter, header or body path that carried it.
+    pub name: String,
+    /// Whether the recorded value was a JSON string, so the template knows
+    /// whether to quote what it substitutes.
+    pub quoted: bool,
+    /// What the field wrote around the repeated value, if it wrapped it.
+    pub prefix: String,
+    pub suffix: String,
+}
+
 /// Analysis of response patterns in a group
 #[derive(Debug)]
 pub struct ResponseAnalysis {
@@ -68,8 +89,14 @@ pub struct ResponseAnalysis {
     pub varying_fields: Vec<(String, FieldType)>,
     /// Fields that are constant across all responses
     pub constant_fields: Vec<(String, JsonValue)>,
-    /// Whether responses have matching IDs with path IDs
-    pub has_matching_path_ids: bool,
+    /// Response fields that repeated a value the request carried, and which
+    /// capture each repeated.
+    ///
+    /// This is what turns a group of recordings into a mock that answers *about
+    /// the thing that was asked for*. Without it a merged `/v2/files/{id}`
+    /// answers every request with the same invented id, and a client that reads
+    /// the id back finds it does not match what it asked for.
+    pub echoed_fields: FxHashMap<String, EchoedCapture>,
     /// Whether responses are JSON
     pub is_json: bool,
     /// Top-level type (object, array, etc.)
@@ -121,6 +148,8 @@ impl From<&PaginationPattern> for crate::codegen::PaginationInfo {
                 PaginationType::Page => crate::codegen::PaginationType::Page,
             },
             static_query_params: pattern.static_query_params.clone(),
+            link_base: pattern.link_base.clone(),
+            cursor_param: pattern.cursor_param.clone(),
         }
     }
 }
@@ -130,7 +159,22 @@ impl From<&ResponseAnalysis> for crate::codegen::ResponseStructure {
         crate::codegen::ResponseStructure {
             varying_fields: analysis.varying_fields.clone(),
             constant_fields: analysis.constant_fields.clone(),
-            has_matching_path_ids: analysis.has_matching_path_ids,
+            echoed_fields: analysis
+                .echoed_fields
+                .iter()
+                .map(|(field, echo)| {
+                    (
+                        field.clone(),
+                        crate::codegen::EchoedField {
+                            source: echo.source,
+                            name: echo.name.clone(),
+                            quoted: echo.quoted,
+                            prefix: echo.prefix.clone(),
+                            suffix: echo.suffix.clone(),
+                        },
+                    )
+                })
+                .collect(),
             is_json: analysis.is_json,
             top_level_type: analysis.top_level_type.clone(),
             pagination: analysis
@@ -224,9 +268,11 @@ impl PaginationRole {
     /// duly read a customer's account number as a total count.
     fn matches_name(self, key: &str) -> bool {
         let patterns = self.fuzzy_patterns();
-        name_components(key)
-            .iter()
-            .any(|component| patterns.iter().any(|pattern| component.starts_with(pattern)))
+        name_components(key).iter().any(|component| {
+            patterns
+                .iter()
+                .any(|pattern| component.starts_with(pattern))
+        })
     }
 
     /// Whether a sampled value could plausibly be this role.
@@ -234,14 +280,10 @@ impl PaginationRole {
         match self {
             // A count, offset or page size is a non-negative whole number. A
             // string that merely looks numeric is an identifier, not a count.
-            Self::Total | Self::Offset | Self::Limit => {
-                value.as_u64().is_some() || value.is_null()
-            }
+            Self::Total | Self::Offset | Self::Limit => value.as_u64().is_some() || value.is_null(),
             // A cursor is a token or URL, a page number is a number, and the last
             // page's marker is null.
-            Self::Next | Self::Prev => {
-                value.is_string() || value.is_number() || value.is_null()
-            }
+            Self::Next | Self::Prev => value.is_string() || value.is_number() || value.is_null(),
             Self::HasMore => value.is_boolean(),
         }
     }
@@ -274,6 +316,240 @@ fn name_components(key: &str) -> Vec<String> {
     components
 }
 
+/// A value a request carried, addressed by the part of the request it sat in.
+type RequestKey = (EchoSource, String);
+
+/// Everything one recording's request carried.
+type RequestValues = FxHashMap<RequestKey, String>;
+
+/// Every scalar one response carried, keyed by its path. A path that carried
+/// more than one value -- array positions that disagree, or the same position
+/// recorded once as a string and once as a number -- maps to `None`: there is no
+/// single thing for it to have repeated.
+type RecordedPaths = FxHashMap<String, Option<RecordedValue>>;
+
+/// A scalar a response carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecordedValue {
+    text: String,
+    /// Whether it was a JSON string. A numeric string id and a count are the
+    /// same digits, and only the quotes tell them apart.
+    quoted: bool,
+}
+
+/// How long a value must be before one recording alone can bind a field to it.
+///
+/// With several recordings agreeing there is no need for a floor: coincidence
+/// does not repeat. With one, `0` in the path and `0` in the answer is as
+/// likely to be an accident as a correspondence, and a real identifier is
+/// longer than this.
+const SHORTEST_LONE_ECHO: usize = 3;
+
+/// How far into a response a repeated value is still worth looking for.
+///
+/// Deep enough for the wrappers real APIs use -- a GraphQL payload reaches its
+/// nodes at `data.folder.items.edges[].node.id` -- without walking every leaf of
+/// a large listing.
+const MAX_ECHO_DEPTH: usize = 8;
+
+/// Which source wins when one value appears in more than one of them.
+///
+/// The path is the most direct statement of what a request is about, and a
+/// header the least: an id in the path is the resource, an id that happens to
+/// match a header is more likely a coincidence.
+fn source_rank(source: EchoSource) -> u8 {
+    match source {
+        EchoSource::Capture => 0,
+        EchoSource::Body => 1,
+        EchoSource::Query => 2,
+        EchoSource::Header => 3,
+    }
+}
+
+/// Note a value the request carried, or mark the name ambiguous if it already
+/// carried a different one.
+fn record_request_value(
+    carried: &mut FxHashMap<RequestKey, Option<String>>,
+    source: EchoSource,
+    name: &str,
+    value: String,
+) {
+    // A name that cannot be spelled inside a single-quoted subscript cannot be
+    // read back by a template.
+    if name.is_empty() || value.is_empty() || name.contains(['\'', '\\']) {
+        return;
+    }
+
+    match carried.entry((source, name.to_string())) {
+        std::collections::hash_map::Entry::Occupied(mut existing) => {
+            if existing.get().as_ref() != Some(&value) {
+                existing.insert(None);
+            }
+        }
+        std::collections::hash_map::Entry::Vacant(slot) => {
+            slot.insert(Some(value));
+        }
+    }
+}
+
+/// What a field wrote around a value the request carried, if it wrapped it.
+///
+/// Some APIs write a folder's typed id as `d_9848115997` and a file's as
+/// `f_27977065362`: the id the URL named, wearing a prefix that says which kind
+/// it is. The affix has to be short and the value it wraps long enough to be an
+/// identifier, or every digit in a sentence starts looking like an echo.
+fn affix_around<'a>(text: &'a str, carried: &str) -> Option<(&'a str, &'a str)> {
+    /// A prefix like `d_` or a suffix like `.json`. Longer than this and what
+    /// was found is a value that happens to contain the request's, not the
+    /// request's value in a wrapper.
+    const LONGEST_AFFIX: usize = 8;
+    /// Short enough to appear inside unrelated text by chance.
+    const SHORTEST_WRAPPED: usize = 4;
+
+    if carried.len() < SHORTEST_WRAPPED || text.len() <= carried.len() {
+        return None;
+    }
+
+    let start = text.find(carried)?;
+    let end = start + carried.len();
+    let (prefix, suffix) = (text.get(..start)?, text.get(end..)?);
+
+    if prefix.len() + suffix.len() > LONGEST_AFFIX {
+        return None;
+    }
+    // The affix is written straight into a JSON string in a template, so
+    // anything that would have to be escaped there is refused rather than
+    // escaped wrongly.
+    if [prefix, suffix]
+        .iter()
+        .any(|part| part.contains(['"', '\\', '{', '}']) || !part.is_ascii())
+    {
+        return None;
+    }
+
+    Some((prefix, suffix))
+}
+
+/// The text of a scalar, as it would have to appear for a field to repeat it.
+fn scalar_text(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(text) => Some(text.clone()),
+        JsonValue::Number(number) => Some(number.to_string()),
+        JsonValue::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+/// What makes two recordings the same request.
+///
+/// Everything a matcher would look at: the method and URL it answered, the
+/// parameters pinned one by one, the body and the GraphQL operation. Two
+/// recordings agreeing on all of it asked the same question, however many times
+/// the page was loaded.
+fn request_identity(mock: &MockConfig) -> String {
+    let Some(match_config) = mock.match_config.as_ref() else {
+        return String::new();
+    };
+
+    let mut query: Vec<String> = match_config
+        .query
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    query.sort_unstable();
+
+    let mut body: Vec<String> = match_config
+        .body
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
+    body.sort_unstable();
+
+    let graphql = match_config
+        .graphql
+        .as_ref()
+        .map(|graphql| {
+            let mut variables: Vec<String> = ResponseAnalyzer::extract_graphql_variables(graphql)
+                .into_iter()
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect();
+            variables.sort_unstable();
+            variables.join("&")
+        })
+        .unwrap_or_default();
+
+    format!(
+        "{:?} {:?} {:?} {:?} {} {} {}",
+        match_config.methods,
+        match_config.method,
+        match_config.urls,
+        match_config.url,
+        query.join("&"),
+        body.join("&"),
+        graphql
+    )
+}
+
+/// Every scalar a response carried, keyed by its path.
+fn recorded_values(response: &JsonValue) -> RecordedPaths {
+    let mut values = RecordedPaths::default();
+    let mut path = String::new();
+    collect_recorded(response, &mut path, 0, &mut values);
+    values
+}
+
+fn collect_recorded(value: &JsonValue, path: &mut String, depth: usize, out: &mut RecordedPaths) {
+    match value {
+        JsonValue::Object(fields) => {
+            if depth >= MAX_ECHO_DEPTH {
+                return;
+            }
+            for (name, nested) in fields {
+                let parent = path.len();
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(name);
+                collect_recorded(nested, path, depth + 1, out);
+                path.truncate(parent);
+            }
+        }
+        JsonValue::Array(elements) => {
+            if depth >= MAX_ECHO_DEPTH {
+                return;
+            }
+            // Every element shares one path, so a value only survives when the
+            // whole array repeats it.
+            let parent = path.len();
+            path.push_str("[]");
+            for element in elements {
+                collect_recorded(element, path, depth + 1, out);
+            }
+            path.truncate(parent);
+        }
+        JsonValue::String(_) | JsonValue::Number(_) => {
+            // A boolean or a null says nothing about which request it answered.
+            let Some(recorded) = scalar_text(value).map(|text| RecordedValue {
+                text,
+                quoted: value.is_string(),
+            }) else {
+                return;
+            };
+            match out.get_mut(path.as_str()) {
+                Some(slot) => {
+                    if slot.as_ref() != Some(&recorded) {
+                        *slot = None;
+                    }
+                }
+                None => {
+                    out.insert(path.clone(), Some(recorded));
+                }
+            }
+        }
+        JsonValue::Bool(_) | JsonValue::Null => {}
+    }
+}
+
 /// Response analyzer for detecting patterns in mock responses
 pub struct ResponseAnalyzer {
     type_detector: TypeDetector,
@@ -283,7 +559,10 @@ pub struct ResponseAnalyzer {
 
 impl ResponseAnalyzer {
     pub fn new(enable_stateful_pagination: bool) -> Self {
-        Self::with_profile(enable_stateful_pagination, crate::profile::default_profile())
+        Self::with_profile(
+            enable_stateful_pagination,
+            crate::profile::default_profile(),
+        )
     }
 
     /// An analyzer that consults `profile` for pagination naming and field
@@ -299,9 +578,227 @@ impl ResponseAnalyzer {
         }
     }
 
+    /// An analyzer that reads a field seen once as evidence of what it is.
+    ///
+    /// See [`TypeDetector::generalizing`]. Without it a group of one produces a
+    /// copy of its own recording, since a value agrees with itself and is
+    /// therefore taken to be constant.
+    #[must_use]
+    pub fn generalizing(mut self, generalize: bool) -> Self {
+        self.type_detector = self.type_detector.generalizing(generalize);
+        self
+    }
+
+    /// Every value one recording's request carried, addressed by where it came
+    /// from.
+    ///
+    /// `/v2/files/{id}` against `/v2/files/101` yields `capture id -> "101"`;
+    /// the same request's `?fields=name` yields `query fields -> "name"`. Path
+    /// alignment is positional, which is what the pattern generator produced, so
+    /// a path with a different segment count simply contributes no captures.
+    ///
+    /// A name carrying two different values in one request -- a repeated query
+    /// parameter -- is dropped. There is no single value for a field to repeat.
+    fn request_values(mock: &MockConfig, pattern_segments: &[&str]) -> RequestValues {
+        let mut carried: FxHashMap<RequestKey, Option<String>> = FxHashMap::default();
+
+        let url = crate::consolidator::pattern::request_url(mock);
+        let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
+
+        let segments: Vec<&str> = path.split('/').collect();
+        if segments.len() == pattern_segments.len() {
+            for (pattern, actual) in pattern_segments.iter().zip(segments.iter()) {
+                if let Some(name) = pattern
+                    .strip_prefix('{')
+                    .and_then(|rest| rest.strip_suffix('}'))
+                {
+                    record_request_value(
+                        &mut carried,
+                        EchoSource::Capture,
+                        name,
+                        (*actual).to_string(),
+                    );
+                }
+            }
+        }
+
+        for (name, value) in form_urlencoded::parse(query.as_bytes()) {
+            record_request_value(&mut carried, EchoSource::Query, &name, value.into_owned());
+        }
+
+        if let Some(match_config) = mock.match_config.as_ref() {
+            // A query the converter pinned parameter by parameter rather than
+            // leaving in the URL.
+            for (name, value) in &match_config.query {
+                record_request_value(&mut carried, EchoSource::Query, name, value.clone());
+            }
+
+            for (name, matcher) in &match_config.headers {
+                let HeaderMatchConfig::Exact(value) = matcher;
+                // `~`, `?` and `!` spell a pattern, a presence check and an
+                // absence check; none of them is a value to repeat.
+                if !value.starts_with(['~', '?', '!']) {
+                    record_request_value(
+                        &mut carried,
+                        EchoSource::Header,
+                        &name.to_lowercase(),
+                        value.clone(),
+                    );
+                }
+            }
+
+            for (key, value) in &match_config.body {
+                // `$`, `~` and `@` prefix a JSONPath, a regex and a contains
+                // check; only a plain key names a field the template can read.
+                if !key.starts_with(['$', '~', '@'])
+                    && let Some(text) = scalar_text(value)
+                {
+                    record_request_value(&mut carried, EchoSource::Body, key, text);
+                }
+            }
+
+            if let Some(graphql) = match_config.graphql.as_ref() {
+                for (name, value) in Self::extract_graphql_variables(graphql) {
+                    if let Some(text) = scalar_text(&value) {
+                        record_request_value(
+                            &mut carried,
+                            EchoSource::Body,
+                            &format!("variables.{name}"),
+                            text,
+                        );
+                    }
+                }
+            }
+        }
+
+        carried
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|value| (key, value)))
+            .collect()
+    }
+
+    /// Response fields that repeated something the request carried.
+    ///
+    /// A field qualifies only when *every* recording in the group repeated the
+    /// same request value there. One member agreeing by chance is a coincidence;
+    /// all of them agreeing is the endpoint answering about what was asked for.
+    ///
+    /// Fields are addressed by their path in the response, so a value repeated
+    /// at `parent.id` or in every `entries[].parent.id` is found as readily as
+    /// one at the top level.
+    fn find_echoed_fields(
+        &self,
+        group: &[MockConfig],
+        responses: &[JsonValue],
+        url_pattern: &str,
+    ) -> FxHashMap<String, EchoedCapture> {
+        let mut echoes = FxHashMap::default();
+        if group.len() != responses.len() || group.is_empty() {
+            return echoes;
+        }
+
+        // One recording still shows a request and the answer it got, and a
+        // value appearing in both is evidence. It is weaker evidence than
+        // several recordings agreeing, so short values are left alone: a `0` in
+        // the path and a `0` in the response are as likely to be a coincidence
+        // as a correspondence.
+        let single = group.len() < 2;
+        if single && !self.type_detector.generalizes() {
+            return echoes;
+        }
+        let floor = if single { SHORTEST_LONE_ECHO } else { 0 };
+
+        let pattern_path = url_pattern
+            .split_once('?')
+            .map_or(url_pattern, |(path, _)| path);
+        let pattern_segments: Vec<&str> = pattern_path.split('/').collect();
+
+        let requests: Vec<RequestValues> = group
+            .iter()
+            .map(|mock| Self::request_values(mock, &pattern_segments))
+            .collect();
+        let recorded: Vec<RecordedPaths> = responses.iter().map(recorded_values).collect();
+
+        let (Some(first_request), Some(first_recorded)) = (requests.first(), recorded.first())
+        else {
+            return echoes;
+        };
+
+        // Sorted so the same recordings always produce the same template.
+        let mut paths: Vec<(&String, &RecordedValue)> = first_recorded
+            .iter()
+            .filter_map(|(path, value)| value.as_ref().map(|value| (path, value)))
+            .collect();
+        paths.sort_by_key(|(path, _)| *path);
+
+        for (path, value) in paths {
+            if value.text.len() < floor {
+                continue;
+            }
+
+            // A field repeating the value bare is the stronger reading, so every
+            // exact candidate is tried before any wrapped one.
+            let mut candidates: Vec<(&RequestKey, &str, &str)> = first_request
+                .iter()
+                .filter(|(_, carried)| **carried == value.text)
+                .map(|(key, _)| (key, "", ""))
+                .collect();
+            candidates.extend(first_request.iter().filter_map(|(key, carried)| {
+                affix_around(&value.text, carried).map(|(prefix, suffix)| (key, prefix, suffix))
+            }));
+            candidates.sort_by(|(one, one_prefix, _), (other, other_prefix, _)| {
+                one_prefix
+                    .len()
+                    .cmp(&other_prefix.len())
+                    .then_with(|| source_rank(one.0).cmp(&source_rank(other.0)))
+                    .then_with(|| one.1.cmp(&other.1))
+            });
+
+            for (key, prefix, suffix) in candidates {
+                let repeats_everywhere =
+                    recorded
+                        .iter()
+                        .zip(requests.iter())
+                        .all(|(values, request)| {
+                            match (values.get(path.as_str()), request.get(key)) {
+                                (Some(Some(recorded)), Some(carried)) => {
+                                    recorded.quoted == value.quoted
+                                        && recorded
+                                            .text
+                                            .strip_prefix(prefix)
+                                            .and_then(|rest| rest.strip_suffix(suffix))
+                                            == Some(carried.as_str())
+                                }
+                                _ => false,
+                            }
+                        });
+
+                if repeats_everywhere {
+                    echoes.insert(
+                        path.clone(),
+                        EchoedCapture {
+                            source: key.0,
+                            name: key.1.clone(),
+                            quoted: value.quoted,
+                            prefix: prefix.to_string(),
+                            suffix: suffix.to_string(),
+                        },
+                    );
+                    break;
+                }
+            }
+        }
+
+        echoes
+    }
+
     /// Analyze response patterns across a group to detect field types
     #[allow(clippy::indexing_slicing)] // Indices are bounds-checked: `responses.is_empty()` guard before `responses[0]`
-    pub fn analyze_response_patterns(&self, group: &[MockConfig]) -> Result<ResponseAnalysis> {
+    pub fn analyze_response_patterns(
+        &self,
+        group: &[MockConfig],
+        url_pattern: &str,
+    ) -> Result<ResponseAnalysis> {
         let responses: Vec<JsonValue> = group
             .iter()
             .filter_map(|mock| {
@@ -316,7 +813,7 @@ impl ResponseAnalyzer {
             return Ok(ResponseAnalysis {
                 varying_fields: vec![],
                 constant_fields: vec![],
-                has_matching_path_ids: false,
+                echoed_fields: FxHashMap::default(),
                 is_json: false,
                 top_level_type: "text".to_string(),
                 pagination_pattern: None,
@@ -331,38 +828,72 @@ impl ResponseAnalyzer {
         .to_string();
 
         if matches!(responses[0], JsonValue::Array(_)) {
-            return Ok(self.analyze_top_level_array_responses(&responses));
+            return Ok(self.analyze_top_level_array_responses(group, &responses, url_pattern));
         }
 
         if !matches!(responses[0], JsonValue::Object(_)) {
             return Ok(ResponseAnalysis {
                 varying_fields: vec![],
                 constant_fields: vec![],
-                has_matching_path_ids: false,
+                echoed_fields: FxHashMap::default(),
                 is_json: true,
                 top_level_type,
                 pagination_pattern: None,
             });
         }
 
-        let response_refs: Vec<&JsonValue> = responses.iter().collect();
-        let (varying_fields, constant_fields) = self.analyze_object_fields(&response_refs);
+        let evidence = self.distinct_request_responses(group, &responses);
+        let (varying_fields, constant_fields) = self.analyze_object_fields(&evidence);
 
-        let has_matching_path_ids = Self::check_matching_path_ids(group, &responses);
+        let echoed_fields = self.find_echoed_fields(group, &responses, url_pattern);
         let pagination_pattern = self.detect_pagination_pattern(&responses, group);
 
         Ok(ResponseAnalysis {
             varying_fields,
             constant_fields,
-            has_matching_path_ids,
+            echoed_fields,
             is_json: true,
             top_level_type,
             pagination_pattern,
         })
     }
 
+    /// One response per distinct request.
+    ///
+    /// Ten recordings of the same request are one observation, not ten. A field
+    /// that held its value across them agreed with itself, which says nothing
+    /// about whether it is fixed; only a field that held its value across
+    /// *different* requests is evidence of a constant. Without this a page
+    /// loaded twice produces a mock that repeats one folder's name forever.
+    ///
+    /// Alignment can be lost when a member has no JSON body, and a shorter
+    /// response list than group is not safe to pair up; that case falls back to
+    /// using every response, which is what the analyzer did before.
+    fn distinct_request_responses<'a>(
+        &self,
+        group: &[MockConfig],
+        responses: &'a [JsonValue],
+    ) -> Vec<&'a JsonValue> {
+        if !self.type_detector.generalizes() || group.len() != responses.len() {
+            return responses.iter().collect();
+        }
+
+        let mut seen = FxHashSet::default();
+        group
+            .iter()
+            .zip(responses.iter())
+            .filter(|(mock, _)| seen.insert(request_identity(mock)))
+            .map(|(_, response)| response)
+            .collect()
+    }
+
     /// Analyze top-level array responses (e.g., GET /users -> [{...}, {...}])
-    fn analyze_top_level_array_responses(&self, responses: &[JsonValue]) -> ResponseAnalysis {
+    fn analyze_top_level_array_responses(
+        &self,
+        group: &[MockConfig],
+        responses: &[JsonValue],
+        url_pattern: &str,
+    ) -> ResponseAnalysis {
         let all_objects: Vec<&JsonValue> = responses
             .iter()
             .filter_map(|r| r.as_array())
@@ -374,7 +905,7 @@ impl ResponseAnalyzer {
             return ResponseAnalysis {
                 varying_fields: vec![],
                 constant_fields: vec![],
-                has_matching_path_ids: false,
+                echoed_fields: FxHashMap::default(),
                 is_json: true,
                 top_level_type: "array".to_string(),
                 pagination_pattern: None,
@@ -386,7 +917,7 @@ impl ResponseAnalyzer {
         ResponseAnalysis {
             varying_fields,
             constant_fields,
-            has_matching_path_ids: false,
+            echoed_fields: self.find_echoed_fields(group, responses, url_pattern),
             is_json: true,
             top_level_type: "array".to_string(),
             pagination_pattern: None,
@@ -419,50 +950,41 @@ impl ResponseAnalyzer {
                 continue;
             }
 
-            let all_same = values.windows(2).all(|w| w[0] == w[1]);
-
-            if all_same {
-                constant_fields.push((field.clone(), values[0].clone()));
-            } else {
-                let (field_type, _confidence) = self.type_detector.detect_type(&field, &values);
-                varying_fields.push((field, field_type));
+            // A field most of the responses did not carry is answered without
+            // it, and one most of them left null is answered null. Both are the
+            // same rule: reproduce the shape the recording usually had, since
+            // that is the one a client will most often be checking against.
+            if values.len() * 2 <= objects.len() {
+                continue;
             }
+            if values.iter().filter(|value| value.is_null()).count() * 2 > values.len() {
+                constant_fields.push((field.clone(), JsonValue::Null));
+                continue;
+            }
+
+            let all_same = values.windows(2).all(|w| w[0] == w[1]);
+            // One sample is agreement with itself, not evidence that the field
+            // is fixed.
+            let single = values.len() == 1;
+
+            if all_same && !(single && self.type_detector.generalizes()) {
+                constant_fields.push((field.clone(), values[0].clone()));
+                continue;
+            }
+
+            if single {
+                match self.type_detector.classify_single(&field, values[0]) {
+                    Some(field_type) => varying_fields.push((field, field_type)),
+                    None => constant_fields.push((field.clone(), values[0].clone())),
+                }
+                continue;
+            }
+
+            let (field_type, _confidence) = self.type_detector.detect_type(&field, &values);
+            varying_fields.push((field, field_type));
         }
 
         (varying_fields, constant_fields)
-    }
-
-    /// Whether the responses in a group identify themselves with the id from
-    /// their own URL, so a merged template can echo the capture instead of
-    /// inventing a number that contradicts the request it answered.
-    fn check_matching_path_ids(group: &[MockConfig], responses: &[JsonValue]) -> bool {
-        if group.len() != responses.len() {
-            return false;
-        }
-
-        let path_id_regex = &*PATH_ID_REGEX;
-
-        for (mock, response) in group.iter().zip(responses.iter()) {
-            let url_pattern = mock
-                .match_config
-                .as_ref()
-                .and_then(|mc| mc.urls.first().or(mc.url.as_ref()));
-
-            if let Some(url_pattern) = url_pattern {
-                let url = url_pattern.strip_prefix("exact:").unwrap_or(url_pattern);
-
-                if let Some(caps) = path_id_regex.captures(url)
-                    && let Some(path_id) = caps
-                        .get(1)
-                        .and_then(|m: regex::Match<'_>| m.as_str().parse::<i64>().ok())
-                    && identifies_itself_as(response, path_id, 0)
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 
     /// Detect pagination patterns in responses with fuzzy field matching
@@ -552,6 +1074,10 @@ impl ResponseAnalyzer {
                 &query_analysis,
             );
 
+            let link_base =
+                Self::recorded_link_base(&objects, next_field.as_ref(), prev_field.as_ref());
+            let cursor_param = Self::cursor_request_param(&query_analysis);
+
             Some(PaginationPattern {
                 total_field,
                 offset_field,
@@ -562,10 +1088,60 @@ impl ResponseAnalyzer {
                 sample_total,
                 pagination_type,
                 static_query_params,
+                cursor_param,
+                link_base,
             })
         } else {
             None
         }
+    }
+
+    /// The query parameter the client hands a cursor back in.
+    ///
+    /// A cursor endpoint is a loop: the answer names a marker and the next
+    /// request carries it. Without knowing which parameter that is, a template
+    /// cannot answer the page it was actually asked for.
+    fn cursor_request_param(query_analysis: &QueryParamAnalysis) -> Option<String> {
+        /// What clients call the parameter, beyond the ones the type detector
+        /// already lists. `marker` is the common one here.
+        const EXTRA_CURSOR_NAMES: [&str; 4] = ["marker", "page_token", "pageToken", "next_marker"];
+
+        query_analysis
+            .varying_params
+            .iter()
+            .find(|name| {
+                let plain = name.to_lowercase();
+                crate::type_detector::constants::CURSOR_KEYS.contains(&plain.as_str())
+                    || EXTRA_CURSOR_NAMES.contains(&plain.as_str())
+            })
+            .cloned()
+    }
+
+    /// Where the recorded `next` or `previous` links pointed, query stripped.
+    ///
+    /// Both fields are consulted because the first page has no `previous` and
+    /// the last has no `next`, and either one names the same endpoint.
+    fn recorded_link_base(
+        objects: &[&serde_json::Map<String, JsonValue>],
+        next_field: Option<&String>,
+        prev_field: Option<&String>,
+    ) -> Option<String> {
+        objects
+            .iter()
+            .flat_map(|object| {
+                [next_field, prev_field]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|field| object.get(field))
+            })
+            .filter_map(JsonValue::as_str)
+            .filter(|link| link.starts_with("http://") || link.starts_with("https://"))
+            .map(|link| {
+                link.split_once('?')
+                    .map_or(link, |(base, _)| base)
+                    .to_string()
+            })
+            .next()
     }
 
     fn has_pagination_params(query_analysis: &QueryParamAnalysis) -> bool {
@@ -639,10 +1215,9 @@ impl ResponseAnalyzer {
         dialect: Option<&PaginationDialect>,
     ) -> Option<String> {
         let present_everywhere = |field: &str| {
-            objects.iter().all(|obj| {
-                obj.get(field)
-                    .is_some_and(|value| role.value_fits(value))
-            })
+            objects
+                .iter()
+                .all(|obj| obj.get(field).is_some_and(|value| role.value_fits(value)))
         };
 
         // The API's own naming wins outright: a profile that says its cursor is
@@ -740,35 +1315,6 @@ impl ResponseAnalyzer {
     }
 }
 
-/// Whether a response says it is about `id`.
-///
-/// The resource is as often nested as it is at the top -- `{"folder": {"id": 1}}`
-/// answering `/folder/1/extras` is the same correspondence as `{"id": 1}`
-/// answering `/folder/1`, and only looking at the top level misses every API
-/// that wraps its payload.
-///
-/// Arrays are deliberately not searched. A listing carries an entry per item,
-/// and finding the URL's id among them would say the *collection* identifies
-/// itself that way -- which would then bind every item's id to the one capture.
-fn identifies_itself_as(value: &JsonValue, id: i64, depth: usize) -> bool {
-    /// Deep enough for the wrappers APIs actually use; a resource buried past
-    /// this is not what the URL is naming.
-    const MAX_DEPTH: usize = 3;
-
-    let JsonValue::Object(fields) = value else {
-        return false;
-    };
-
-    if fields.get("id").and_then(JsonValue::as_i64) == Some(id) {
-        return true;
-    }
-
-    depth < MAX_DEPTH
-        && fields
-            .values()
-            .any(|nested| identifies_itself_as(nested, id, depth + 1))
-}
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -804,10 +1350,11 @@ mod tests {
     }
 
     #[test]
-    fn a_response_that_wraps_its_resource_still_matches_the_path_id() {
+    fn a_response_that_wraps_its_resource_still_echoes_the_path_id() {
         let analyzer = ResponseAnalyzer::new(true);
 
-        // The id is one level down, which is how most APIs answer.
+        // The id is one level down, which is how most APIs answer. The theme's
+        // id is one too, and it is not the one the URL named.
         let wrapped = vec![
             mock_answering(
                 "a",
@@ -820,10 +1367,17 @@ mod tests {
                 r#"{"theme": {"id": 1}, "folder": {"id": 9850347912, "name": "Two"}}"#,
             ),
         ];
-        let analysis = analyzer.analyze_response_patterns(&wrapped).unwrap();
-        assert!(
-            analysis.has_matching_path_ids,
+        let analysis = analyzer
+            .analyze_response_patterns(&wrapped, "/v2/folder/{id}/extras")
+            .unwrap();
+        assert_eq!(
+            analysis.echoed_fields.get("folder.id").map(|e| &e.name),
+            Some(&"id".to_string()),
             "a merged mock must echo the id it matched on, not invent one"
+        );
+        assert!(
+            !analysis.echoed_fields.contains_key("theme.id"),
+            "the theme's id is not the folder the URL named"
         );
 
         // Unwrapped is the case that already worked, and must keep working.
@@ -833,9 +1387,10 @@ mod tests {
         ];
         assert!(
             analyzer
-                .analyze_response_patterns(&flat)
+                .analyze_response_patterns(&flat, "/v2/folder/{id}")
                 .unwrap()
-                .has_matching_path_ids
+                .echoed_fields
+                .contains_key("id")
         );
     }
 
@@ -859,10 +1414,11 @@ mod tests {
             ),
         ];
         assert!(
-            !analyzer
-                .analyze_response_patterns(&listing)
+            analyzer
+                .analyze_response_patterns(&listing, "/v2/folder/{id}/items")
                 .unwrap()
-                .has_matching_path_ids,
+                .echoed_fields
+                .is_empty(),
             "an id found inside a list is an item's, not the collection's"
         );
     }
@@ -1615,7 +2171,10 @@ mod tests {
         assert_eq!(name_components("total_count"), ["total", "count"]);
         assert_eq!(name_components("totalCount"), ["total", "count"]);
         assert_eq!(name_components("total-count"), ["total", "count"]);
-        assert_eq!(name_components("HTTPStatus"), ["h", "t", "t", "p", "status"]);
+        assert_eq!(
+            name_components("HTTPStatus"),
+            ["h", "t", "t", "p", "status"]
+        );
         assert!(name_components("").is_empty());
     }
 
@@ -1687,9 +2246,8 @@ mod tests {
     fn static_params(next_url: &str) -> String {
         let owned = objects(&[&format!(r#"{{"next": "{next_url}"}}"#)]);
         let refs: Vec<&serde_json::Map<String, JsonValue>> = owned.iter().collect();
-        let analysis = crate::consolidator::pattern::PatternDetector::analyze_query_param_variations(
-            &[],
-        );
+        let analysis =
+            crate::consolidator::pattern::PatternDetector::analyze_query_param_variations(&[]);
         ResponseAnalyzer::extract_static_query_params(
             &refs,
             Some(&"next".to_string()),

@@ -237,9 +237,11 @@ impl ConsolidationProfile for CompositeProfile {
     fn resource_key(&self, path: &str) -> Option<Cow<'_, str>> {
         // The borrow cannot outlive the inner profile's own `self`, so the key
         // is taken by value rather than threaded back out by reference.
-        self.profiles
-            .iter()
-            .find_map(|profile| profile.resource_key(path).map(|key| key.into_owned().into()))
+        self.profiles.iter().find_map(|profile| {
+            profile
+                .resource_key(path)
+                .map(|key| key.into_owned().into())
+        })
     }
 
     fn redact(&self, field: &str, value: &JsonValue) -> Option<JsonValue> {

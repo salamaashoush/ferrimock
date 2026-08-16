@@ -70,7 +70,7 @@ pub fn responses_compatible(left: &MockConfig, right: &MockConfig) -> bool {
             let right_json = serde_json::from_str::<JsonValue>(right_body).ok();
             match (left_json, right_json) {
                 (Some(left_json), Some(right_json)) => {
-                    values_compatible(&left_json, &right_json, 0)
+                    values_compatible(&left_json, &right_json, 0, false)
                 }
                 // Two opaque bodies say nothing to distinguish them; one opaque
                 // and one JSON say everything.
@@ -87,7 +87,15 @@ pub fn responses_compatible(left: &MockConfig, right: &MockConfig) -> bool {
 /// recording is the same field, not a different shape. Integers and floats are
 /// one kind here -- JSON numeric drift across recordings of the same endpoint is
 /// routine and splitting on it would fragment groups for nothing.
-fn values_compatible(left: &JsonValue, right: &JsonValue, depth: usize) -> bool {
+///
+/// `listed` marks values reached through an array. Inside a list the rule
+/// relaxes: only the first element of each side is compared, and two documents
+/// in a search result are not the same document. One carrying a field the other
+/// lacks says the field is optional, not that the endpoint answered a different
+/// kind of thing -- and splitting a paginated listing on which document happened
+/// to be first leaves two mocks claiming one URL, where the second answers
+/// nothing.
+fn values_compatible(left: &JsonValue, right: &JsonValue, depth: usize, listed: bool) -> bool {
     if depth >= MAX_DEPTH {
         return true;
     }
@@ -104,22 +112,27 @@ fn values_compatible(left: &JsonValue, right: &JsonValue, depth: usize) -> bool 
             // An empty array carries no element shape to disagree about.
             match (left_items.first(), right_items.first()) {
                 (Some(left_item), Some(right_item)) => {
-                    values_compatible(left_item, right_item, depth + 1)
+                    values_compatible(left_item, right_item, depth + 1, true)
                 }
                 _ => true,
             }
         }
         (JsonValue::Object(left_map), JsonValue::Object(right_map)) => {
-            // A key one side has and the other lacks is the whole problem: merge
-            // them and the template invents that key into responses that never
-            // carried it.
-            if left_map.len() != right_map.len() {
+            // Outside a list, a key one side has and the other lacks is the
+            // whole problem: merge them and the template invents that key into
+            // responses that never carried it.
+            if !listed && left_map.len() != right_map.len() {
                 return false;
             }
             left_map.iter().all(|(key, left_value)| {
-                right_map
-                    .get(key)
-                    .is_some_and(|right_value| values_compatible(left_value, right_value, depth + 1))
+                match right_map.get(key) {
+                    Some(right_value) => {
+                        values_compatible(left_value, right_value, depth + 1, listed)
+                    }
+                    // Only reachable inside a list, where the key counts were
+                    // not required to agree in the first place.
+                    None => listed,
+                }
             })
         }
         _ => false,
@@ -173,7 +186,27 @@ mod tests {
     fn compatible(left: &str, right: &str) -> bool {
         let left: JsonValue = serde_json::from_str(left).unwrap();
         let right: JsonValue = serde_json::from_str(right).unwrap();
-        values_compatible(&left, &right, 0)
+        values_compatible(&left, &right, 0, false)
+    }
+
+    #[test]
+    fn two_pages_of_a_listing_are_the_same_answer() {
+        // Documents in a search result differ from one another; comparing the
+        // first of one page against the first of another compares two unrelated
+        // records. Splitting on that leaves two mocks claiming one URL, and the
+        // second answers nothing.
+        assert!(compatible(
+            r#"{"count":2,"results":[{"id":1,"doc":{"a":1,"b":2}}]}"#,
+            r#"{"count":2,"results":[{"id":2,"doc":{"a":1}}]}"#,
+        ));
+    }
+
+    #[test]
+    fn a_field_missing_from_the_top_level_is_still_a_different_answer() {
+        // The protection this module exists for: outside a list, a key one side
+        // lacks means the template would invent it into responses that never
+        // carried it.
+        assert!(!compatible(r#"{"id":1,"error":"nope"}"#, r#"{"id":1}"#,));
     }
 
     #[test]
@@ -186,10 +219,7 @@ mod tests {
 
     #[test]
     fn a_key_only_one_side_carries_is_incompatible() {
-        assert!(!compatible(
-            r#"{"id":"1"}"#,
-            r#"{"id":"1","extra":true}"#
-        ));
+        assert!(!compatible(r#"{"id":"1"}"#, r#"{"id":"1","extra":true}"#));
     }
 
     #[test]
@@ -241,7 +271,12 @@ mod tests {
         let group = vec![
             mock("a", "/files/1", 200, r#"{"type":"file","id":"1"}"#),
             mock("b", "/files/2", 200, r#"{"type":"file","id":"2"}"#),
-            mock("c", "/files/999", 404, r#"{"type":"error","code":"not_found"}"#),
+            mock(
+                "c",
+                "/files/999",
+                404,
+                r#"{"type":"error","code":"not_found"}"#,
+            ),
             mock("d", "/files/3", 200, r#"{"type":"file","id":"3"}"#),
         ];
 
@@ -268,9 +303,19 @@ mod tests {
     fn two_api_versions_with_different_payloads_split() {
         let group = vec![
             mock("a", "/api/2/users/1", 200, r#"{"v":2,"id":"1"}"#),
-            mock("b", "/api/3/users/1", 200, r#"{"v":3,"id":"1","extra":true}"#),
+            mock(
+                "b",
+                "/api/3/users/1",
+                200,
+                r#"{"v":3,"id":"1","extra":true}"#,
+            ),
             mock("c", "/api/2/users/2", 200, r#"{"v":2,"id":"2"}"#),
-            mock("d", "/api/3/users/2", 200, r#"{"v":3,"id":"2","extra":true}"#),
+            mock(
+                "d",
+                "/api/3/users/2",
+                200,
+                r#"{"v":3,"id":"2","extra":true}"#,
+            ),
         ];
         let partitions = partition_by_response(&group);
         assert_eq!(partitions.len(), 2);

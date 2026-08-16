@@ -249,9 +249,10 @@ impl<'a> MergeCandidate<'a> {
         };
 
         self.group.iter().any(|mock| {
-            let in_query = mock.match_config.as_ref().is_some_and(|match_config| {
-                match_config.query.keys().any(|key| known(key))
-            });
+            let in_query = mock
+                .match_config
+                .as_ref()
+                .is_some_and(|match_config| match_config.query.keys().any(|key| known(key)));
             let in_url = url_of(mock).is_some_and(|url| {
                 url.split_once('?').is_some_and(|(_, query)| {
                     query
