@@ -25,4 +25,7 @@ pub use field_converter::{
 };
 pub use file_detection::{FileObjectDetector, SimpleFileDetector, register_file_object_detector};
 pub use generator::TemplateGenerator;
-pub use types::{GraphQLVariableInfo, PaginationInfo, PaginationType, ResponseStructure};
+pub use types::{
+    EchoSource, EchoedField, EmitContext, GraphQLVariableInfo, PaginationInfo, PaginationType,
+    ResponseStructure,
+};

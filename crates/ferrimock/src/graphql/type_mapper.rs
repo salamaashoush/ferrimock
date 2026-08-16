@@ -32,8 +32,10 @@ impl TypeToFakeMapper {
         // Use semantic detection from type detector (works without sample values)
         if let Some(name) = field_name {
             // The semantic detector can work with empty sample array for field-name-based detection
-            if let Some((field_type, _confidence)) = detect_from_semantic_context(name, &[], &DetectionContext::builtin()) {
-                return field_type_to_tera_expr(name, &field_type, false);
+            if let Some((field_type, _confidence)) =
+                detect_from_semantic_context(name, &[], &DetectionContext::builtin())
+            {
+                return field_type_to_tera_expr(name, &field_type);
             }
         }
 

@@ -5,6 +5,36 @@
 
 use crate::type_detector::FieldType;
 
+use super::types::{EchoedField, EmitContext};
+
+/// Convert a field type to a Tera expression, knowing where in the response the
+/// field sits and what the request evidence says about it.
+///
+/// `path` is what the echo map is keyed by (`entries[].parent.id`); it is how a
+/// value the request carried reaches a field that is not at the top level.
+pub(super) fn field_type_to_tera_expr_at(
+    field_name: &str,
+    field_type: &FieldType,
+    path: &str,
+    extension: Option<&str>,
+    ctx: EmitContext<'_>,
+) -> String {
+    if let Some(echo) = ctx.echo(path) {
+        return EchoedField::expression(echo);
+    }
+
+    match field_type {
+        FieldType::Array(pattern) => super::array_object::generate_tera_array(pattern, path, ctx),
+        FieldType::Object(analysis) => {
+            super::array_object::generate_tera_object_with_extension(analysis, path, extension, ctx)
+        }
+        FieldType::DownloadUrl { .. } if extension.is_some() => {
+            field_type_to_tera_expr_with_context(field_name, field_type, extension)
+        }
+        _ => field_type_to_tera_expr(field_name, field_type),
+    }
+}
+
 /// Convert a field type to a Tera template expression
 ///
 /// This function generates Tera template syntax from a detected field type.
@@ -14,42 +44,23 @@ use crate::type_detector::FieldType;
 ///
 /// * `field_name` - Name of the field being converted
 /// * `field_type` - The detected field type
-/// * `has_matching_path_ids` - Whether the request has path IDs that should be captured
 ///
 /// # Returns
 ///
 /// A string containing the Tera template expression for this field type
-pub fn field_type_to_tera_expr(
-    field_name: &str,
-    field_type: &FieldType,
-    has_matching_path_ids: bool,
-) -> String {
+pub fn field_type_to_tera_expr(field_name: &str, field_type: &FieldType) -> String {
     match field_type {
         // Complex types with special handling
-        FieldType::Array(pattern) => super::array_object::generate_tera_array(pattern),
-        FieldType::Object(analysis) => {
-            let empty_graphql_analysis = super::types::GraphQLVariableInfo::empty();
-            super::array_object::generate_tera_object_with_extension(
-                analysis,
-                has_matching_path_ids,
-                None,
-                &empty_graphql_analysis,
-            )
+        FieldType::Array(pattern) => {
+            super::array_object::generate_tera_array(pattern, field_name, EmitContext::plain())
         }
+        FieldType::Object(analysis) => super::array_object::generate_tera_object_with_extension(
+            analysis,
+            field_name,
+            None,
+            EmitContext::plain(),
+        ),
 
-        // An id the URL already carries. Echoing the capture is not a nicety:
-        // a mock that matches `/folder/{id}` and then answers with a number of
-        // its own contradicts the request it was given. Which numeric shape the
-        // detector settled on says nothing about that -- two arbitrary ids read
-        // as `RandomNumber` and two consecutive ones as `SequentialNumber`, and
-        // both are the same field.
-        FieldType::SequentialNumber { .. }
-        | FieldType::RandomNumber { .. }
-        | FieldType::NumericStringId
-            if has_matching_path_ids && field_name == "id" =>
-        {
-            "{{ captures.id }}".to_string()
-        }
         FieldType::SequentialNumber { start, .. } => {
             // Ensure end > start to avoid empty range panic
             let end = if *start >= 1000 { start + 100 } else { 1000 };
@@ -83,12 +94,25 @@ pub fn field_type_to_tera_expr(
         FieldType::RandomString => "\"{{ fake_alphanumeric(length=10) }}\"".to_string(),
         FieldType::Token => "\"{{ fake_token() }}\"".to_string(),
         FieldType::ETag => "\"{{ fake_etag() }}\"".to_string(),
-        FieldType::HexString => "\"{{ fake_md5() }}\"".to_string(),
+        // Width and case are kept: a field of forty-character SHA-1s answered
+        // with a thirty-two character MD5 is the wrong value, however right the
+        // class is.
+        FieldType::HexString { length, upper } => {
+            let width = length.unwrap_or(32);
+            format!("\"{{{{ fake_hex(length={width}, upper={upper}) }}}}\"")
+        }
         FieldType::Base64 => "\"{{ fake_base64() }}\"".to_string(),
 
         // Date/time types
-        FieldType::Timestamp => "\"{{ now() }}\"".to_string(),
-        FieldType::IsoDate => "\"{{ fake_iso_date() }}\"".to_string(),
+        FieldType::Timestamp { format } => {
+            // Single-quoted: the expression is embedded in a JSON string, and a
+            // double quote would have to be escaped there and would then reach
+            // the template engine still escaped.
+            format!("\"{{{{ fake_timestamp(format='{}') }}}}\"", format.name())
+        }
+        FieldType::IsoDate { format } => {
+            format!("\"{{{{ fake_iso_date(format='{}') }}}}\"", format.name())
+        }
 
         // Person/contact types
         FieldType::Email => "\"{{ fake_email() }}\"".to_string(),
@@ -134,6 +158,17 @@ pub fn field_type_to_tera_expr(
         // Constant value
         FieldType::Constant(value) => {
             serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+        }
+
+        // A number, timestamp or flag the recording wrote as text. Same
+        // generator, quoted, so the client parses the type it recorded.
+        FieldType::Stringified(inner) => {
+            let bare = field_type_to_tera_expr(field_name, inner);
+            if bare.starts_with('"') {
+                bare
+            } else {
+                format!("\"{bare}\"")
+            }
         }
 
         // Categorical/enum type
@@ -203,7 +238,6 @@ pub fn field_type_to_tera_expr(
 pub fn field_type_to_tera_expr_with_context(
     field_name: &str,
     field_type: &FieldType,
-    has_matching_path_ids: bool,
     extension: Option<&str>,
 ) -> String {
     match field_type {
@@ -231,7 +265,7 @@ pub fn field_type_to_tera_expr_with_context(
                 _ => "\"{{ fake_download_url() }}\"".to_string(),
             }
         }
-        _ => field_type_to_tera_expr(field_name, field_type, has_matching_path_ids),
+        _ => field_type_to_tera_expr(field_name, field_type),
     }
 }
 
@@ -298,7 +332,7 @@ mod tests {
             max: Some(5),
         };
 
-        let template = field_type_to_tera_expr("test_field", &field_type, false);
+        let template = field_type_to_tera_expr("test_field", &field_type);
 
         // Should generate end > start
         assert!(
@@ -315,7 +349,7 @@ mod tests {
             max: Some(50),
         };
 
-        let template = field_type_to_tera_expr("test_field", &field_type, false);
+        let template = field_type_to_tera_expr("test_field", &field_type);
 
         // Should generate end > start (start=100, end=200)
         assert!(
@@ -332,7 +366,7 @@ mod tests {
             max: Some(2.5),
         };
 
-        let template = field_type_to_tera_expr("test_field", &field_type, false);
+        let template = field_type_to_tera_expr("test_field", &field_type);
 
         // Should generate end > start
         assert!(
@@ -349,7 +383,7 @@ mod tests {
             step: 1,
         };
 
-        let template = field_type_to_tera_expr("test_field", &field_type, false);
+        let template = field_type_to_tera_expr("test_field", &field_type);
 
         // Should generate end > start (start=1000, end=1100)
         assert!(
@@ -363,7 +397,7 @@ mod tests {
         // Normal case: start < 1000
         let field_type = FieldType::SequentialNumber { start: 1, step: 1 };
 
-        let template = field_type_to_tera_expr("test_field", &field_type, false);
+        let template = field_type_to_tera_expr("test_field", &field_type);
 
         // Should use default end=1000
         assert!(
@@ -380,7 +414,7 @@ mod tests {
             max: Some(100),
         };
 
-        let template = field_type_to_tera_expr("test_field", &field_type, false);
+        let template = field_type_to_tera_expr("test_field", &field_type);
 
         // Should use the provided range
         assert!(

@@ -357,13 +357,14 @@ impl MockGenerator {
 
                     // Try name-only detection
                     if let Some((field_type, _confidence)) = detect_from_field_name_only(name) {
-                        return Ok(field_type_to_tera_expr(name, &field_type, false));
+                        return Ok(field_type_to_tera_expr(name, &field_type));
                     }
 
                     // Try full semantic detection
-                    if let Some((field_type, _confidence)) = detect_from_semantic_context(name, &[], &DetectionContext::builtin())
+                    if let Some((field_type, _confidence)) =
+                        detect_from_semantic_context(name, &[], &DetectionContext::builtin())
                     {
-                        return Ok(field_type_to_tera_expr(name, &field_type, false));
+                        return Ok(field_type_to_tera_expr(name, &field_type));
                     }
 
                     self.type_mapper.scalar_to_fake(&unwrapped.name)

@@ -2,12 +2,12 @@
 //!
 //! This module contains the TemplateGenerator struct and the main template generation logic.
 
-use super::types::{PaginationType, ResponseStructure};
+use super::types::{EchoedField, EmitContext, PaginationType, ResponseStructure, element_path};
 use crate::type_detector::FieldType;
 use rustc_hash::FxHashSet;
 
-use super::array_object::{generate_tera_array_with_limit, generate_tera_object_with_extension};
-use super::field_converter::{field_type_to_tera_expr, field_type_to_tera_expr_with_context};
+use super::array_object::generate_tera_array_with_limit;
+use super::field_converter::{field_type_to_tera_expr_at, field_type_to_tera_expr_with_context};
 use super::file_detection::extract_file_extension_from_response;
 use super::helpers::detect_results_array_field;
 use super::pagination::{
@@ -38,8 +38,13 @@ impl TemplateGenerator {
             return "{}".to_string();
         }
 
+        let ctx = EmitContext {
+            echoes: &analysis.echoed_fields,
+            graphql: graphql_analysis,
+        };
+
         if analysis.top_level_type == "array" {
-            return Self::generate_tera_template_for_array(analysis);
+            return Self::generate_tera_template_for_array(analysis, ctx);
         }
 
         if analysis.top_level_type != "object" {
@@ -82,7 +87,7 @@ impl TemplateGenerator {
 
             // Generate pagination fields (count, next, previous, etc.)
             let pagination_field_strs =
-                generate_pagination_fields(pagination, base_path, &mut pagination_fields);
+                generate_pagination_fields(pagination, &mut pagination_fields);
 
             if !preamble.is_empty() {
                 // Combine pagination fields with remaining fields
@@ -90,7 +95,7 @@ impl TemplateGenerator {
                 all_fields.extend(Self::generate_remaining_fields(
                     analysis,
                     &pagination_fields,
-                    graphql_analysis,
+                    ctx,
                 ));
 
                 return format!("{}{{\n{}\n}}", preamble, all_fields.join(",\n"));
@@ -105,20 +110,24 @@ impl TemplateGenerator {
 
         for (field, field_type) in &analysis.varying_fields {
             if !pagination_fields.contains(field) {
+                // A field that repeated what the request carried echoes it back.
+                // This outranks every generator below: the recording says this
+                // endpoint answers about the thing that was asked for, and an
+                // invented value contradicts the request it is answering.
+                let echoed = ctx.echo(field).map(EchoedField::expression);
+
                 // Check if this field matches a GraphQL variable
                 let graphql_var_expr =
                     Self::try_graphql_variable_expression(field, graphql_analysis);
 
-                let expr = if let Some(gql_expr) = graphql_var_expr {
+                let expr = if let Some(echo) = echoed {
+                    echo
+                } else if let Some(gql_expr) = graphql_var_expr {
                     // Use GraphQL variable extraction
                     gql_expr
                 } else if results_array_field.as_ref() == Some(field) {
                     // This is the pagination results array - use limit instead of random count
-                    Self::field_type_to_tera_expr_with_limit(
-                        field,
-                        field_type,
-                        analysis.has_matching_path_ids,
-                    )
+                    Self::field_type_to_tera_expr_with_limit(field, field_type, ctx)
                 } else if matches!(field_type, FieldType::DownloadUrl { .. })
                     && file_extension.is_some()
                 {
@@ -126,7 +135,6 @@ impl TemplateGenerator {
                     field_type_to_tera_expr_with_context(
                         field,
                         field_type,
-                        analysis.has_matching_path_ids,
                         file_extension.as_deref(),
                     )
                 } else if matches!(field_type, FieldType::Url)
@@ -137,29 +145,16 @@ impl TemplateGenerator {
                     field_type_to_tera_expr_with_context(
                         field,
                         &FieldType::DownloadUrl { sample_url: None },
-                        analysis.has_matching_path_ids,
                         file_extension.as_deref(),
-                    )
-                } else if matches!(field_type, FieldType::Object(_)) && file_extension.is_some() {
-                    // For nested objects, pass extension context if available
-                    Self::field_type_to_tera_expr_with_extension(
-                        field,
-                        field_type,
-                        analysis.has_matching_path_ids,
-                        file_extension.as_deref(),
-                        graphql_analysis,
-                    )
-                } else if matches!(field_type, FieldType::Object(_)) {
-                    // For nested objects without extension, still pass GraphQL analysis
-                    Self::field_type_to_tera_expr_with_extension(
-                        field,
-                        field_type,
-                        analysis.has_matching_path_ids,
-                        None,
-                        graphql_analysis,
                     )
                 } else {
-                    field_type_to_tera_expr(field, field_type, analysis.has_matching_path_ids)
+                    field_type_to_tera_expr_at(
+                        field,
+                        field_type,
+                        field,
+                        file_extension.as_deref(),
+                        ctx,
+                    )
                 };
                 fields.push(format!("  \"{field}\": {expr}"));
             }
@@ -238,7 +233,7 @@ impl TemplateGenerator {
     fn generate_remaining_fields(
         analysis: &ResponseStructure,
         pagination_fields: &FxHashSet<String>,
-        graphql_analysis: &crate::codegen::types::GraphQLVariableInfo,
+        ctx: EmitContext<'_>,
     ) -> Vec<String> {
         let mut fields = Vec::new();
 
@@ -247,22 +242,25 @@ impl TemplateGenerator {
 
         for (field, field_type) in &analysis.varying_fields {
             if !pagination_fields.contains(field) {
-                // Check if this field matches a GraphQL variable
-                let graphql_var_expr =
-                    Self::try_graphql_variable_expression(field, graphql_analysis);
+                // A field that repeated what the request carried echoes it back.
+                // This outranks every generator below: the recording says this
+                // endpoint answers about the thing that was asked for, and an
+                // invented value contradicts the request it is answering.
+                let echoed = ctx.echo(field).map(EchoedField::expression);
 
-                let expr = if let Some(gql_expr) = graphql_var_expr {
+                // Check if this field matches a GraphQL variable
+                let graphql_var_expr = Self::try_graphql_variable_expression(field, ctx.graphql);
+
+                let expr = if let Some(echo) = echoed {
+                    echo
+                } else if let Some(gql_expr) = graphql_var_expr {
                     // Use GraphQL variable extraction
                     gql_expr
                 } else if results_array_field.as_ref() == Some(field) {
                     // This is the pagination results array - use limit instead of random count
-                    Self::field_type_to_tera_expr_with_limit(
-                        field,
-                        field_type,
-                        analysis.has_matching_path_ids,
-                    )
+                    Self::field_type_to_tera_expr_with_limit(field, field_type, ctx)
                 } else {
-                    field_type_to_tera_expr(field, field_type, analysis.has_matching_path_ids)
+                    field_type_to_tera_expr_at(field, field_type, field, None, ctx)
                 };
                 fields.push(format!("  \"{field}\": {expr}"));
             }
@@ -278,15 +276,20 @@ impl TemplateGenerator {
         fields
     }
 
-    fn generate_tera_template_for_array(analysis: &ResponseStructure) -> String {
+    fn generate_tera_template_for_array(
+        analysis: &ResponseStructure,
+        ctx: EmitContext<'_>,
+    ) -> String {
         if analysis.varying_fields.is_empty() && analysis.constant_fields.is_empty() {
             return "[]".to_string();
         }
 
         let mut fields = Vec::new();
+        let elements = element_path("");
 
         for (field, field_type) in &analysis.varying_fields {
-            let expr = field_type_to_tera_expr(field, field_type, false);
+            let path = super::types::child_path(&elements, field);
+            let expr = field_type_to_tera_expr_at(field, field_type, &path, None, ctx);
             fields.push(format!("    \"{field}\": {expr}"));
         }
 
@@ -302,33 +305,14 @@ impl TemplateGenerator {
     }
 
     /// Generate Tera expression for a field that should use `limit` for array size (pagination results)
-    pub fn field_type_to_tera_expr_with_limit(
+    fn field_type_to_tera_expr_with_limit(
         field_name: &str,
         field_type: &FieldType,
-        has_matching_path_ids: bool,
+        ctx: EmitContext<'_>,
     ) -> String {
         match field_type {
-            FieldType::Array(pattern) => generate_tera_array_with_limit(pattern),
-            _ => field_type_to_tera_expr(field_name, field_type, has_matching_path_ids),
-        }
-    }
-
-    /// Generate Tera expression for nested objects with extension context
-    fn field_type_to_tera_expr_with_extension(
-        field_name: &str,
-        field_type: &FieldType,
-        has_matching_path_ids: bool,
-        extension: Option<&str>,
-        graphql_analysis: &crate::codegen::types::GraphQLVariableInfo,
-    ) -> String {
-        match field_type {
-            FieldType::Object(analysis) => generate_tera_object_with_extension(
-                analysis,
-                has_matching_path_ids,
-                extension,
-                graphql_analysis,
-            ),
-            _ => field_type_to_tera_expr(field_name, field_type, has_matching_path_ids),
+            FieldType::Array(pattern) => generate_tera_array_with_limit(pattern, field_name, ctx),
+            _ => field_type_to_tera_expr_at(field_name, field_type, field_name, None, ctx),
         }
     }
 }
@@ -381,7 +365,7 @@ mod tests {
                     serde_json::Value::String("pdf".to_string()),
                 ),
             ],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -451,7 +435,7 @@ mod tests {
                     serde_json::Value::String("png".to_string()),
                 ),
             ],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -509,7 +493,7 @@ mod tests {
                     serde_json::Value::String("jpg".to_string()),
                 ),
             ],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -568,7 +552,7 @@ mod tests {
                     serde_json::Value::String("pdf".to_string()),
                 ),
             ],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -642,7 +626,7 @@ mod tests {
                         serde_json::Value::String((*ext).to_string()),
                     ),
                 ],
-                has_matching_path_ids: false,
+                echoed_fields: rustc_hash::FxHashMap::default(),
                 is_json: true,
                 top_level_type: "object".to_string(),
                 pagination: None,
@@ -679,7 +663,7 @@ mod tests {
                 "type".to_string(),
                 serde_json::Value::String("user".to_string()),
             )],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -714,7 +698,7 @@ mod tests {
         let analysis = ResponseStructure {
             varying_fields: vec![("type".to_string(), categorical_field)],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -746,6 +730,8 @@ mod tests {
             sample_total: Some(80),
             pagination_type: PaginationType::Page,
             static_query_params: "status=active&sort=desc".to_string(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
@@ -766,11 +752,11 @@ mod tests {
                         },
                     )),
                     sample_size_range: (5, 10),
-                element_shapes: Vec::new(),
+                    element_shapes: Vec::new(),
                 })),
             )],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -829,6 +815,8 @@ mod tests {
             sample_total: Some(100),
             pagination_type: PaginationType::Page,
             static_query_params: String::new(), // No static params
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
@@ -841,11 +829,11 @@ mod tests {
                         max: None,
                     },
                     sample_size_range: (10, 20),
-                element_shapes: Vec::new(),
+                    element_shapes: Vec::new(),
                 })),
             )],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -879,12 +867,14 @@ mod tests {
             sample_total: Some(500),
             pagination_type: PaginationType::Offset,
             static_query_params: "filter=active&include=metadata".to_string(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
             varying_fields: vec![],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -924,12 +914,14 @@ mod tests {
             sample_total: Some(200),
             pagination_type: PaginationType::Cursor,
             static_query_params: String::new(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
             varying_fields: vec![],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -945,8 +937,14 @@ mod tests {
         assert!(template.contains("set page_num = store_incr"));
 
         // Verify cursor format (not URLs)
-        assert!(template.contains("cursor_page_"));
-        assert!(template.contains("uuid() | truncate(length=8, end=\"\")"));
+        assert!(
+            template.contains("\"page_{{ page_num + 1 }}_"),
+            "the cursor has to carry the page it stands for:\n{template}"
+        );
+        assert!(
+            template.contains("fake_token()"),
+            "the opaque half of a marker should look like the tokens APIs hand out"
+        );
 
         // Cursor pagination should generate tokens, not full URLs
         assert!(template.contains("\"next_cursor\":"));
@@ -967,6 +965,8 @@ mod tests {
             sample_total: Some(50),
             pagination_type: PaginationType::Page,
             static_query_params: String::new(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
@@ -977,7 +977,7 @@ mod tests {
                         is_homogeneous: true,
                         element_type: FieldType::Name,
                         sample_size_range: (10, 20),
-                element_shapes: Vec::new(),
+                        element_shapes: Vec::new(),
                     })),
                 ),
                 (
@@ -989,12 +989,12 @@ mod tests {
                             max: None,
                         },
                         sample_size_range: (5, 10),
-                element_shapes: Vec::new(),
+                        element_shapes: Vec::new(),
                     })),
                 ),
             ],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -1041,7 +1041,7 @@ mod tests {
                 "data.user.type".to_string(),
                 serde_json::Value::String("user".to_string()),
             )],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -1098,7 +1098,7 @@ mod tests {
                 ("data.post.title".to_string(), FieldType::Name),
             ],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -1146,7 +1146,7 @@ mod tests {
                 ("data.result.status".to_string(), FieldType::Name),
             ],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: None,
@@ -1196,12 +1196,14 @@ mod tests {
             sample_total: Some(80),
             pagination_type: PaginationType::Page,
             static_query_params: "foo=bar".to_string(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
             varying_fields: vec![],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -1217,10 +1219,12 @@ mod tests {
             "Should have exactly one 'next' field definition, found {next_count}. Template:\n{template}"
         );
 
-        // Verify the next field is the URL version, not a boolean
+        // Verify the next field is the URL version, not a boolean. With no
+        // recorded link to copy, it points back at the path the client asked
+        // for, which is the only address known to reach this mock again.
         assert!(
-            template.contains("\"next\": {% if has_more %}\"{{ fake_api_url()"),
-            "Next field should be URL-based"
+            template.contains("\"next\": {% if has_more %}\"{{ path }}?"),
+            "Next field should be URL-based, got:\n{template}"
         );
         assert!(
             !template.contains("\"next\": {{ has_more }}"),
@@ -1244,6 +1248,8 @@ mod tests {
             sample_total: None, // No sample total available
             pagination_type: PaginationType::Cursor,
             static_query_params: String::new(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
@@ -1256,11 +1262,11 @@ mod tests {
                         max: None,
                     },
                     sample_size_range: (20, 100),
-                element_shapes: Vec::new(),
+                    element_shapes: Vec::new(),
                 })),
             )],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -1285,7 +1291,10 @@ mod tests {
 
         // Should still generate next_marker correctly
         assert!(template.contains("\"next_marker\":"));
-        assert!(template.contains("cursor_page_"));
+        assert!(
+            template.contains("\"page_{{ page_num + 1 }}_"),
+            "the cursor has to carry the page it stands for:\n{template}"
+        );
     }
 
     #[test]
@@ -1303,12 +1312,14 @@ mod tests {
             sample_total: None,
             pagination_type: PaginationType::Page,
             static_query_params: String::new(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
             varying_fields: vec![],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),
@@ -1348,12 +1359,14 @@ mod tests {
             sample_total: None,
             pagination_type: PaginationType::Offset,
             static_query_params: String::new(),
+            link_base: None,
+            cursor_param: None,
         };
 
         let analysis = ResponseStructure {
             varying_fields: vec![],
             constant_fields: vec![],
-            has_matching_path_ids: false,
+            echoed_fields: rustc_hash::FxHashMap::default(),
             is_json: true,
             top_level_type: "object".to_string(),
             pagination: Some(pagination),

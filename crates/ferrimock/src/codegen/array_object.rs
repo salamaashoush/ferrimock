@@ -4,8 +4,9 @@
 
 use crate::type_detector::{ArrayPattern, FieldType, ObjectAnalysis};
 
-use super::field_converter::{field_type_to_tera_expr, field_type_to_tera_expr_with_context};
+use super::field_converter::{field_type_to_tera_expr_at, field_type_to_tera_expr_with_context};
 use super::file_detection::extract_file_extension;
+use super::types::{EmitContext, child_path, element_path};
 
 /// Generate Tera template for an array
 ///
@@ -16,21 +17,34 @@ use super::file_detection::extract_file_extension;
 ///
 /// We must ensure the generated `get_random(start, end)` call always has `start < end`
 /// to avoid panics from rand's empty range check.
-pub(super) fn generate_tera_array(pattern: &ArrayPattern) -> String {
+pub(super) fn generate_tera_array(
+    pattern: &ArrayPattern,
+    path: &str,
+    ctx: EmitContext<'_>,
+) -> String {
     let (min, max) = pattern.sample_size_range;
 
     if !pattern.is_homogeneous {
-        return generate_mixed_elements(pattern);
+        return generate_mixed_elements(pattern, path, ctx);
     }
 
-    let element_expr = field_type_to_tera_expr("element", &pattern.element_type, false);
+    let elements = element_path(path);
+    let element_expr =
+        field_type_to_tera_expr_at("element", &pattern.element_type, &elements, None, ctx);
 
     let is_complex = matches!(
         pattern.element_type,
         FieldType::Object(_) | FieldType::Array(_)
     );
 
-    let (range_start, range_end) = if max > 0 && max > min {
+    // An array the recording only ever showed empty is answered empty. Filling
+    // it invents a list the API never returned, and the client that reads its
+    // length sees something that never happened.
+    if max == 0 {
+        return "[]".to_string();
+    }
+
+    let (range_start, range_end) = if max > min {
         let start = min.max(1);
         let end = max.min(20);
         // Ensure end > start to avoid empty range panic in get_random
@@ -51,7 +65,7 @@ pub(super) fn generate_tera_array(pattern: &ArrayPattern) -> String {
         )
     } else {
         format!(
-            "[{{% for i in range(end=get_random(start={range_start}, end={range_end})) %}}{element_expr}{{ if not loop.last }}, {{ endif }}{{% endfor %}}]"
+            "[{{% for i in range(end=get_random(start={range_start}, end={range_end})) %}}{element_expr}{{% if not loop.last %}}, {{% endif %}}{{% endfor %}}]"
         )
     }
 }
@@ -64,27 +78,34 @@ pub(super) fn generate_tera_array(pattern: &ArrayPattern) -> String {
 /// where a file was, a folder where a folder was -- while still generating
 /// their values. With no shapes to go on there is nothing better than the empty
 /// array.
-fn generate_mixed_elements(pattern: &ArrayPattern) -> String {
+fn generate_mixed_elements(pattern: &ArrayPattern, path: &str, ctx: EmitContext<'_>) -> String {
     if pattern.element_shapes.is_empty() {
         return "[]".to_string();
     }
 
+    let element = element_path(path);
     let elements: Vec<String> = pattern
         .element_shapes
         .iter()
-        .map(|shape| field_type_to_tera_expr("element", shape, false))
+        .map(|shape| field_type_to_tera_expr_at("element", shape, &element, None, ctx))
         .collect();
 
     format!("[\n        {}\n      ]", elements.join(",\n        "))
 }
 
 /// Generate Tera array template that uses `limit` for pagination results
-pub(super) fn generate_tera_array_with_limit(pattern: &ArrayPattern) -> String {
+pub(super) fn generate_tera_array_with_limit(
+    pattern: &ArrayPattern,
+    path: &str,
+    ctx: EmitContext<'_>,
+) -> String {
     if !pattern.is_homogeneous {
-        return generate_mixed_elements(pattern);
+        return generate_mixed_elements(pattern, path, ctx);
     }
 
-    let element_expr = field_type_to_tera_expr("element", &pattern.element_type, false);
+    let elements = element_path(path);
+    let element_expr =
+        field_type_to_tera_expr_at("element", &pattern.element_type, &elements, None, ctx);
     let is_complex = matches!(
         pattern.element_type,
         FieldType::Object(_) | FieldType::Array(_)
@@ -101,7 +122,7 @@ pub(super) fn generate_tera_array_with_limit(pattern: &ArrayPattern) -> String {
         )
     } else {
         format!(
-            "[{{% for i in {count} %}}{element_expr}{{ if not loop.last }}, {{ endif }}{{% endfor %}}]"
+            "[{{% for i in {count} %}}{element_expr}{{% if not loop.last %}}, {{% endif %}}{{% endfor %}}]"
         )
     }
 }
@@ -109,9 +130,9 @@ pub(super) fn generate_tera_array_with_limit(pattern: &ArrayPattern) -> String {
 /// Generate Tera template for an object with file extension context
 pub(super) fn generate_tera_object_with_extension(
     analysis: &ObjectAnalysis,
-    has_matching_path_ids: bool,
+    path: &str,
     parent_extension: Option<&str>,
-    graphql_analysis: &super::types::GraphQLVariableInfo,
+    ctx: EmitContext<'_>,
 ) -> String {
     if analysis.varying_fields.is_empty() && analysis.constant_fields.is_empty() {
         return "{}".to_string();
@@ -123,11 +144,22 @@ pub(super) fn generate_tera_object_with_extension(
     let file_extension = extract_file_extension(analysis, parent_extension);
 
     for (field, field_type) in &analysis.varying_fields {
-        // Check if this field matches a GraphQL variable first
-        let graphql_var_expr =
-            super::generator::try_graphql_variable_expression_for_nested(field, graphql_analysis);
+        let field_path = child_path(path, field);
 
-        let expr = if let Some(gql_expr) = graphql_var_expr {
+        // A field that repeated what the request carried echoes it back,
+        // wherever in the response it sits. Nothing generated can be more right
+        // than the value the request itself named.
+        let echoed = ctx
+            .echo(&field_path)
+            .map(super::types::EchoedField::expression);
+
+        // Check if this field matches a GraphQL variable next
+        let graphql_var_expr =
+            super::generator::try_graphql_variable_expression_for_nested(field, ctx.graphql);
+
+        let expr = if let Some(echo) = echoed {
+            echo
+        } else if let Some(gql_expr) = graphql_var_expr {
             // Use GraphQL variable extraction
             gql_expr
         } else {
@@ -137,7 +169,6 @@ pub(super) fn generate_tera_object_with_extension(
                     field_type_to_tera_expr_with_context(
                         field,
                         field_type,
-                        has_matching_path_ids,
                         file_extension.as_deref(),
                     )
                 }
@@ -150,30 +181,25 @@ pub(super) fn generate_tera_object_with_extension(
                     field_type_to_tera_expr_with_context(
                         field,
                         &FieldType::DownloadUrl { sample_url: None },
-                        has_matching_path_ids,
                         file_extension.as_deref(),
                     )
                 }
                 FieldType::Object(nested_analysis) if file_extension.is_some() => {
-                    // Pass extension context and GraphQL analysis to nested objects
+                    // Pass extension context to nested objects
                     generate_tera_object_with_extension(
                         nested_analysis,
-                        has_matching_path_ids,
+                        &field_path,
                         file_extension.as_deref(),
-                        graphql_analysis,
+                        ctx,
                     )
                 }
                 FieldType::Object(nested_analysis) => {
-                    // Pass GraphQL analysis to nested objects even without extension
-                    generate_tera_object_with_extension(
-                        nested_analysis,
-                        has_matching_path_ids,
-                        None,
-                        graphql_analysis,
-                    )
+                    generate_tera_object_with_extension(nested_analysis, &field_path, None, ctx)
                 }
-                FieldType::Array(array_pattern) => generate_tera_array(array_pattern),
-                _ => field_type_to_tera_expr(field, field_type, has_matching_path_ids),
+                FieldType::Array(array_pattern) => {
+                    generate_tera_array(array_pattern, &field_path, ctx)
+                }
+                _ => field_type_to_tera_expr_at(field, field_type, &field_path, None, ctx),
             }
         };
         fields.push(format!("\"{field}\": {expr}"));
@@ -204,7 +230,7 @@ mod tests {
             element_shapes: vec![FieldType::Email, FieldType::Uuid],
         };
 
-        let template = generate_tera_array(&pattern);
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
 
         assert_ne!(template.trim(), "[]", "a mixed array must not answer empty");
         assert!(
@@ -213,8 +239,44 @@ mod tests {
         );
 
         // The paginated form has to agree; it is the same array.
-        let paginated = generate_tera_array_with_limit(&pattern);
+        let paginated = generate_tera_array_with_limit(&pattern, "items", EmitContext::plain());
         assert_ne!(paginated.trim(), "[]");
+    }
+
+    #[test]
+    fn an_array_of_scalars_separates_its_elements_with_real_syntax() {
+        // `{ if not loop.last }` is literal text to the engine, so it reached
+        // the client inside the array and the whole body stopped being JSON.
+        let pattern = ArrayPattern {
+            element_type: FieldType::RandomString,
+            is_homogeneous: true,
+            sample_size_range: (2, 5),
+            element_shapes: Vec::new(),
+        };
+
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
+        assert!(
+            !template.contains("{ if not loop.last }"),
+            "the separator has to be a tag the engine reads: {template}"
+        );
+        assert!(template.contains("{% if not loop.last %}"));
+    }
+
+    #[test]
+    fn an_array_only_ever_recorded_empty_is_answered_empty() {
+        // Filling it invents a list the API never returned, and a client that
+        // reads its length sees something that never happened.
+        let pattern = ArrayPattern {
+            element_type: FieldType::RandomString,
+            is_homogeneous: true,
+            sample_size_range: (0, 0),
+            element_shapes: Vec::new(),
+        };
+
+        assert_eq!(
+            generate_tera_array(&pattern, "items", EmitContext::plain()).trim(),
+            "[]"
+        );
     }
 
     #[test]
@@ -226,7 +288,10 @@ mod tests {
             element_shapes: Vec::new(),
         };
 
-        assert_eq!(generate_tera_array(&pattern).trim(), "[]");
+        assert_eq!(
+            generate_tera_array(&pattern, "items", EmitContext::plain()).trim(),
+            "[]"
+        );
     }
 
     #[test]
@@ -240,7 +305,7 @@ mod tests {
             element_shapes: Vec::new(),
         };
 
-        let template = generate_tera_array(&pattern);
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
 
         // Template should contain get_random with start < end
         assert!(
@@ -259,7 +324,7 @@ mod tests {
             element_shapes: Vec::new(),
         };
 
-        let template = generate_tera_array(&pattern);
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
 
         // Should fall through to default (3, 5) since max is not > min
         assert!(
@@ -278,7 +343,7 @@ mod tests {
             element_shapes: Vec::new(),
         };
 
-        let template = generate_tera_array(&pattern);
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
 
         // Should use the provided range (clamped to min=1)
         assert!(
@@ -297,7 +362,7 @@ mod tests {
             element_shapes: Vec::new(),
         };
 
-        let template = generate_tera_array(&pattern);
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
 
         // min should be clamped to 1
         assert!(
@@ -316,7 +381,7 @@ mod tests {
             element_shapes: Vec::new(),
         };
 
-        let template = generate_tera_array(&pattern);
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
 
         // max should be clamped to 20
         assert!(
@@ -338,7 +403,7 @@ mod tests {
             element_shapes: Vec::new(),
         };
 
-        let template = generate_tera_array(&pattern);
+        let template = generate_tera_array(&pattern, "items", EmitContext::plain());
 
         // Should use multi-line format with newlines
         assert!(
