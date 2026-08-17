@@ -6,6 +6,7 @@
 //! rather than on localhost.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Args, Subcommand};
 use ferrimock::core::World;
@@ -53,7 +54,7 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
     }
 }
 
-fn report(world: &World, dir: &std::path::Path, mocks: usize) {
+fn report(world: &Arc<World>, dir: &std::path::Path, mocks: usize) {
     crate::say!("{}", ui::header("World"));
     crate::say!();
 
@@ -80,15 +81,20 @@ fn report(world: &World, dir: &std::path::Path, mocks: usize) {
     );
 
     for schema in world.schemas() {
+        let endpoints = schema
+            .binding
+            .endpoints()
+            .map_or_else(String::new, |count| format!(", {count} endpoint(s)"));
         crate::say!(
             "{}",
             ui::dim(&format!(
-                "  {} → {} entities, served as {}",
+                "  {} → {} entities{endpoints}, served as {}",
                 schema.path.display(),
                 schema.entities.len(),
                 schema.binding.protocol()
             ))
         );
+        report_coverage(world, &schema);
     }
 
     // Merging is usually right and never right silently.
@@ -105,6 +111,40 @@ fn report(world: &World, dir: &std::path::Path, mocks: usize) {
             "{}",
             ui::dim(&format!("{pending} write(s) laid over the seeded world"))
         );
+    }
+}
+
+/// How much of a document is answered from the store, and how much is
+/// invented.
+///
+/// The honest way to present a generated backend is to lead with that number.
+/// A mock that makes up half an API must not look like one that does not.
+fn report_coverage(world: &Arc<World>, schema: &ferrimock::core::world::LoadedSchema) {
+    use ferrimock::core::world::Binding;
+    use ferrimock::spec::bind::rest::RestBackend;
+
+    let Binding::OpenApi(table) = &schema.binding else {
+        return;
+    };
+
+    let backend = RestBackend::build(table, world);
+    let coverage = backend.coverage();
+    let unclassified = coverage.unclassified().len();
+    if unclassified == 0 {
+        return;
+    }
+
+    let line = format!(
+        "    {:.0}% answered from the world; {unclassified} operation(s) answer from their \
+         declared shape alone",
+        coverage.ratio() * 100.0
+    );
+    crate::say!("{}", ui::warning(&line));
+    for id in coverage.unclassified().iter().take(5) {
+        crate::say!("{}", ui::dim(&format!("      {id}")));
+    }
+    if unclassified > 5 {
+        crate::say!("{}", ui::dim(&format!("      … and {} more", unclassified - 5)));
     }
 }
 

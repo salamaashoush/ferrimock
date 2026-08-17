@@ -14,7 +14,7 @@ use crate::core::World;
 use crate::types::MockDefinition;
 
 /// Protocols `serve:` understands, for the error when it does not.
-const KNOWN_PROTOCOLS: [&str; 1] = ["graphql"];
+const KNOWN_PROTOCOLS: [&str; 2] = ["graphql", "rest"];
 
 /// Priority a schema-derived route takes.
 ///
@@ -33,12 +33,7 @@ pub fn expand(
 ) -> crate::Result<Vec<MockDefinition>> {
     match serve.protocol() {
         "graphql" => expand_graphql(mock, serve, world),
-        "rest" | "openapi" => Err(crate::mp_err!(
-            "mock `{}`: `serve: rest` needs an OpenAPI front end, which is not built yet. \
-             Only {} can be served today.",
-            mock.id,
-            KNOWN_PROTOCOLS.join(", ")
-        )),
+        "rest" | "openapi" => expand_rest(&mock, serve, world),
         other => Err(crate::mp_err!(
             "mock `{}`: `{other}` is not a protocol `serve:` understands (known: {})",
             mock.id,
@@ -86,6 +81,51 @@ fn expand_graphql(
     Ok(vec![mock])
 }
 
+/// Expand a `serve: rest` mock into one mock per operation.
+///
+/// The document says method and path; the mock says the base URL, the host,
+/// the priority and everything else. Neither can supply the other's half —
+/// which is why a document is loaded into the world and mounted by a mock,
+/// rather than being a route source of its own.
+#[cfg(feature = "spec")]
+fn expand_rest(
+    mock: &MockDefinition,
+    serve: &ServeConfig,
+    world: &Arc<World>,
+) -> crate::Result<Vec<MockDefinition>> {
+    use crate::core::world::Binding;
+    use crate::spec::bind::rest::RestBackend;
+
+    // Operations carry their own methods, so a method on the mount would have
+    // to either contradict them or be ignored. Saying so beats both.
+    if !mock.request.methods.is_empty() {
+        return Err(crate::mp_err!(
+            "mock `{}`: `serve: rest` mounts every operation at its own method, so \
+             `match` must not name one. Write `url:` rather than `{}:`.",
+            mock.id,
+            mock.request
+                .methods
+                .first()
+                .map_or_else(String::new, |method| method.as_str().to_string())
+        ));
+    }
+
+    let schema = world.resolve_schema("rest", serve.schema(), mock.id.as_str())?;
+    let Binding::OpenApi(table) = &schema.binding else {
+        return Err(crate::mp_err!(
+            "mock `{}`: {} is not an OpenAPI document",
+            mock.id,
+            schema.path.display()
+        ));
+    };
+
+    let backend = RestBackend::build(table, world);
+    // `source_file` stays whatever the caller set, for the same reason it does
+    // under `serve: graphql`: the mocks are declared in a collection, and that
+    // is the file `reload_file` knows how to re-run.
+    crate::spec::emit::bind_rest(mock, &backend)
+}
+
 #[cfg(not(feature = "spec"))]
 fn expand_graphql(
     mock: MockDefinition,
@@ -94,6 +134,18 @@ fn expand_graphql(
 ) -> crate::Result<Vec<MockDefinition>> {
     Err(crate::mp_err!(
         "mock `{}`: serving a schema needs the `spec` feature",
+        mock.id
+    ))
+}
+
+#[cfg(not(feature = "spec"))]
+fn expand_rest(
+    mock: &MockDefinition,
+    _serve: &ServeConfig,
+    _world: &Arc<World>,
+) -> crate::Result<Vec<MockDefinition>> {
+    Err(crate::mp_err!(
+        "mock `{}`: serving a document needs the `spec` feature",
         mock.id
     ))
 }

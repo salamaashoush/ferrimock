@@ -2,5 +2,6 @@
 
 pub mod graphql;
 pub mod plan;
+pub mod rest;
 
 pub use plan::RootPlan;
