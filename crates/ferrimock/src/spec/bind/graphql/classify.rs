@@ -3,9 +3,11 @@
 //! Entity fields are genuinely generic — a parent record and a field name are
 //! all a resolver needs. Root fields are not: `posts(first:)`, `user(id:)` and
 //! `searchPostsByTag(tag:, sort:)` have nothing in common but their position.
-//! So each one is classified once, into a rung, and the rung it landed on is
-//! reportable. The bottom rung invents data; a mock that does that for half a
-//! schema must not look like one that does not.
+//! So each one is classified once, into a [`RootPlan`], and the rung it landed
+//! on is reportable.
+//!
+//! The plan itself is protocol-neutral and lives in [`crate::spec::bind::plan`];
+//! only the classifier below is GraphQL's.
 
 use lean_string::LeanString;
 
@@ -13,71 +15,13 @@ use crate::core::world::model::{ConnectionShape, EntityGraph};
 use crate::graphql::introspection::{FieldDefinition, ParsedSchema, TypeDefinition, TypeKind};
 use crate::spec::infer::graphql::entities::{SchemaFacts, members_of};
 
+pub use crate::spec::bind::plan::RootPlan;
+
 /// Argument names that describe *how* to read a list rather than *which* one.
 const PAGINATION_ARGS: [&str; 8] = [
     "first", "last", "after", "before", "offset", "limit", "skip", "page",
 ];
 const ORDER_ARGS: [&str; 3] = ["orderBy", "sort", "sortBy"];
-
-/// What a root field resolves to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RootPlan {
-    /// One instance, addressed by key.
-    Get {
-        entity: LeanString,
-        /// Concrete entities behind an interface or union return type.
-        members: Vec<LeanString>,
-        key_arg: LeanString,
-    },
-    /// Many instances, optionally wrapped in a Relay connection.
-    List {
-        entity: LeanString,
-        /// Concrete entities behind an interface or union return type.
-        members: Vec<LeanString>,
-        connection: Option<ConnectionShape>,
-        /// The field on the payload holding the entities, when the list is
-        /// wrapped in a result object rather than returned directly.
-        payload_field: Option<LeanString>,
-    },
-    Create {
-        entity: LeanString,
-        input_arg: Option<LeanString>,
-        payload_field: Option<LeanString>,
-    },
-    Update {
-        entity: LeanString,
-        key_arg: LeanString,
-        input_arg: Option<LeanString>,
-        payload_field: Option<LeanString>,
-    },
-    Delete {
-        entity: LeanString,
-        key_arg: LeanString,
-        payload_field: Option<LeanString>,
-    },
-    /// Nothing about the field says what it does. Answered from its declared
-    /// return type, stably, and counted.
-    Unclassified,
-}
-
-impl RootPlan {
-    #[must_use]
-    pub fn rung(&self) -> &'static str {
-        match self {
-            RootPlan::Get { .. } => "get",
-            RootPlan::List { .. } => "list",
-            RootPlan::Create { .. } => "create",
-            RootPlan::Update { .. } => "update",
-            RootPlan::Delete { .. } => "delete",
-            RootPlan::Unclassified => "unclassified",
-        }
-    }
-
-    #[must_use]
-    pub fn is_classified(&self) -> bool {
-        !matches!(self, RootPlan::Unclassified)
-    }
-}
 
 /// Whether a root field lives on `Query` or `Mutation`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
