@@ -204,13 +204,23 @@ independent mocks. It compiles into the engine's **world** — entity types, key
 relations — which a seeded store answers queries against and which protocol
 bindings serve.
 
+Two front ends compile into one world: `spec::infer::graphql` reads SDL and
+`spec::infer::openapi` reads an OpenAPI 3.0/3.1 document. Both produce an
+`EntityGraph`, so a `User` declared by a schema and a `User` described by a
+document are one `User` with one set of instances. The module split is the same
+on both sides: *read a spec* (`infer`), *bind it to a protocol* (`bind`), *mount
+it as ordinary mocks* (`emit`). `spec::bind::plan::RootPlan` is shared — the six
+rungs (get/list/create/update/delete/unclassified) are what both classifiers
+land on, and what coverage counts.
+
 The split that keeps this one system rather than two:
 
 - **A schema declares entities, never routes.** It has nowhere to write down
   that it is served at `https://api.example.com/graphql` rather than on localhost,
   and guessing is how a proxy answers on the wrong host. Loading a `.graphql`
   populates the world and registers *zero* mocks; the loader warns when a world
-  has entities but nothing serves them.
+  has entities but nothing serves them. An OpenAPI document *does* carry paths,
+  but still not a host — `servers:` is reported, never mounted from.
 - **A route is a mock.** `serve:` is a mode alongside `response:`, `patch:`,
   `sse:` and `ws:` — not a response body, but a protocol behavior bound to a
   matched URL, exactly like `ws:`. `match` says where the API answers, `serve`
@@ -223,7 +233,9 @@ The split that keeps this one system rather than two:
 
 ```yaml
 world:
-  schemas: [schemas/filestore.graphql]
+  schemas:
+    - schemas/filestore.graphql
+    - schemas/filestore-content.openapi.yaml   # merges into the SAME entity graph
   seed: 42
   counts: { User: 25 }
 
@@ -233,6 +245,11 @@ mocks:
       POST: https://api.example.com/graphql
     serve: graphql
 
+  - id: filestore-rest
+    match:
+      url: https://api.example.com/2.0       # base; operations supply path + method
+    serve: rest
+
   # An override is an ordinary mock winning on ordinary priority.
   - id: quota-exceeded
     match:
@@ -241,6 +258,13 @@ mocks:
     response:
       json: { errors: [{ message: Storage quota exceeded }] }
 ```
+
+Which file is read as what is decided by extension, never by contents — a file
+that has to be opened before anyone can say what it is fails differently every
+time its contents change. A bare `.yaml`/`.json` is a mock collection; an
+OpenAPI document auto-loaded from a mocks directory is named `*.openapi.yaml`
+(or `.yml`/`.json`); anything named under `world.schemas` loads whatever it is
+called, as GraphQL for `.graphql`/`.gql` and as OpenAPI otherwise.
 
 Schema-derived routes sit at `config::serve::SERVED_PRIORITY` (50), below the
 default 100, so a hand-written mock outranks the backend without anyone doing
@@ -252,8 +276,72 @@ name would be finer grained, but the name is chosen by the client, not the
 schema — a schema-derived backend cannot know it in advance, and pretending
 otherwise would leave real requests unmatched. Consequence: `verify()` on a
 GraphQL mount asserts the endpoint's total, not per-operation; assert on the
-override mock for that. A protocol that designs many endpoints (OpenAPI) expands
-to one mock per operation instead, so coverage names the endpoints.
+override mock for that.
+
+OpenAPI is the opposite and expands to **one mock per operation**, id
+`{mount-id}#{operationId}` (falling back to `{method}-{path}` when the document
+names none). The mount supplies the base path and Host; the document supplies
+method and path, which go through the ordinary `config::parse_url_pattern`, so
+`{param}` becomes a named capture like any hand-written route. A `match.method`
+on a `serve: rest` mock is a validation error — operations carry their own.
+Accepted cost: a 500-operation document becomes 500 `MockDefinition`s. What it
+buys is what a single glob mock cannot give — coverage that names the endpoints,
+`verify("filestore-rest#getFolder", Exactly(1))`, and an override that is an ordinary
+higher-priority mock at that path rather than a special case.
+
+### Inferring an entity graph from an OpenAPI document
+
+A GraphQL schema states which types have identity; a document does not, so
+identity is read off the shape of the surface. Every fact carries the `Rule` that
+produced it and a `Confidence`, and `ferrimock world explain` prints both —
+inference that cannot explain itself is not usable on a real document.
+
+`CollectionItemPair` (a collection path beside an item path) decides which
+schemas are entities and which path parameter addresses one; `SchemaRef`,
+`PathNesting`, `SpecLink`, `ForeignKeyName` and `VendorExtension` decide the
+relations between them. The `Carrier` says how a link rides on the wire, and the
+choice is load-bearing: a `ForeignKey(field)` relation *is* the scalar field, not
+a sibling of it, because the store already writes a to-one link's value as the
+target's key — so `folder.user_id` holds a key that resolves rather than a
+plausible-looking UUID that does not.
+
+Name matching matches names, never meanings: `owner_id` finds an entity called
+`Owner`, and nothing teaches the engine that an owner is a `User`. Domain
+knowledge belongs in a `ConsolidationProfile` (`spec_relation` for `x-`
+extensions, `pagination_dialect` for what this API calls a limit), never in the
+engine.
+
+The document is read off a `serde_json::Value` rather than deserialized into
+typed structs. Typed OpenAPI crates model 3.0 and 3.1 as separate type systems
+and shape their `Either` fields as untagged enums — and untagged buffering under
+`arbitrary_precision` turns a number into a private one-key map (see below).
+Walking a `Value` meets neither problem, and the 3.0/3.1 divergences (`nullable`,
+`exclusiveMinimum`, `type: [x, "null"]`) are few enough to name in one reader.
+
+Resolution is explicit: `serve: graphql` binds the single GraphQL schema in the
+world, and refuses with both paths named when there is more than one. Say which
+with `serve: { protocol: graphql, schema: <path> }`. Two mounts of the same
+schema serve identical data — that is what sharing the world means, and
+"same schema, two independent datasets" is deliberately not offered.
+
+Adding a schema **rebuilds** the store and replays every write onto it, so
+loading a second schema does not discard state a handler already wrote. Entity
+names and ordinals that already existed keep their exact values, because the
+base layer derives from the seed. A patch whose record no longer exists (an
+entity's count shrank) is reported as a `DeltaConflict` rather than dropped.
+Rebuilds are serialized; a write landing between the snapshot and the swap is
+lost, which is a startup and hot-reload window, not a request-path one.
+
+`World::reset()` drops every write and leaves exactly what the seed derives —
+call it between tests, or state leaks from one into the next.
+`World::pending_writes()` is how you see that it did.
+
+`MockRegistry::with_world()` gives a registry its own world for isolation, which
+integration tests need because the process-global one is shared. Trade-off worth
+knowing: `entity_*` template functions read the *global* world (Tera's function
+registry is stateless, so there is nowhere to thread a handle through — the same
+constraint `PersistenceStore` already lives with), so a registry built that way
+is invisible to templates.
 
 ### JSON into a JS runtime
 
@@ -286,11 +374,17 @@ line verbatim.
 ## Benchmarking
 
 `benches/world_performance.rs` (feature `spec`) covers the entity world: seeding,
-`count`, `get`, paged and filtered lists, writes, and rebuilds. It is what caught
-an unfiltered `limit: 25` costing 21ms on a 10,000-instance entity by
-materialising everything before paginating; such a page is now answered from the
-census, deriving only the window. Filtered or sorted lists still scan, which is
-inherent.
+`count`, `get`, paged and filtered lists, writes, and rebuilds, plus mounting and
+answering an OpenAPI document (`rest/*`). It is what caught an unfiltered
+`limit: 25` costing 21ms on a 10,000-instance entity by materialising everything
+before paginating; such a page is now answered from the census, deriving only the
+window. Filtered or sorted lists still scan, which is inherent.
+
+That scan is on the REST request path, because a query parameter naming a field
+becomes a predicate: `rest/answer/list_filtered_25` costs ~23ms on a
+10,000-instance entity against ~1.5us for a lookup and ~730us for an unfiltered
+page. Reads by key and unfiltered pages are flat in the world's size; a filtered
+list is linear in it. Worth knowing before pointing a load test at one.
 
 Never measure ferrimock and another interceptor in the same process. Whichever
 loads second is penalised — MSW measures 28.9us alone and 232.5us when it follows

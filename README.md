@@ -343,9 +343,9 @@ ferrimock mock serve mocks/ --seed 42     # or FERRIMOCK_SEED=42
 
 ## Spec-Derived Backends
 
-Point a mock at a GraphQL schema and it serves the whole API — a seeded,
-relational world with working reads, writes and relations — instead of a pile of
-canned responses.
+Point a mock at a GraphQL schema or an OpenAPI document and it serves the whole
+API — a seeded, relational world with working reads, writes and relations —
+instead of a pile of canned responses.
 
 A schema declares *entities*, not routes. Where the API answers is a mock's job,
 because a `.graphql` has nowhere to say it lives behind `https://api.example.com`
@@ -354,7 +354,9 @@ rather than on localhost.
 ```yaml
 # mocks/filestore.yaml
 world:
-  schemas: [filestore.graphql]
+  schemas:
+    - filestore.graphql
+    - filestore-content.openapi.yaml     # merges into the SAME entity world
   seed: 42                 # same seed, same world, every run
   counts: { User: 25, Folder: 200 }
 
@@ -364,6 +366,11 @@ mocks:
       POST: https://api.example.com/graphql
     serve: graphql
 
+  - id: filestore-rest
+    match:
+      url: https://api.example.com/2.0   # base; operations supply path and method
+    serve: rest
+
   # Overrides are ordinary mocks winning on ordinary priority.
   - id: quota-exceeded
     match:
@@ -371,6 +378,12 @@ mocks:
       graphql: { mutation: CreateFolder }
     response:
       json: { errors: [{ message: Storage quota exceeded }] }
+
+  - id: uploads-down
+    match:
+      POST: https://api.example.com/2.0/files/content
+    response:
+      status: 503
 ```
 
 ```graphql
@@ -378,6 +391,22 @@ mocks:
 query { folders { name owner { name email } } }
 mutation { createFolder(name: "Reports") { id } }
 ```
+
+```bash
+# The same entities over REST — paging, filtering, sorting and writes
+curl 'https://api.example.com/2.0/folders?limit=25&sort=-name'
+curl 'https://api.example.com/2.0/folders/f_1/items'
+curl -X POST -d '{"name":"Reports"}' https://api.example.com/2.0/folders
+```
+
+GraphQL mounts as one endpoint, because the client chooses the operation name. A
+document *designs* its endpoints, so it mounts one mock per operation
+(`filestore-rest#getFolder`) — coverage names them, `verify()` counts one of them, and
+overriding one is an ordinary higher-priority mock at that path.
+
+`ferrimock world explain` prints the entities, the rule and confidence behind
+every inferred relation, and how many operations are answered from the world
+rather than from their declared shape alone.
 
 ### One world, shared by every kind of mock
 

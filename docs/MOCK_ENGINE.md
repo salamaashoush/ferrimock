@@ -840,27 +840,61 @@ world; if it is a counter or a flag for your test, it is the store.
 
 ### Where entities come from
 
-A GraphQL schema. It declares *entities*, not routes — a `.graphql` has nowhere
-to say it is served at `https://api.example.com/graphql` rather than on localhost,
-so a schema on its own registers nothing and the loader tells you so.
+A GraphQL schema or an OpenAPI document. Either declares *entities*, not routes
+— a `.graphql` has nowhere to say it is served at `https://api.example.com/graphql`
+rather than on localhost, so a schema on its own registers nothing and the
+loader tells you so.
 
 ```yaml
 world:
-  schemas: [filestore.graphql]     # a bare .graphql beside the mocks is picked up too
+  schemas:
+    - filestore.graphql                  # a bare .graphql beside the mocks is picked up too
+    - filestore-content.openapi.yaml     # and so is a `.openapi.yaml` / `.openapi.json`
   seed: 42                   # same seed, same world; defaults to --seed
   count: 12                  # instances per entity when the entity does not say
   counts: { User: 25, Folder: 200 }
   lenient: false             # repair malformed descriptions rather than refusing
 ```
 
+Both front ends compile into the *same* graph, so a `User` a GraphQL schema
+declares and a `User` an OpenAPI document describes are one `User` with one set
+of instances.
+
 There is one world per process, so several collections may add schemas to it but
 only one may set the seed — a second, different value is refused by file name.
 Entity names declared by more than one schema are merged, and reported by
 `ferrimock world explain`.
 
-`.yaml` and `.json` are never auto-detected as schemas: those are mock
+A bare `.yaml` or `.json` is never auto-detected as a document: those are mock
 collections, and sniffing a file's contents to tell them apart breaks silently.
-Name such a file under `world.schemas` instead.
+An OpenAPI document picked up from a mocks directory says so in its name
+(`*.openapi.yaml`, `*.openapi.yml`, `*.openapi.json`); a file named under
+`world.schemas` is loaded whatever it is called, read as GraphQL for
+`.graphql`/`.gql` and as OpenAPI for `.yaml`/`.yml`/`.json`.
+
+OpenAPI 3.0 and 3.1 are both read. Swagger 2.0 is refused by name rather than
+half-understood — convert it first.
+
+### What an OpenAPI document says, and what has to be inferred
+
+A GraphQL schema states which types have identity. A document does not, so
+identity is read off the shape of the surface. Every fact carries the rule that
+produced it and how much to trust it, and `ferrimock world explain` prints both:
+
+| rule | what it reads |
+| --- | --- |
+| `collection-item-pair` | `/folders` returning `[Folder]` beside `/folders/{folder_id}` returning `Folder` — so `Folder` has identity, keyed by the field that parameter addresses |
+| `schema-ref` | a `$ref` from one entity's schema into another |
+| `path-nesting` | `/folders/{folder_id}/items` — the child carries the parent key |
+| `spec-link` | a `links` object, which states the relation and the carrying field outright |
+| `foreign-key-name` | `user_id` where `User` is an entity. A guess, reported as one |
+| `vendor-extension` | whatever a `ConsolidationProfile` reads out of `x-` keys |
+
+Name matching matches *names*, never meanings: `owner_id` finds an entity called
+`Owner`, and nothing teaches the engine that an owner is a `User`. That is what
+a profile is for: `ConsolidationProfile::spec_relation` is asked about every
+field carrying `x-` keys, and `pagination_dialect` names what this API calls a
+limit and an offset. Domain knowledge lives there, never in the engine.
 
 ### Serving it
 
@@ -876,15 +910,58 @@ mocks:
     serve: graphql
 ```
 
-With more than one GraphQL schema in the world, name which:
+An OpenAPI document mounts the same way, with `serve: rest`. The mock supplies
+the base URL and the document supplies the rest of every path, so `match` names
+no method — the operations carry their own:
+
+```yaml
+  - id: filestore-rest
+    match:
+      url: https://api.example.com/2.0     # base; operations supply path and method
+    serve: rest
+```
+
+With more than one schema of a protocol in the world, name which:
 
 ```yaml
     serve: { protocol: graphql, schema: schemas/filestore-internal.graphql }
+    serve: { protocol: rest, schema: schemas/filestore-content.openapi.yaml }
 ```
 
 Mounting is N-to-M: two schemas at two URLs, or the same schema at two URLs.
 Everything per-endpoint is per-mock — `priority`, `scope`, `delay`, extra
 `response.headers`, header matchers.
+
+### What `serve: rest` answers
+
+Each operation is classified once, at mount time:
+
+| operation | behavior |
+| --- | --- |
+| `GET /folders/{id}` | read one by key; a key nobody stored is a 404, not an invented record |
+| `GET /folders` | read a page, in whatever envelope the response declared |
+| `GET /folders/{id}/items` | read the parent's children through the inferred relation |
+| `POST /folders` | create, answering with the status the document declared |
+| `PUT` / `PATCH` `/folders/{id}` | replace / merge |
+| `DELETE /folders/{id}` | remove |
+| anything else | answered from the declared response shape, and *counted* |
+
+That last row is the honest one. `ferrimock world explain` leads with how many
+operations are backed by the world and names the ones that are not; a mock that
+invents data for half an API must not look like one that does not.
+
+Query parameters are read as the world's own query: pagination
+(`limit`/`offset`/`page`, plus whatever a profile's pagination dialect names),
+`sort=-name`, and any parameter naming a field of the entity as a filter.
+`?size[gt]=900` is a spelling of the operator syntax the world already
+takes — `eq`, `ne`, `in`, `gt`, `gte`, `lt`, `lte`, `contains` — not a filter
+language of its own. When a document declares its query parameters, only those
+filter; a document that declares none leaves every field open.
+
+`POST /folders/{id}/copy` is deliberately *not* a creation. Only a collection
+path creates, or a sub-collection the graph already knows about
+(`POST /folders/{id}/items`); an action on one item drops to the bottom rung
+rather than inserting a record nobody asked for.
 
 ### Overriding part of it
 
@@ -907,6 +984,19 @@ GraphQL mounts as one mock matching any operation — the operation name is chos
 by the client, not the schema, so the backend cannot enumerate them in advance.
 That means `verify()` on the mount asserts the endpoint's total; assert on the
 override mock for a per-operation count.
+
+An OpenAPI document is the opposite: it *designs* its endpoints, so it expands
+to one mock per operation, named `{mock-id}#{operationId}`. Coverage names the
+endpoints, `verify("filestore-rest#getFolder", Exactly(1))` works, and overriding one
+endpoint is an ordinary higher-priority mock at that path:
+
+```yaml
+  - id: uploads-down
+    match:
+      POST: https://api.example.com/2.0/files/content
+    response:
+      status: 503
+```
 
 ### Reading and writing the same entities
 
