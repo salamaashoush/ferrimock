@@ -146,6 +146,18 @@ pub trait ConsolidationProfile: Send + Sync {
         None
     }
 
+    /// Read a relation an API states in its own `x-` extensions.
+    ///
+    /// A spec's vendor extensions are the one place it can say what its schema
+    /// language cannot -- that `parent` is a link to a `Folder`, or that
+    /// `owned_by` carries a `User` key. Only the API's owner knows which
+    /// extension means that, so the engine asks rather than pattern-matching
+    /// `x-` keys it has never seen.
+    fn spec_relation(&self, ctx: &SpecFieldContext<'_>) -> Option<SpecRelation> {
+        let _ = ctx;
+        None
+    }
+
     /// Replace a value before it reaches a generated template or a report.
     ///
     /// Returning `Some` substitutes the value; returning `None` leaves it. This
@@ -155,6 +167,27 @@ pub trait ConsolidationProfile: Send + Sync {
         let _ = (field, value);
         None
     }
+}
+
+/// One field of one schema, with the vendor extensions written on it.
+#[derive(Debug, Clone, Copy)]
+pub struct SpecFieldContext<'a> {
+    /// The schema the field belongs to.
+    pub owner: &'a str,
+    pub field: &'a str,
+    /// The `x-` keys on the field's schema.
+    pub extensions: &'a serde_json::Map<String, JsonValue>,
+}
+
+/// A link a profile read out of a vendor extension.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecRelation {
+    /// The schema linked to, by name.
+    pub target: String,
+    pub many: bool,
+    /// The field carrying the target's key, when the link is not carried by
+    /// the field itself.
+    pub foreign_key: Option<String>,
 }
 
 /// What a profile decided about a path segment.
@@ -250,6 +283,11 @@ impl ConsolidationProfile for CompositeProfile {
             .find_map(|profile| profile.redact(field, value))
     }
 
+    fn spec_relation(&self, ctx: &SpecFieldContext<'_>) -> Option<SpecRelation> {
+        self.profiles
+            .iter()
+            .find_map(|profile| profile.spec_relation(ctx))
+    }
 }
 
 /// The profile used when a caller supplies none.
@@ -309,6 +347,51 @@ mod tests {
         assert!(profile.pagination_dialect().is_none());
         assert!(profile.resource_key("/x").is_none());
         assert!(profile.redact("token", &JsonValue::Null).is_none());
+
+        let extensions = serde_json::Map::new();
+        assert!(
+            profile
+                .spec_relation(&SpecFieldContext {
+                    owner: "Folder",
+                    field: "parent",
+                    extensions: &extensions,
+                })
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_composite_forwards_a_spec_relation() {
+        struct Links;
+        impl ConsolidationProfile for Links {
+            fn name(&self) -> &str {
+                "links"
+            }
+            fn spec_relation(&self, ctx: &SpecFieldContext<'_>) -> Option<SpecRelation> {
+                ctx.extensions
+                    .get("x-links-to")
+                    .and_then(JsonValue::as_str)
+                    .map(|target| SpecRelation {
+                        target: target.to_string(),
+                        many: false,
+                        foreign_key: Some(ctx.field.to_string()),
+                    })
+            }
+        }
+
+        let composite = CompositeProfile::new(vec![Arc::new(Versions), Arc::new(Links)]);
+        let mut extensions = serde_json::Map::new();
+        extensions.insert("x-links-to".to_string(), JsonValue::String("User".into()));
+
+        let relation = composite
+            .spec_relation(&SpecFieldContext {
+                owner: "Folder",
+                field: "owner_id",
+                extensions: &extensions,
+            })
+            .expect("the member that knows the extension should answer");
+        assert_eq!(relation.target, "User");
+        assert_eq!(relation.foreign_key.as_deref(), Some("owner_id"));
     }
 
     #[test]

@@ -57,7 +57,13 @@ fn expand_graphql(
     use crate::spec::bind::graphql::GraphQLBackend;
 
     let schema = world.resolve_schema("graphql", serve.schema(), mock.id.as_str())?;
-    let Binding::GraphQL(parsed) = &schema.binding;
+    let Binding::GraphQL(parsed) = &schema.binding else {
+        return Err(crate::mp_err!(
+            "mock `{}`: {} is not a GraphQL schema",
+            mock.id,
+            schema.path.display()
+        ));
+    };
 
     // One backend per mount. Two mounts of the same schema build two
     // executable schemas over one world, so they serve identical data — which

@@ -28,6 +28,21 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[allow(clippy::disallowed_types)]
 type ExactMatchIndex = HashMap<u64, Arc<MockDefinition>, BuildNoHashHasher<u64>>;
 
+/// Suffixes marking an OpenAPI document written in an ordinary data format.
+///
+/// Duplicated from `spec::source` rather than imported, because the loader has
+/// to route the file the same way whether or not the crate was built with the
+/// `spec` feature — without it, the file has to reach the "spec files ignored"
+/// warning instead of being parsed as a mock collection and failing.
+pub(crate) const OPENAPI_SUFFIXES: [&str; 3] = [".openapi.yaml", ".openapi.yml", ".openapi.json"];
+
+fn is_openapi_document(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|name| OPENAPI_SUFFIXES.iter().any(|suffix| name.ends_with(suffix)))
+}
+
 /// Compute a hash key for (method, path) pairs without allocating.
 #[inline]
 fn exact_match_key(method: &str, path: &str) -> u64 {
@@ -537,7 +552,9 @@ impl MockRegistry {
         {
             let entry_path = entry.path();
             if let Some(ext) = entry_path.extension().and_then(|s| s.to_str()) {
-                if matches!(ext, "json" | "yaml" | "yml") {
+                if is_openapi_document(&entry_path) {
+                    spec_files.push(entry_path);
+                } else if matches!(ext, "json" | "yaml" | "yml") {
                     collection_files.push(entry_path);
                 } else if ext == "har" {
                     har_files.push(entry_path);
@@ -558,7 +575,8 @@ impl MockRegistry {
             tracing::warn!(
                 ignored = spec_files.len(),
                 directory = %path.display(),
-                "spec files ignored; build with the `spec` feature to serve .graphql schemas"
+                "spec files ignored; build with the `spec` feature to serve .graphql \
+                 schemas and .openapi.yaml documents"
             );
             spec_files.clear();
         }
@@ -743,8 +761,25 @@ impl MockRegistry {
     #[cfg(feature = "spec")]
     pub async fn load_schema_file(&self, path: &std::path::Path) -> crate::Result<usize> {
         let loaded = crate::spec::load_schema_file(path, &self.world, false).await?;
+        Self::report_schema_load(path, &loaded);
+        Ok(loaded.entities)
+    }
+
+    /// Say what reading a schema cost, rather than letting it pass silently.
+    ///
+    /// A document with three unreadable `$ref`s is still worth serving, and a
+    /// schema an item path could not key is still worth knowing about — but
+    /// neither is worth discovering from a wrong answer later.
+    #[cfg(feature = "spec")]
+    fn report_schema_load(path: &std::path::Path, loaded: &crate::spec::source::SchemaLoad) {
         for defect in &loaded.repaired {
             tracing::warn!(file = %path.display(), defect = %defect, "repaired a malformed schema");
+        }
+        for defect in &loaded.defects {
+            tracing::warn!(file = %path.display(), defect = %defect, "could not read part of the document");
+        }
+        for skipped in &loaded.skipped {
+            tracing::warn!(file = %path.display(), skipped = %skipped, "a path addresses something the world cannot hold");
         }
         for conflict in &loaded.conflicts {
             tracing::warn!(
@@ -753,7 +788,6 @@ impl MockRegistry {
                 "a write could not be carried onto the rebuilt world"
             );
         }
-        Ok(loaded.entities)
     }
 
     /// Load a single mock collection file.
@@ -809,16 +843,7 @@ impl MockRegistry {
             let resolved = config_dir.join(schema);
             let loaded =
                 crate::spec::load_schema_file(&resolved, &self.world, config.lenient).await?;
-            for defect in &loaded.repaired {
-                tracing::warn!(file = %resolved.display(), defect = %defect, "repaired a malformed schema");
-            }
-            for conflict in &loaded.conflicts {
-                tracing::warn!(
-                    file = %resolved.display(),
-                    conflict = %conflict,
-                    "a write could not be carried onto the rebuilt world"
-                );
-            }
+            Self::report_schema_load(&resolved, &loaded);
         }
 
         Ok(())
@@ -1702,6 +1727,13 @@ impl MockRegistry {
         // Remove all existing mocks from this file
         for id in &existing_ids {
             self.remove_mock(id);
+        }
+
+        // An OpenAPI document carries an ordinary data extension, so it has to
+        // be recognised by name before `.yaml` is read as a mock collection.
+        #[cfg(feature = "spec")]
+        if is_openapi_document(path) {
+            return self.reload_schema_file(path).await;
         }
 
         // Check file extension to determine how to load it

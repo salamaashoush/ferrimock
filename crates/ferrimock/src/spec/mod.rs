@@ -15,4 +15,7 @@ pub mod emit;
 pub mod infer;
 pub mod source;
 
-pub use source::{SCHEMA_EXTENSIONS, is_schema_file, load_schema_file};
+pub use source::{
+    OPENAPI_SUFFIXES, SCHEMA_EXTENSIONS, SchemaFormat, is_graphql_file, is_openapi_file,
+    is_schema_file, load_schema_file,
+};

@@ -71,6 +71,9 @@ pub struct WorldSettings {
 pub enum Binding {
     /// A GraphQL schema, bound by building an executable schema over the world.
     GraphQL(Arc<crate::graphql::introspection::ParsedSchema>),
+    /// An OpenAPI document, bound by mounting one mock per operation.
+    #[cfg(feature = "spec")]
+    OpenApi(Arc<crate::spec::infer::openapi::OperationTable>),
 }
 
 #[cfg(feature = "graphql")]
@@ -80,6 +83,22 @@ impl Binding {
     pub const fn protocol(&self) -> &'static str {
         match self {
             Self::GraphQL(_) => "graphql",
+            #[cfg(feature = "spec")]
+            Self::OpenApi(_) => "rest",
+        }
+    }
+
+    /// How many endpoints this binding mounts, when it knows in advance.
+    ///
+    /// GraphQL never does — the client chooses the operation name, so the
+    /// schema mounts as one endpoint. A document designs its endpoints, so it
+    /// can say.
+    #[must_use]
+    pub fn endpoints(&self) -> Option<usize> {
+        match self {
+            Self::GraphQL(_) => None,
+            #[cfg(feature = "spec")]
+            Self::OpenApi(table) => Some(table.operations.len()),
         }
     }
 }
