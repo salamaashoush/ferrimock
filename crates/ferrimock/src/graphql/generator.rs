@@ -89,6 +89,7 @@ impl MockGenerator {
             enabled: true,
             vars: None,
             mocks,
+            world: None,
         })
     }
 
@@ -250,6 +251,7 @@ impl MockGenerator {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         })
     }
 

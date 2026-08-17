@@ -244,6 +244,7 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
         enabled: true,
         vars: None,
         mocks: final_mocks,
+        world: None,
     };
 
     // Write to output file based on format

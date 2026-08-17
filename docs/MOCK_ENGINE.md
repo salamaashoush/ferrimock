@@ -375,7 +375,9 @@ All return base64-encoded content.
 
 #### Persistence Store (11 functions)
 
-Thread-safe in-memory key-value store for cross-request state.
+Thread-safe in-memory key-value store for cross-request state. For *typed*
+state — entities with keys and relations — see [The Entity World](#the-entity-world)
+and the `entity_*` functions.
 
 | Function                                      | Parameters                 | Returns           | Example                                                       |
 | --------------------------------------------- | -------------------------- | ----------------- | ------------------------------------------------------------- |
@@ -827,6 +829,143 @@ mechanism. A template that emits `{status, headers, body}` controls the whole re
 `store_keys`, `store_ttl` and `store_clear` are all available in templates; `GET /__ferrimock/store` inspects the
 state and `DELETE /__ferrimock/store` resets it between tests.
 
+## The Entity World
+
+The persistence store above is untyped scratch state — counters, flags. When the
+thing you are mocking has *types* with keys and relations, that belongs in the
+**world**: a seeded, relational store the engine owns.
+
+Rule of thumb: if it has a type and a key in the API you are mocking, it is the
+world; if it is a counter or a flag for your test, it is the store.
+
+### Where entities come from
+
+A GraphQL schema. It declares *entities*, not routes — a `.graphql` has nowhere
+to say it is served at `https://api.example.com/graphql` rather than on localhost,
+so a schema on its own registers nothing and the loader tells you so.
+
+```yaml
+world:
+  schemas: [filestore.graphql]     # a bare .graphql beside the mocks is picked up too
+  seed: 42                   # same seed, same world; defaults to --seed
+  count: 12                  # instances per entity when the entity does not say
+  counts: { User: 25, Folder: 200 }
+  lenient: false             # repair malformed descriptions rather than refusing
+```
+
+There is one world per process, so several collections may add schemas to it but
+only one may set the seed — a second, different value is refused by file name.
+Entity names declared by more than one schema are merged, and reported by
+`ferrimock world explain`.
+
+`.yaml` and `.json` are never auto-detected as schemas: those are mock
+collections, and sniffing a file's contents to tell them apart breaks silently.
+Name such a file under `world.schemas` instead.
+
+### Serving it
+
+`serve:` is a mode alongside `response:`, `patch:`, `sse:` and `ws:` — not a
+response body, but a protocol behavior bound to a matched URL. `match` says
+where the API answers; `serve` says which schema answers there.
+
+```yaml
+mocks:
+  - id: filestore-graphql
+    match:
+      POST: https://api.example.com/graphql
+    serve: graphql
+```
+
+With more than one GraphQL schema in the world, name which:
+
+```yaml
+    serve: { protocol: graphql, schema: schemas/filestore-internal.graphql }
+```
+
+Mounting is N-to-M: two schemas at two URLs, or the same schema at two URLs.
+Everything per-endpoint is per-mock — `priority`, `scope`, `delay`, extra
+`response.headers`, header matchers.
+
+### Overriding part of it
+
+A schema-derived route sits at priority 50, below the default 100, so an
+ordinary mock outranks it. Nothing special is involved.
+
+```yaml
+  - id: quota-exceeded
+    match:
+      POST: https://api.example.com/graphql
+      graphql: { mutation: CreateFolder }      # this operation only
+    response:
+      json: { errors: [{ message: Storage quota exceeded }] }
+```
+
+In JS, a handler that returns `undefined` declines and falls through to the
+schema, so an override can be conditional.
+
+GraphQL mounts as one mock matching any operation — the operation name is chosen
+by the client, not the schema, so the backend cannot enumerate them in advance.
+That means `verify()` on the mount asserts the endpoint's total; assert on the
+override mock for a per-operation count.
+
+### Reading and writing the same entities
+
+From a template:
+
+```yaml
+response:
+  template: |-
+    {%- set page = entity_list(type="Folder", filter={"owner": captures.userId}, sort="-createdAt", limit=25) -%}
+    {"entries": {{ page.records | json_encode }}, "total_count": {{ page.total }}}
+```
+
+`entity_get`, `entity_list`, `entity_related`, `entity_count`, `entity_create`,
+`entity_update`, `entity_delete` and `entity_types` are available in templates.
+
+From JS — the same surface on Node and on the embedded QuickJS runtime:
+
+```ts
+import { http, HttpResponse, world } from 'ferrimock'
+
+http.post('https://api.example.com/2.0/users', async ({ request }) => {
+  const { name } = await request.json()
+  const user = world.create('User', { name })   // the schema's `users` query sees it
+  return HttpResponse.json(user, { status: 201 })
+})
+```
+
+`world.types()`, `count`, `get`, `list`, `related`, `create`, `update`,
+`replace`, `delete`, `reset`, `pendingWrites`. `get` returns `undefined` for a
+miss. Filters take an operator object where you need one:
+`{ filter: { age: { gt: 30 } } }` — `eq`, `ne`, `in`, `gt`, `gte`, `lt`, `lte`,
+`contains`. Sort with `-field` for descending.
+
+Over HTTP, on the standalone server:
+
+```bash
+GET    /__mock/world                    # entities, seed, pending writes
+GET    /__mock/world/User?limit=25&sort=-name&status=active
+GET    /__mock/world/User/{key}
+POST   /__mock/world/User               # create
+DELETE /__mock/world/User/{key}
+DELETE /__mock/world                    # reset to the seeded world
+```
+
+An embedder mounting the management API gets the same under
+`/__ferrimock/world`, plus `PATCH` and `POST /__ferrimock/world/reset`.
+
+### Determinism and test isolation
+
+The world is deterministic given the seed; the *state* is deterministic given
+the seed plus the sequence of writes. Field values derive from seed + entity +
+ordinal + field path, so they are the same value however and whenever they are
+asked for, and adding a schema does not disturb entities already in play.
+
+Writes are shared, which is the point — and means they leak between tests unless
+you clear them. `DELETE /__mock/world` (or `world.reset()`) drops every write and
+leaves exactly what the seed derives; `world.pendingWrites()` shows whether any
+are outstanding.
+
 ## Verifying What Ran
 
 Every match is counted — no setup, no spy inside a resolver, and it works for declarative mocks that have no
@@ -1102,7 +1241,11 @@ REST API for runtime control (prefix: `/__ferrimock/`).
 | `/mocks/:id`          | GET/PUT/PATCH/DELETE | CRUD operations                                |
 | `/bulk`               | POST                 | Bulk operations (atomic)                       |
 | `/inspect`            | POST                 | Test request matching                          |
-| `/store/:key`         | GET/POST/DELETE      | Store operations                               |
+| `/store/:key`         | GET/POST/DELETE      | Store operations (untyped key/value)           |
+| `/world`              | GET                  | Entities, seed, pending writes                 |
+| `/world/reset`        | POST                 | Drop every write, keep the seeded world        |
+| `/world/:entity`      | GET/POST             | List (`?limit=&skip=&sort=&<field>=`) / create |
+| `/world/:entity/:key` | GET/PATCH/DELETE     | Read, merge fields, remove                     |
 
 ### Test Integration (Playwright)
 

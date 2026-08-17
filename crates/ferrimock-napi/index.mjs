@@ -5,6 +5,7 @@ export const {
   http,
   graphql,
   fake,
+  world,
   ws,
   sse,
   HttpResponse,

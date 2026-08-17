@@ -48,7 +48,11 @@ pub fn to_json(value: &GqlValue) -> JsonValue {
             .as_i64()
             .map(JsonValue::from)
             .or_else(|| n.as_u64().map(JsonValue::from))
-            .or_else(|| n.as_f64().and_then(serde_json::Number::from_f64).map(JsonValue::Number))
+            .or_else(|| {
+                n.as_f64()
+                    .and_then(serde_json::Number::from_f64)
+                    .map(JsonValue::Number)
+            })
             .unwrap_or(JsonValue::Null),
         GqlValue::List(items) => JsonValue::Array(items.iter().map(to_json).collect()),
         GqlValue::Object(fields) => JsonValue::Object(

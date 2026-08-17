@@ -365,6 +365,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         })
         .collect();
 
@@ -379,6 +380,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     }
 }
 

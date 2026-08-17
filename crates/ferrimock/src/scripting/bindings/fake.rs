@@ -57,8 +57,10 @@ fn fake_call<'js>(
         rquickjs::Error::new_from_js_message("ferrimock", "Error", format!("fake.{name}: {e}"))
     })?;
 
-    rquickjs_serde::to_value(ctx, &result)
-        .map_err(|e| rquickjs::Error::new_from_js_message("ferrimock", "Error", e.to_string()))
+    // Not `rquickjs_serde::to_value`: a generator returning a number
+    // (`fake.price()`, `fake.amount()`) would arrive in JS as the
+    // `$serde_json::private::Number` map. See `super::convert`.
+    super::convert::json_to_js(&ctx, &result)
 }
 
 const FAKE_PROXY: &str = r"

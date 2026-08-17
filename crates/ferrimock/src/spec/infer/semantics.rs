@@ -9,7 +9,7 @@
 //! Case conventions are handled by the detector's own matcher, so `createdAt`,
 //! `created_at` and `CREATED-AT` all land in the same place.
 
-use crate::spec::model::TextShape;
+use crate::core::world::model::TextShape;
 use crate::type_detector::semantic::matches_field_name;
 use crate::type_detector::{DateFormat, FieldType, TimestampFormat};
 
@@ -161,7 +161,14 @@ pub fn from_field_name(field_name: &str) -> Option<FieldType> {
     if any(&["slug"]) {
         return Some(FieldType::Sentence);
     }
-    if any(&["description", "bio", "summary", "body", "content", "excerpt"]) {
+    if any(&[
+        "description",
+        "bio",
+        "summary",
+        "body",
+        "content",
+        "excerpt",
+    ]) {
         return Some(FieldType::Paragraph);
     }
     if any(&["title", "subject", "headline", "label", "caption"]) {
@@ -228,7 +235,13 @@ mod tests {
 
     #[test]
     fn token_shaped_names_are_recognised() {
-        for name in ["collectionType", "accessState", "syncMode", "userRole", "log_level"] {
+        for name in [
+            "collectionType",
+            "accessState",
+            "syncMode",
+            "userRole",
+            "log_level",
+        ] {
             assert_eq!(
                 text_shape_of(name),
                 TextShape::Word,

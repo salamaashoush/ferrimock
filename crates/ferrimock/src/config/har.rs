@@ -841,6 +841,7 @@ impl HarLoader {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }))
     }
 
@@ -917,6 +918,7 @@ impl HarLoader {
                 network_error: None,
                 sse: None,
                 ws: Some(ws),
+                serve: None,
             });
         }
         Ok(mocks)

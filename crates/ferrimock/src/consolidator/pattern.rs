@@ -890,6 +890,7 @@ mod tests {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }
     }
 
@@ -916,6 +917,7 @@ mod tests {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }
     }
 

@@ -11,12 +11,12 @@ mod list;
 mod recordings;
 mod reload;
 mod serve;
-pub mod spec;
 mod show;
 mod test;
 pub mod ui;
 mod validate;
 mod wizard;
+pub mod world;
 
 // Re-export the mock command entry point
 pub use dispatch::execute;

@@ -172,7 +172,11 @@ impl SdlWriter {
         // Interfaces
         if !type_def.interfaces.is_empty() {
             self.buf.push_str(" implements ");
-            let ifaces: Vec<String> = type_def.interfaces.iter().map(|i| i.name().to_string()).collect();
+            let ifaces: Vec<String> = type_def
+                .interfaces
+                .iter()
+                .map(|i| i.name().to_string())
+                .collect();
             self.buf.push_str(&ifaces.join(" & "));
         }
 
@@ -290,11 +294,7 @@ impl SdlWriter {
         }
 
         self.buf.push_str(" = ");
-        let members: Vec<&str> = type_def
-            .possible_types
-            .iter()
-            .map(TypeRef::name)
-            .collect();
+        let members: Vec<&str> = type_def.possible_types.iter().map(TypeRef::name).collect();
         self.buf.push_str(&members.join(" | "));
         self.buf.push_str("\n\n");
     }

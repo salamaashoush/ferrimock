@@ -39,6 +39,7 @@ pub async fn create_mock(
         enabled: true,
         vars: None,
         mocks: vec![request.config.clone()],
+        world: None,
     };
 
     let validation_result = Box::pin(validator.validate_config(&mock_collection, None)).await;
@@ -109,6 +110,7 @@ pub async fn update_mock(
         enabled: true,
         vars: None,
         mocks: vec![request.config.clone()],
+        world: None,
     };
 
     let validation_result = Box::pin(validator.validate_config(&mock_collection, None)).await;

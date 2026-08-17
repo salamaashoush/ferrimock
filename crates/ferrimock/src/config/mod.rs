@@ -24,6 +24,7 @@ pub mod patches;
 pub mod patterns;
 pub mod request_transform;
 pub mod response;
+pub mod serve;
 pub mod streaming;
 pub mod template_formatter;
 
@@ -32,7 +33,7 @@ pub use har::{DomainFilter, HarLoadOptions, HarLoader, parse_har};
 pub use matcher::{
     BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig,
 };
-pub use parser::{MockCollectionConfig, MockConfig};
+pub use parser::{DEFAULT_PRIORITY, MockCollectionConfig, MockConfig, ServeConfig, WorldConfig};
 pub use patches::{HeaderPatchesConfig, JsonPatchConfig, RegexReplaceConfig};
 pub use patterns::{convert_express_to_regex, is_valid_http_method, parse_url_pattern};
 pub use request_transform::{BodyPatchesConfig, QueryPatchesConfig, RequestTransformConfig};

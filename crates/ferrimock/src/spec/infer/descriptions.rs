@@ -80,10 +80,17 @@ fn constant_value(text: &str) -> Option<LeanString> {
 /// marker. The quotes are what make this safe: prose is rarely quoted.
 fn quoted_examples(text: &str) -> Option<Vec<LeanString>> {
     let lowered = text.to_ascii_lowercase();
-    let at = ["e.g.", "eg.", "for example", "such as", "example:", "examples:"]
-        .iter()
-        .filter_map(|marker| lowered.find(marker))
-        .min()?;
+    let at = [
+        "e.g.",
+        "eg.",
+        "for example",
+        "such as",
+        "example:",
+        "examples:",
+    ]
+    .iter()
+    .filter_map(|marker| lowered.find(marker))
+    .min()?;
 
     let tail = text.get(at..)?;
     let values: Vec<LeanString> = quoted_runs(tail)
@@ -123,19 +130,25 @@ fn quoted_runs(text: &str) -> Vec<String> {
 /// `one of ACTIVE, INACTIVE` / `possible values: a, b` / `either x or y`.
 fn enumerated_values(text: &str) -> Option<Vec<LeanString>> {
     let lowered = text.to_ascii_lowercase();
-    let (at, len) = ["one of:", "one of", "possible values:", "possible values are", "either"]
-        .iter()
-        .find_map(|marker| lowered.find(marker).map(|at| (at, marker.len())))?;
+    let (at, len) = [
+        "one of:",
+        "one of",
+        "possible values:",
+        "possible values are",
+        "either",
+    ]
+    .iter()
+    .find_map(|marker| lowered.find(marker).map(|at| (at, marker.len())))?;
 
     let tail = text.get(at + len..)?;
-    let tail = tail
-        .split(['.', ';'])
-        .next()?
-        .replace(" or ", ",");
+    let tail = tail.split(['.', ';']).next()?.replace(" or ", ",");
 
     let values: Vec<LeanString> = tail
         .split(',')
-        .map(|part| part.trim().trim_matches(|c| c == '"' || c == '\'' || c == '`'))
+        .map(|part| {
+            part.trim()
+                .trim_matches(|c| c == '"' || c == '\'' || c == '`')
+        })
         .filter(|part| is_value_like(part))
         .map(LeanString::from)
         .collect();
@@ -189,9 +202,7 @@ fn is_value_like(token: &str) -> bool {
     if token.split_whitespace().count() > 3 {
         return false;
     }
-    !token.contains(['.', ';', ':', '(', ')'])
-        || token.contains('/')
-        || token.contains('-')
+    !token.contains(['.', ';', ':', '(', ')']) || token.contains('/') || token.contains('-')
 }
 
 #[cfg(test)]
@@ -229,7 +240,8 @@ mod tests {
 
     #[test]
     fn an_enumeration_becomes_a_vocabulary() {
-        let Some(DescriptionHint::OneOf(values)) = hint("The state, one of ACTIVE, INACTIVE, ERROR")
+        let Some(DescriptionHint::OneOf(values)) =
+            hint("The state, one of ACTIVE, INACTIVE, ERROR")
         else {
             panic!("should read the enumeration")
         };
@@ -272,8 +284,10 @@ mod tests {
     fn a_sentence_after_e_g_is_not_mistaken_for_a_value() {
         // Nothing quoted and nothing short: there is no value here to take.
         assert_eq!(
-            hint("Set this when the caller is trusted, e.g. when the request originates \
-                  from an internal service that has already checked permissions"),
+            hint(
+                "Set this when the caller is trusted, e.g. when the request originates \
+                  from an internal service that has already checked permissions"
+            ),
             None
         );
     }

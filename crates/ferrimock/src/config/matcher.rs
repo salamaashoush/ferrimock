@@ -313,16 +313,28 @@ impl RequestConfig {
             .collect();
         let methods = methods?;
 
-        // Parse URL patterns
-        let url_patterns: Result<SmallVec<[UrlPattern; 1]>, _> = self
-            .url_patterns
-            .iter()
-            .map(|p| parse_url_pattern(p))
-            .collect();
-        let url_patterns = url_patterns?;
+        // Parse URL patterns.
+        //
+        // A bare absolute URL splits into a path pattern and a Host matcher,
+        // the same way `http.get("https://api.example.com/x")` does — a server
+        // sees `GET /x` with `Host: api.example.com`, never the whole URL, so
+        // keeping it as one string would never match anything behind a proxy.
+        // An `exact:`-prefixed URL is left whole: that is what the HAR loader
+        // and the consolidator emit, and they mean the request line verbatim.
+        let mut hosts: SmallVec<[String; 1]> = SmallVec::new();
+        let mut url_patterns: SmallVec<[UrlPattern; 1]> = SmallVec::new();
+        for pattern in &self.url_patterns {
+            match UrlPattern::split_absolute_url(pattern) {
+                Some((host, path)) => {
+                    hosts.push(host.to_string());
+                    url_patterns.push(parse_url_pattern(path)?);
+                }
+                None => url_patterns.push(parse_url_pattern(pattern)?),
+            }
+        }
 
         // Parse header matchers
-        let header_matchers: Result<SmallVec<[HeaderMatcher; 2]>, _> = self
+        let mut header_matchers: SmallVec<[HeaderMatcher; 2]> = self
             .headers
             .into_iter()
             .map(|(name, config)| {
@@ -330,8 +342,19 @@ impl RequestConfig {
                     .map_err(|e| crate::mp_err!("Invalid header name '{name}': {e}"))?;
                 config.into_header_matcher(header_name)
             })
-            .collect();
-        let header_matchers = header_matchers?;
+            .collect::<Result<_, crate::FerrimockError>>()?;
+
+        // Several absolute URLs on one mock would need one Host matcher per
+        // pattern, but matchers are ANDed — so only an unambiguous single host
+        // can be turned into one, and a mock listing two hosts keeps matching
+        // on path alone rather than silently matching neither.
+        if let [host] = hosts.as_slice()
+            && !header_matchers
+                .iter()
+                .any(|m| m.name == ::http::header::HOST)
+        {
+            header_matchers.push(HeaderMatcher::exact(::http::header::HOST, host.as_str()));
+        }
 
         // Parse query parameter matchers from the query map with inline syntax support
         let query_matchers: crate::Result<SmallVec<[QueryMatcher; 2]>> = self

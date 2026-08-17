@@ -706,6 +706,7 @@ impl MockRecorder {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             };
 
             // Determine if this is the first entry being written to the file.
@@ -971,6 +972,7 @@ impl MockRecorder {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             };
 
             mocks.push(mock_config);
@@ -998,6 +1000,7 @@ impl MockRecorder {
             enabled: true,
             vars: None,
             mocks,
+            world: None,
         }
     }
 

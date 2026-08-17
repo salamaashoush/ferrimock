@@ -272,6 +272,7 @@ async fn test_into_mock_definitions_empty() {
         enabled: true,
         vars: None,
         mocks: vec![],
+        world: None,
     };
 
     let result = config.into_mock_definitions().await;
@@ -322,7 +323,9 @@ async fn test_into_mock_definitions_with_dir() {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }],
+        world: None,
     };
 
     let result = config
@@ -362,6 +365,7 @@ async fn test_mock_config_missing_match() {
         network_error: None,
         sse: None,
         ws: None,
+        serve: None,
     };
 
     let result = config.into_mock_definition().await;
@@ -401,6 +405,7 @@ async fn test_mock_config_missing_return() {
         network_error: None,
         sse: None,
         ws: None,
+        serve: None,
     };
 
     // No response_config means it defaults to empty response (no longer an error)
@@ -1845,6 +1850,7 @@ async fn test_body_file_with_config_dir() {
         network_error: None,
         sse: None,
         ws: None,
+        serve: None,
     };
 
     let result = config
@@ -1888,6 +1894,7 @@ async fn test_body_file_not_found_fallback() {
         network_error: None,
         sse: None,
         ws: None,
+        serve: None,
     };
 
     // Should succeed but file will be loaded on-demand

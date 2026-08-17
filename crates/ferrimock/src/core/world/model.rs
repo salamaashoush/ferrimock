@@ -36,13 +36,16 @@ impl EntityGraph {
             *existing = entity;
             return;
         }
-        self.by_name.insert(entity.name.clone(), self.entities.len());
+        self.by_name
+            .insert(entity.name.clone(), self.entities.len());
         self.entities.push(entity);
     }
 
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&EntityType> {
-        self.by_name.get(name).and_then(|&idx| self.entities.get(idx))
+        self.by_name
+            .get(name)
+            .and_then(|&idx| self.entities.get(idx))
     }
 
     #[must_use]

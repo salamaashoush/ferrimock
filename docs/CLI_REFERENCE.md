@@ -48,6 +48,7 @@ not freeze the value.
 | ------------ | ----- | ------------------------ |
 | `mock`       | `m`   | Mock management          |
 | `mock serve` | `sv`  | Standalone mock server   |
+| `world`      | `w`   | The entity world         |
 | `fake`       | `f`   | Fake data generation     |
 
 ---
@@ -328,6 +329,45 @@ Alias: `mock rec`
 ```
 -d, --dir <DIR>         Recordings directory
 ```
+
+---
+
+## World Commands
+
+The entity world a mocks directory builds: what is in it, and where it came
+from. A schema declares entities, not routes — to *serve* one, write a mock with
+`serve:` and a `match.url` saying where the API answers (see
+[Mock Engine](MOCK_ENGINE.md)).
+
+### world explain
+
+```bash
+ferrimock world explain                 # the configured mocks directory
+ferrimock world explain --dir mocks/    # a specific one
+ferrimock world explain --verbose       # name every value field, not just count
+```
+
+Reports the schemas loaded and what each contributed, the seed, how many
+instances each entity has, the relations between them with the rule and
+confidence that inferred each, any entity name declared by more than one schema
+(they are merged), and any non-nullable relation inside a cycle that no finite
+world can satisfy.
+
+```
+▸ World
+
+ℹ 2 entities from 1 schema(s), seed 42 · 5 mock(s) loaded
+  mocks/schema.graphql → 2 entities, served as graphql
+
+▸ Entities
+
+Folder key id · 4 instance(s) · graphql-schema
+  → owner: one User [graphql-schema 90%]
+  · 2 value field(s)
+```
+
+A world with entities but no mock serving them is almost always a missing
+`serve:`; the loader warns about it.
 
 ---
 

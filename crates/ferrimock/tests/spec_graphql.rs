@@ -15,9 +15,9 @@
 
 use std::sync::Arc;
 
+use ferrimock::core::{World, WorldSettings};
 use ferrimock::spec::bind::graphql::{GraphQLBackend, parse_request};
 use ferrimock::spec::infer::graphql::{parse_sdl, to_entity_graph};
-use ferrimock::spec::store::{EntityStore, StoreConfig};
 use serde_json::{Value as JsonValue, json};
 
 const BLOG: &str = r"
@@ -67,13 +67,25 @@ fn backend(seed: u64) -> GraphQLBackend {
 fn build_backend(sdl: &str, seed: u64, users: usize, posts: usize) -> GraphQLBackend {
     let parsed = parse_sdl(sdl).expect("SDL parses");
     let graph = to_entity_graph(&parsed);
-    let store = EntityStore::new(
-        Arc::new(graph),
-        StoreConfig::seeded(seed)
-            .with_count("User", users)
-            .with_count("Post", posts),
-    );
-    GraphQLBackend::build(&parsed, Arc::new(store)).expect("schema builds")
+
+    // Its own world, not the process-global one: these assert on exact counts,
+    // and a shared world would make them depend on what else has been loaded.
+    let world = Arc::new(World::new());
+    world
+        .configure(
+            &WorldSettings {
+                seed: Some(seed),
+                counts: [("User".into(), users), ("Post".into(), posts)]
+                    .into_iter()
+                    .collect(),
+                ..WorldSettings::default()
+            },
+            std::path::Path::new("spec_graphql.rs"),
+        )
+        .expect("world configures");
+    world.add_entities(&graph).expect("entities merge");
+
+    GraphQLBackend::build(&parsed, world).expect("schema builds")
 }
 
 async fn run(backend: &GraphQLBackend, query: &str) -> JsonValue {
@@ -202,17 +214,16 @@ async fn the_same_seed_rebuilds_the_same_world() {
     assert_eq!(a, b);
 
     let different = run(&backend(8), "{ posts(first: 3) { id title } }").await;
-    assert_ne!(a, different, "a different seed should give a different world");
+    assert_ne!(
+        a, different,
+        "a different seed should give a different world"
+    );
 }
 
 #[tokio::test]
 async fn relations_resolve_and_agree_in_both_directions() {
     let backend = backend(9);
-    let data = run(
-        &backend,
-        "{ users { id posts { id author { id name } } } }",
-    )
-    .await;
+    let data = run(&backend, "{ users { id posts { id author { id name } } } }").await;
 
     let mut seen_posts = 0;
     for user in data["users"].as_array().unwrap() {
@@ -440,7 +451,10 @@ async fn introspection_answers_so_tooling_can_point_at_the_mock() {
         .filter_map(|t| t["name"].as_str())
         .collect();
     for expected in ["User", "Post", "Status", "Address", "Node"] {
-        assert!(names.contains(&expected), "`{expected}` missing from introspection");
+        assert!(
+            names.contains(&expected),
+            "`{expected}` missing from introspection"
+        );
     }
 
     let typed = run(&backend, "{ users(first: 1) { __typename id } }").await;
@@ -460,7 +474,10 @@ async fn the_generated_sdl_still_describes_the_schema() {
 async fn an_unknown_field_is_a_validation_error_not_a_null() {
     let backend = backend(21);
     let errors = run_expecting_errors(&backend, "{ users { nope } }").await;
-    assert!(!errors.is_empty(), "the schema should reject unknown fields");
+    assert!(
+        !errors.is_empty(),
+        "the schema should reject unknown fields"
+    );
 }
 
 #[tokio::test]

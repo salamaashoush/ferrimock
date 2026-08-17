@@ -38,6 +38,53 @@ pub struct MockCollectionConfig {
     /// List of mock definitions
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mocks: Vec<MockConfig>,
+
+    /// The entity world this collection contributes to.
+    ///
+    /// Declares *entities*, not routes — the way `vars` declares values rather
+    /// than mocks. There is one world per process, so several collections may
+    /// add schemas to it but only one may set its seed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<WorldConfig>,
+}
+
+/// A collection's contribution to the entity world.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct WorldConfig {
+    /// Schemas to read entities from, relative to the collection file.
+    ///
+    /// A `.graphql` beside the collection is picked up without being listed;
+    /// anything with an ordinary extension has to be named here, because a
+    /// `.yaml` is a mock collection and guessing between the two by sniffing
+    /// content is the kind of magic that breaks silently.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schemas: Vec<String>,
+
+    /// Seed for the generated world. Defaults to the process seed (`--seed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+
+    /// Instances per entity when the entity does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+
+    /// Per-entity instance counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<std::collections::HashMap<String, usize>>")
+    )]
+    pub counts: Option<std::collections::BTreeMap<String, usize>>,
+
+    /// Repair malformed schemas rather than refusing them.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub lenient: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl MockCollectionConfig {
@@ -96,6 +143,7 @@ impl MockCollectionConfig {
             enabled: true,
             vars: None,
             mocks,
+            world: None,
         })
     }
 
@@ -106,21 +154,62 @@ impl MockCollectionConfig {
 
     /// Convert to mock definitions with config directory for resolving relative file paths
     /// and optional global vars to merge with collection-level and mock-level vars.
+    ///
+    /// A collection carrying `serve:` needs the world those mocks serve; use
+    /// [`Self::into_mock_definitions_in`] for that. Without one, a `serve:`
+    /// mock is an error rather than a silently dropped route.
     pub async fn into_mock_definitions_with_dir(
         self,
         config_dir: Option<&std::path::Path>,
         global_vars: Option<&serde_json::Map<String, serde_json::Value>>,
     ) -> crate::Result<Vec<MockDefinition>> {
+        self.into_mock_definitions_in(config_dir, global_vars, None)
+            .await
+    }
+
+    /// [`Self::into_mock_definitions_with_dir`] against a world, so `serve:`
+    /// mocks can expand into the routes that serve it.
+    pub async fn into_mock_definitions_in(
+        self,
+        config_dir: Option<&std::path::Path>,
+        global_vars: Option<&serde_json::Map<String, serde_json::Value>>,
+        world: Option<&std::sync::Arc<crate::core::World>>,
+    ) -> crate::Result<Vec<MockDefinition>> {
         // Merge: global <- collection
         let collection_merged = merge_vars(global_vars, self.vars.as_ref());
 
         let mut definitions = Vec::new();
-        for config in self.mocks {
+        for mut config in self.mocks {
             // Merge: collection_merged <- mock
             let final_vars = merge_vars(collection_merged.as_ref(), config.vars.as_ref());
+
+            // Lifted before lowering: `serve` is a mode, not a body, so the
+            // ordinary response path must not see it.
+            let serve = config.serve.take();
+            if let Some(serve) = &serve {
+                config.check_serve_is_alone(serve)?;
+                config.priority = super::serve::priority_for(config.priority);
+            }
+
             let mut def = config.into_mock_definition_with_dir(config_dir).await?;
-            def.vars = final_vars;
-            definitions.push(def);
+            def.vars.clone_from(&final_vars);
+
+            match serve {
+                None => definitions.push(def),
+                Some(serve) => {
+                    let world = world.ok_or_else(|| {
+                        crate::mp_err!(
+                            "mock `{}`: `serve:` needs the entity world, which only the \
+                             registry's loader supplies",
+                            def.id
+                        )
+                    })?;
+                    for mut served in super::serve::expand(def, &serve, world)? {
+                        served.vars.clone_from(&final_vars);
+                        definitions.push(served);
+                    }
+                }
+            }
         }
         Ok(definitions)
     }
@@ -250,6 +339,52 @@ pub struct MockConfig {
     /// extra headers)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ws: Option<super::streaming::WsConfig>,
+
+    /// Serve the entity world over a protocol at this mock's URL.
+    ///
+    /// The sibling of `sse` and `ws`: not a response body, but a protocol
+    /// behavior bound to a matched URL. `match` says *where* the API answers,
+    /// `serve` says *which schema* answers there — a schema file has no way to
+    /// say either. Exclusive with `response`, `patch`, `sse` and `ws`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serve: Option<ServeConfig>,
+}
+
+/// Which schema serves a mock's URL, and over which protocol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum ServeConfig {
+    /// `serve: graphql` — unambiguous while the world holds one schema of
+    /// that protocol.
+    Protocol(String),
+    /// `serve: { protocol: graphql, schema: schemas/filestore.graphql }` — required
+    /// once the world holds more than one.
+    Explicit {
+        protocol: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        schema: Option<String>,
+    },
+}
+
+impl ServeConfig {
+    #[must_use]
+    pub fn protocol(&self) -> &str {
+        match self {
+            Self::Protocol(protocol) | Self::Explicit { protocol, .. } => protocol,
+        }
+    }
+
+    #[must_use]
+    pub fn schema(&self) -> Option<&str> {
+        match self {
+            Self::Protocol(_) | Self::Explicit { schema: None, .. } => None,
+            Self::Explicit {
+                schema: Some(schema),
+                ..
+            } => Some(schema),
+        }
+    }
 }
 
 /// Written out rather than derived so a constructed mock and a deserialized
@@ -273,11 +408,45 @@ impl Default for MockConfig {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }
     }
 }
 
 impl MockConfig {
+    /// `serve` is a mode like `sse` and `ws`, so it excludes the other ways a
+    /// mock can answer. `response` survives for the same reason it does under
+    /// `sse`: extra headers are still the mock's to set.
+    fn check_serve_is_alone(&self, serve: &ServeConfig) -> crate::Result<()> {
+        let conflict = if self.patch.is_some() {
+            "patch"
+        } else if self.sse.is_some() {
+            "sse"
+        } else if self.ws.is_some() {
+            "ws"
+        } else if self.network_error == Some(true) {
+            "network_error"
+        } else if self.request.is_some() {
+            "request transforms"
+        } else if self
+            .response_config
+            .as_ref()
+            .is_some_and(super::response::ResponseConfig::is_full_mock)
+        {
+            "a full mock response body"
+        } else {
+            return Ok(());
+        };
+
+        Err(crate::mp_err!(
+            "mock `{}`: cannot combine `serve: {}` with {conflict} — a served schema \
+             produces the response, so there is nothing left to shape. To override part \
+             of it, write a separate mock at a higher priority.",
+            self.id,
+            serve.protocol()
+        ))
+    }
+
     /// Convert to a MockDefinition
     pub async fn into_mock_definition(self) -> crate::Result<MockDefinition> {
         self.into_mock_definition_with_dir(None).await
@@ -476,8 +645,11 @@ impl MockConfig {
     }
 }
 
-fn default_priority() -> u32 {
-    100
+/// Priority a mock takes when its config does not name one.
+pub const DEFAULT_PRIORITY: u32 = 100;
+
+const fn default_priority() -> u32 {
+    DEFAULT_PRIORITY
 }
 
 /// Convert RequestTransformConfig into ResolvedRequestTransforms

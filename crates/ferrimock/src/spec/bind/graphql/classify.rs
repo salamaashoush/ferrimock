@@ -9,9 +9,9 @@
 
 use lean_string::LeanString;
 
+use crate::core::world::model::{ConnectionShape, EntityGraph};
 use crate::graphql::introspection::{FieldDefinition, ParsedSchema, TypeDefinition, TypeKind};
 use crate::spec::infer::graphql::entities::{SchemaFacts, members_of};
-use crate::spec::model::{ConnectionShape, EntityGraph};
 
 /// Argument names that describe *how* to read a list rather than *which* one.
 const PAGINATION_ARGS: [&str; 8] = [
@@ -300,11 +300,7 @@ fn key_argument(
     field
         .args
         .iter()
-        .find(|arg| {
-            candidates
-                .iter()
-                .any(|c| arg.name.eq_ignore_ascii_case(c))
-        })
+        .find(|arg| candidates.iter().any(|c| arg.name.eq_ignore_ascii_case(c)))
         .map(|arg| LeanString::from(arg.name.as_str()))
 }
 
@@ -347,7 +343,13 @@ pub fn is_order_arg(name: &str) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::get_unwrap, clippy::indexing_slicing)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::get_unwrap,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::spec::infer::graphql::{parse_sdl, to_entity_graph};
@@ -400,7 +402,10 @@ mod tests {
 
     #[test]
     fn a_single_entity_with_a_key_argument_is_a_lookup() {
-        let RootPlan::Get { entity, key_arg, .. } = plan("Query", "user") else {
+        let RootPlan::Get {
+            entity, key_arg, ..
+        } = plan("Query", "user")
+        else {
             panic!("user should be a lookup")
         };
         assert_eq!(entity.as_str(), "User");
@@ -409,7 +414,10 @@ mod tests {
 
     #[test]
     fn a_single_entity_with_no_arguments_still_resolves() {
-        let RootPlan::Get { entity, key_arg, .. } = plan("Query", "viewer") else {
+        let RootPlan::Get {
+            entity, key_arg, ..
+        } = plan("Query", "viewer")
+        else {
             panic!("viewer should resolve to an entity")
         };
         assert_eq!(entity.as_str(), "User");
@@ -484,7 +492,10 @@ mod tests {
 
     #[test]
     fn a_delete_is_recognised() {
-        let RootPlan::Delete { entity, key_arg, .. } = plan("Mutation", "deletePost") else {
+        let RootPlan::Delete {
+            entity, key_arg, ..
+        } = plan("Mutation", "deletePost")
+        else {
             panic!("deletePost should delete")
         };
         assert_eq!(entity.as_str(), "Post");
@@ -504,7 +515,13 @@ mod tests {
         let query = schema.types.get("Query").unwrap();
         let ping = query.fields.iter().find(|f| f.name == "ping").unwrap();
         assert_eq!(
-            classify(ping, RootKind::Query, &schema, &graph, &SchemaFacts::of(&schema)),
+            classify(
+                ping,
+                RootKind::Query,
+                &schema,
+                &graph,
+                &SchemaFacts::of(&schema)
+            ),
             RootPlan::Unclassified
         );
     }
@@ -524,7 +541,13 @@ mod tests {
         let query = schema.types.get("Query").unwrap();
         let both = query.fields.iter().find(|f| f.name == "both").unwrap();
         assert_eq!(
-            classify(both, RootKind::Query, &schema, &graph, &SchemaFacts::of(&schema)),
+            classify(
+                both,
+                RootKind::Query,
+                &schema,
+                &graph,
+                &SchemaFacts::of(&schema)
+            ),
             RootPlan::Unclassified,
             "two entity-typed fields give no single answer"
         );
@@ -552,7 +575,8 @@ mod abstract_tests {
         let query = schema.types.get("Query").unwrap();
 
         let item = query.fields.iter().find(|f| f.name == "item").unwrap();
-        let RootPlan::Get { members, .. } = classify(item, RootKind::Query, &schema, &graph, &facts)
+        let RootPlan::Get { members, .. } =
+            classify(item, RootKind::Query, &schema, &graph, &facts)
         else {
             panic!("item should be a lookup")
         };
@@ -578,7 +602,8 @@ mod abstract_tests {
         let facts = SchemaFacts::of(&schema);
         let query = schema.types.get("Query").unwrap();
         let node = query.fields.iter().find(|f| f.name == "node").unwrap();
-        let RootPlan::Get { members, .. } = classify(node, RootKind::Query, &schema, &graph, &facts)
+        let RootPlan::Get { members, .. } =
+            classify(node, RootKind::Query, &schema, &graph, &facts)
         else {
             panic!("node should be a lookup")
         };

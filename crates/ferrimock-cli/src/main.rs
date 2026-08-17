@@ -3,7 +3,7 @@ mod self_update;
 use anyhow::Result;
 use clap::{ArgAction, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint, builder::styling};
 use colored::Colorize;
-use ferrimock_cli::commands::spec::SpecCommand;
+use ferrimock_cli::commands::world::WorldCommand;
 use ferrimock_cli::commands::{FakeCommand, MockCommand};
 use ferrimock_cli::config;
 use std::process::ExitCode;
@@ -96,9 +96,9 @@ enum Command {
     #[command(visible_alias = "f")]
     Fake(FakeCommand),
 
-    /// Spec-driven backends: serve or explain a GraphQL schema
-    #[command(visible_alias = "s")]
-    Spec(SpecCommand),
+    /// The entity world a mocks directory builds: what is in it, and from where
+    #[command(visible_alias = "w")]
+    World(WorldCommand),
 
     /// Generate shell completions
     #[command(visible_alias = "comp")]
@@ -207,7 +207,7 @@ async fn main() -> ExitCode {
     let result: Result<()> = match cli.command {
         Command::Mock(cmd) => ferrimock_cli::commands::execute(cmd).await,
         Command::Fake(cmd) => ferrimock_cli::commands::fake::execute(cmd).await,
-        Command::Spec(cmd) => ferrimock_cli::commands::spec::execute(cmd).await,
+        Command::World(cmd) => ferrimock_cli::commands::world::execute(cmd).await,
         Command::Completions { shell } => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "ferrimock", &mut std::io::stdout());

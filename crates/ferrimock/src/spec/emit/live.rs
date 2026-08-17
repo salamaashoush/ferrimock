@@ -1,76 +1,68 @@
-//! Mounting a spec-derived backend as ordinary mocks.
+//! Binding a schema-derived backend onto an ordinary mock.
 //!
-//! The backend is not a second serving path: it is a normal [`MockDefinition`]
-//! whose body happens to be a Rust closure, so matching, priority, scopes,
-//! call tracking, hot reload and both host lanes keep working unchanged — and
-//! a user's own mock at a higher priority still wins, which is how you force
-//! one endpoint to fail without giving up the rest of the backend.
+//! There is no second serving path. A `serve:` mock is a normal
+//! [`MockDefinition`] whose body happens to be a Rust closure over the world,
+//! so matching, priority, scopes, call tracking, coverage, hot reload and both
+//! host lanes keep working unchanged — and a mock written by hand at a higher
+//! priority still wins, which is how you force one operation to fail without
+//! giving up the rest of the backend.
 
 use bytes::Bytes;
 use http::StatusCode;
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
 use super::super::bind::graphql::{GraphQLBackend, parse_request};
 use crate::types::{
-    BodySource, ContextNeeds, DynamicResponse, GraphQLMatcher, MockDefinition, RequestMatcher,
-    ResponseGenerator, UrlPattern,
+    BodySource, ContextNeeds, DynamicResponse, GraphQLMatcher, MockDefinition, ResponseGenerator,
 };
 
-/// Priority for spec-derived routes.
-///
-/// Below the handler API's 100, so a mock written by hand outranks the
-/// backend without anyone having to think about numbers.
-pub const SPEC_PRIORITY: u32 = 50;
+/// Priority for schema-derived routes. Owned by the config layer, because
+/// choosing a mock's priority is a config concern and there must be one.
+pub use crate::config::serve::SERVED_PRIORITY as SPEC_PRIORITY;
 
-/// Mount a GraphQL backend at an endpoint.
+/// Turn a definition into the GraphQL endpoint for a backend.
 ///
-/// One mock, matching any GraphQL operation. Matching on operation *name*
-/// would be finer grained, but the name is chosen by the client, not by the
-/// schema — a spec-derived backend cannot know it in advance, and pretending
-/// otherwise would leave real requests unmatched.
-#[must_use]
-pub fn mount_graphql(backend: Arc<GraphQLBackend>, endpoint: &str) -> MockDefinition {
+/// The definition arrives with its URL, priority, scope, headers and delay
+/// already read from the mock that declared it — this supplies only the
+/// behavior, which is the half a schema file can actually specify.
+///
+/// Matching is on *any* GraphQL operation. Matching by operation name would be
+/// finer grained, but the name is chosen by the client, not by the schema: a
+/// schema-derived backend cannot know it in advance, and pretending otherwise
+/// would leave real requests unmatched.
+pub fn bind_graphql(mock: &mut MockDefinition, backend: Arc<GraphQLBackend>) {
     let handler = move |ctx: crate::types::RequestContext| {
         let backend = Arc::clone(&backend);
         Box::pin(async move { answer(&backend, ctx).await })
             as std::pin::Pin<Box<dyn Future<Output = _> + Send>>
     };
 
-    let mut headers = FxHashMap::default();
-    headers.insert("content-type".to_string(), "application/json".to_string());
-
-    MockDefinition {
-        id: format!("spec:graphql:{endpoint}").into(),
-        priority: SPEC_PRIORITY,
-        request: RequestMatcher {
-            methods: SmallVec::from_elem(http::Method::POST, 1),
-            url_patterns: SmallVec::from_elem(UrlPattern::Exact(endpoint.to_string()), 1),
-            graphql_matcher: Some(GraphQLMatcher {
-                match_any: true,
-                ..GraphQLMatcher::default()
-            }),
-            ..RequestMatcher::default()
-        },
-        response: {
-            let mut response = ResponseGenerator::new(
-                StatusCode::OK,
-                // The query is in the body and nothing else is read, so the
-                // matching lanes can skip marshalling headers entirely.
-                BodySource::handler_with_needs(Arc::new(handler), ContextNeeds::body_only()),
-            );
-            response.headers = headers;
-            response
-        },
-        enabled: true,
-        once: false,
-        scope: None,
-        source_file: None,
-        request_transforms: None,
-        vars: None,
-        streaming: None,
+    if mock.request.methods.is_empty() {
+        mock.request.methods = SmallVec::from_elem(http::Method::POST, 1);
     }
+    if mock.request.graphql_matcher.is_none() {
+        mock.request.graphql_matcher = Some(GraphQLMatcher {
+            match_any: true,
+            ..GraphQLMatcher::default()
+        });
+    }
+
+    let headers = std::mem::take(&mut mock.response.headers);
+    let delay = mock.response.delay;
+    let mut response = ResponseGenerator::new(
+        StatusCode::OK,
+        // The query is in the body and nothing else is read, so the matching
+        // lanes can skip marshalling headers entirely.
+        BodySource::handler_with_needs(Arc::new(handler), ContextNeeds::body_only()),
+    );
+    response.headers = headers;
+    response
+        .headers
+        .entry("content-type".to_string())
+        .or_insert_with(|| "application/json".to_string());
+    response.delay = delay;
+    mock.response = response;
 }
 
 async fn answer(
@@ -113,19 +105,47 @@ fn error_response(message: &str) -> DynamicResponse {
 )]
 mod tests {
     use super::*;
-    use crate::spec::infer::graphql::{parse_sdl, to_entity_graph};
-    use crate::spec::store::{EntityStore, StoreConfig};
-    use crate::types::RequestContext;
+    use crate::core::{World, WorldSettings};
+    use crate::spec::infer::graphql::parse_sdl;
+    use crate::spec::source::load_schema;
+    use crate::types::{RequestContext, RequestMatcher};
+    use std::path::Path;
 
-    fn backend() -> Arc<GraphQLBackend> {
-        let parsed = parse_sdl("type User { id: ID!, name: String! } type Query { users: [User!]! }")
+    const SCHEMA: &str = "type User { id: ID!, name: String! } type Query { users: [User!]! }";
+
+    fn backend() -> (Arc<World>, Arc<GraphQLBackend>) {
+        let world = Arc::new(World::new());
+        world
+            .configure(
+                &WorldSettings {
+                    seed: Some(1),
+                    counts: std::iter::once((lean_string::LeanString::from("User"), 3)).collect(),
+                    ..WorldSettings::default()
+                },
+                Path::new("test"),
+            )
             .unwrap();
-        let graph = to_entity_graph(&parsed);
-        let store = EntityStore::new(
-            Arc::new(graph),
-            StoreConfig::seeded(1).with_count("User", 3),
-        );
-        Arc::new(GraphQLBackend::build(&parsed, Arc::new(store)).unwrap())
+        load_schema(SCHEMA, Path::new("s.graphql"), &world, false).unwrap();
+
+        let parsed = parse_sdl(SCHEMA).unwrap();
+        let backend = Arc::new(GraphQLBackend::build(&parsed, Arc::clone(&world)).unwrap());
+        (world, backend)
+    }
+
+    fn bare(id: &str) -> MockDefinition {
+        MockDefinition {
+            id: id.into(),
+            priority: SPEC_PRIORITY,
+            request: RequestMatcher::default(),
+            response: ResponseGenerator::new(StatusCode::OK, BodySource::inline("")),
+            enabled: true,
+            once: false,
+            scope: None,
+            source_file: None,
+            request_transforms: None,
+            vars: None,
+            streaming: None,
+        }
     }
 
     fn post(body: &str) -> RequestContext {
@@ -135,8 +155,11 @@ mod tests {
     }
 
     #[test]
-    fn the_mount_is_an_ordinary_mock() {
-        let mock = mount_graphql(backend(), "/graphql");
+    fn the_binding_leaves_an_ordinary_mock() {
+        let (_world, backend) = backend();
+        let mut mock = bare("filestore-graphql");
+        bind_graphql(&mut mock, backend);
+
         assert_eq!(mock.request.methods.as_slice(), [http::Method::POST]);
         assert!(mock.request.graphql_matcher.is_some());
         assert!(mock.response.body.is_handler());
@@ -147,8 +170,11 @@ mod tests {
     }
 
     #[test]
-    fn the_mount_declares_that_it_reads_only_the_body() {
-        let mock = mount_graphql(backend(), "/graphql");
+    fn the_binding_declares_that_it_reads_only_the_body() {
+        let (_world, backend) = backend();
+        let mut mock = bare("filestore-graphql");
+        bind_graphql(&mut mock, backend);
+
         assert!(mock.response.context_uses_body);
         assert!(
             !mock.response.context_uses_headers,
@@ -156,9 +182,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn headers_declared_on_the_mock_survive_the_binding() {
+        let (_world, backend) = backend();
+        let mut mock = bare("filestore-graphql");
+        mock.response
+            .headers
+            .insert("x-served-by".to_string(), "mock".to_string());
+        bind_graphql(&mut mock, backend);
+
+        assert_eq!(
+            mock.response.headers.get("x-served-by").map(String::as_str),
+            Some("mock")
+        );
+        assert_eq!(
+            mock.response
+                .headers
+                .get("content-type")
+                .map(String::as_str),
+            Some("application/json")
+        );
+    }
+
     #[tokio::test]
     async fn it_answers_a_query() {
-        let backend = backend();
+        let (_world, backend) = backend();
         let response = answer(&backend, post(r#"{"query":"{ users { id name } }"}"#))
             .await
             .unwrap();
@@ -170,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_malformed_body_is_a_graphql_error_not_a_crash() {
-        let backend = backend();
+        let (_world, backend) = backend();
         let response = answer(&backend, post("not json")).await.unwrap();
         assert_eq!(response.status, Some(StatusCode::BAD_REQUEST));
 
@@ -180,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_query_error_still_comes_back_as_a_graphql_envelope() {
-        let backend = backend();
+        let (_world, backend) = backend();
         let response = answer(&backend, post(r#"{"query":"{ nope }"}"#))
             .await
             .unwrap();
@@ -189,5 +237,28 @@ mod tests {
             !payload["errors"].as_array().unwrap().is_empty(),
             "a validation failure belongs in the envelope"
         );
+    }
+
+    /// The point of the whole design: a write through the world is visible to
+    /// a schema-derived route, because they are the same store.
+    #[tokio::test]
+    async fn a_write_through_the_world_is_visible_to_the_backend() {
+        let (world, backend) = backend();
+        world
+            .create("User", serde_json::json!({ "name": "Ada" }))
+            .unwrap();
+
+        let response = answer(&backend, post(r#"{"query":"{ users { name } }"}"#))
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let names: Vec<&str> = payload["data"]["users"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|u| u["name"].as_str())
+            .collect();
+
+        assert!(names.contains(&"Ada"), "unexpected: {names:?}");
     }
 }

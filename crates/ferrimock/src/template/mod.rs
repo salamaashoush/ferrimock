@@ -25,6 +25,7 @@ mod renderer;
 // Private modules
 mod convert;
 mod engine;
+pub mod entities;
 pub mod fake_data;
 mod filters;
 pub(crate) mod functions;

@@ -868,6 +868,69 @@ export declare namespace services {
   export function validateContent(input: services.JsValidateContentInput): Promise<services.JsValidateOutput>
 }
 
+export declare namespace world {
+  /** How many instances of an entity exist. */
+  export function count(entity: string): number
+  /**
+   * Create an instance.
+   *
+   * Fields left out are generated from the seed, so the result validates
+   * against the same schema a real one would.
+   */
+  export function create(entity: string, values?: any | undefined | null): any
+  /** Remove an instance. */
+  export function delete(entity: string, key: string): void
+  /**
+   * Read one instance by key.
+   *
+   * `undefined` when it never existed or was removed — a miss is an ordinary
+   * answer, and a handler wants `if (!user) return ...`.
+   *
+   * Explicitly `undefined` rather than `null`: `Option` would surface as
+   * `null` here while the QuickJS lane hands back `undefined`, and a handler
+   * has to behave the same on both.
+   */
+  export function get(entity: string, key: string): any | undefined
+  /** Read a slice of an entity's instances. */
+  export function list(entity: string, options?: world.WorldQuery | undefined | null): world.WorldPage
+  /** How many writes are laid over the seeded world. */
+  export function pendingWrites(): number
+  /** Follow a relation from one instance. */
+  export function related(entity: string, key: string, field: string, options?: world.WorldQuery | undefined | null): world.WorldPage
+  /** Replace an instance wholesale, keeping its key. */
+  export function replace(entity: string, key: string, values?: any | undefined | null): any
+  /**
+   * Drop every write, leaving exactly what the seed derives.
+   *
+   * The typed counterpart of clearing the persistence store — call it between
+   * tests, or state leaks from one into the next.
+   */
+  export function reset(): void
+  /** Entity types the world knows. */
+  export function types(): Array<string>
+  /** Merge fields into an existing instance. */
+  export function update(entity: string, key: string, values?: any | undefined | null): any
+  /** A slice of one entity's instances. */
+  export interface WorldPage {
+    records: Array<any>
+    total: number
+    hasNext: boolean
+    hasPrevious: boolean
+  }
+  /** What to read. Every field optional, so `world.list('User')` is the whole set. */
+  export interface WorldQuery {
+    /**
+     * Field to value. A value matches for equality unless it is an object
+     * carrying one operator key: `{ age: { gt: 30 } }`, `{ id: { in: [...] } }`.
+     */
+    filter?: any
+    /** A field name, or several. `-name` sorts descending. */
+    sort?: string | Array<string>
+    skip?: number
+    limit?: number
+  }
+}
+
 export declare namespace ws {
   /**
    * Create a WebSocket handler mock.

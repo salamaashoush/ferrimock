@@ -32,9 +32,6 @@ pub struct MockServerConfig {
     pub verbose: bool,
     pub open_browser: bool,
     pub explain_unmatched: bool,
-    /// Mocks built in memory rather than loaded from a file — a spec-derived
-    /// backend, for instance.
-    pub extra_mocks: Vec<ferrimock::types::MockDefinition>,
 }
 
 /// Shared state for the mock server
@@ -61,7 +58,6 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         verbose,
         open_browser,
         explain_unmatched,
-        extra_mocks,
     } = config;
 
     crate::say!("{}", ui::header("Mock Server"));
@@ -69,11 +65,6 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
 
     let registry = Arc::new(MockRegistry::new());
     let mut total_count = 0usize;
-
-    for mock in extra_mocks {
-        registry.add_mock(mock);
-        total_count += 1;
-    }
 
     // Load mocks from directory if provided
     if let Some(ref dir) = mocks_dir {
@@ -185,6 +176,10 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         "{}",
         ui::list_item("GET  /__mock/status         - Server status and info")
     );
+    crate::say!(
+        "{}",
+        ui::list_item("GET  /__mock/world          - Entities the mocks serve")
+    );
     if enable_render_endpoint {
         crate::say!(
             "{}",
@@ -205,7 +200,18 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         .route("/__mock/coverage", get(coverage_handler))
         .route("/__mock/unmatched", get(unmatched_handler))
         .route("/__mock/unmatched", delete(reset_unmatched_handler))
-        .route("/__mock/suggestions", get(suggestions_handler));
+        .route("/__mock/suggestions", get(suggestions_handler))
+        // The entity world, so a test driver can read and seed the same
+        // entities the mocks serve without embedding the engine.
+        .route("/__mock/world", get(world_handler))
+        .route("/__mock/world", delete(reset_world_handler))
+        .route("/__mock/world/{entity}", get(list_entity_handler))
+        .route("/__mock/world/{entity}", post(create_entity_handler))
+        .route("/__mock/world/{entity}/{key}", get(get_entity_handler))
+        .route(
+            "/__mock/world/{entity}/{key}",
+            delete(delete_entity_handler),
+        );
 
     // Add render endpoint if enabled
     if enable_render_endpoint {
@@ -535,6 +541,143 @@ fn json_response(body: &serde_json::Value) -> Response {
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+// ===== Entity world =====
+//
+// A curated subset under `/__mock/`, the way coverage and unmatched are
+// exposed here — the standalone server does not mount the full management
+// API. Enough for a test driver to inspect the world and seed it.
+
+/// What entities exist, and how many of each.
+///
+/// GET /__mock/world
+async fn world_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    let world = state.registry.world();
+    let entities: Vec<serde_json::Value> = world
+        .entities()
+        .into_iter()
+        .map(|name| {
+            serde_json::json!({ "name": name.to_string(), "count": world.count(name.as_str()) })
+        })
+        .collect();
+
+    json_response(&serde_json::json!({
+        "entities": entities,
+        "seed": world.seed(),
+        "pendingWrites": world.pending_writes(),
+    }))
+}
+
+/// Drop every write, leaving exactly what the seed derives.
+///
+/// DELETE /__mock/world
+async fn reset_world_handler(State(state): State<Arc<MockServerState>>) -> Response {
+    let world = state.registry.world();
+    let dropped = world.pending_writes();
+    world.reset();
+    json_response(&serde_json::json!({ "reset": true, "droppedWrites": dropped }))
+}
+
+/// A slice of one entity's instances.
+///
+/// GET /__mock/world/{entity}?limit=&skip=&sort=&<field>=<value>
+async fn list_entity_handler(
+    State(state): State<Arc<MockServerState>>,
+    axum::extract::Path(entity): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::BTreeMap<String, String>>,
+) -> Response {
+    let mut query = ferrimock::core::EntityQuery {
+        skip: params.get("skip").and_then(|v| v.parse().ok()).unwrap_or(0),
+        limit: params.get("limit").and_then(|v| v.parse().ok()),
+        ..ferrimock::core::EntityQuery::default()
+    };
+    if let Some(sort) = params.get("sort") {
+        query.sort = sort
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(ToString::to_string)
+            .collect();
+    }
+    // Anything that is not a reserved word filters that field, so
+    // `?status=active` reads the way a real API's query string would.
+    for (field, raw) in &params {
+        if matches!(field.as_str(), "skip" | "limit" | "sort") {
+            continue;
+        }
+        let value = serde_json::from_str::<serde_json::Value>(raw)
+            .unwrap_or_else(|_| serde_json::Value::String(raw.clone()));
+        query.filter.insert(field.clone(), value);
+    }
+
+    match state.registry.world().list(&entity, &query) {
+        Ok(page) => json_response(&serde_json::json!({
+            "records": page.records,
+            "total": page.total,
+            "hasNext": page.has_next,
+            "hasPrevious": page.has_previous,
+        })),
+        Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
+    }
+}
+
+/// GET /__mock/world/{entity}/{key}
+async fn get_entity_handler(
+    State(state): State<Arc<MockServerState>>,
+    axum::extract::Path((entity, key)): axum::extract::Path<(String, String)>,
+) -> Response {
+    match state.registry.world().get(&entity, &key) {
+        Some(record) => json_response(&record),
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            &format!("no `{entity}` with key `{key}`"),
+        ),
+    }
+}
+
+/// POST /__mock/world/{entity}
+async fn create_entity_handler(
+    State(state): State<Arc<MockServerState>>,
+    axum::extract::Path(entity): axum::extract::Path<String>,
+    body: String,
+) -> Response {
+    let values = if body.trim().is_empty() {
+        serde_json::Value::Object(serde_json::Map::new())
+    } else {
+        match serde_json::from_str(&body) {
+            Ok(values) => values,
+            Err(e) => {
+                return error_response(StatusCode::BAD_REQUEST, &format!("invalid JSON: {e}"));
+            }
+        }
+    };
+
+    match state.registry.world().create(&entity, values) {
+        Ok(record) => json_response(&record),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+    }
+}
+
+/// DELETE /__mock/world/{entity}/{key}
+async fn delete_entity_handler(
+    State(state): State<Arc<MockServerState>>,
+    axum::extract::Path((entity, key)): axum::extract::Path<(String, String)>,
+) -> Response {
+    match state.registry.world().delete(&entity, &key) {
+        Ok(()) => json_response(&serde_json::json!({ "deleted": true })),
+        Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
+    }
+}
+
+fn error_response(status: StatusCode, message: &str) -> Response {
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::json!({ "error": message }).to_string(),
+        ))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 

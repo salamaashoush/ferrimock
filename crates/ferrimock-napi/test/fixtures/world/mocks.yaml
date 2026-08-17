@@ -1,0 +1,13 @@
+world:
+  schemas:
+    - schema.graphql
+  seed: 42
+  counts:
+    NapiUser: 3
+    NapiFolder: 4
+
+mocks:
+  - id: napi-graphql
+    match:
+      POST: https://napi.example.com/graphql
+    serve: graphql

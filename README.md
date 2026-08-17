@@ -341,13 +341,87 @@ fake.setSeed(null)       // back to entropy
 ferrimock mock serve mocks/ --seed 42     # or FERRIMOCK_SEED=42
 ```
 
+## Spec-Derived Backends
+
+Point a mock at a GraphQL schema and it serves the whole API — a seeded,
+relational world with working reads, writes and relations — instead of a pile of
+canned responses.
+
+A schema declares *entities*, not routes. Where the API answers is a mock's job,
+because a `.graphql` has nowhere to say it lives behind `https://api.example.com`
+rather than on localhost.
+
+```yaml
+# mocks/filestore.yaml
+world:
+  schemas: [filestore.graphql]
+  seed: 42                 # same seed, same world, every run
+  counts: { User: 25, Folder: 200 }
+
+mocks:
+  - id: filestore-graphql
+    match:
+      POST: https://api.example.com/graphql
+    serve: graphql
+
+  # Overrides are ordinary mocks winning on ordinary priority.
+  - id: quota-exceeded
+    match:
+      POST: https://api.example.com/graphql
+      graphql: { mutation: CreateFolder }
+    response:
+      json: { errors: [{ message: Storage quota exceeded }] }
+```
+
+```graphql
+# POST https://api.example.com/graphql — relations resolve, writes persist
+query { folders { name owner { name email } } }
+mutation { createFolder(name: "Reports") { id } }
+```
+
+### One world, shared by every kind of mock
+
+The entities are not private to the schema. A JS handler, a Tera template and a
+schema-derived route all read and write the same store — so a user created in a
+handler shows up in the next GraphQL query.
+
+```ts
+import { http, HttpResponse, world } from 'ferrimock'
+
+http.post('https://api.example.com/2.0/users', async ({ request }) => {
+  const { name } = await request.json()
+  const user = world.create('User', { name })       // visible to the schema
+  return HttpResponse.json(user, { status: 201 })
+})
+```
+
+```yaml
+response:
+  template: '{"total": {{ entity_count(type="User") }}}'
+```
+
+Reachable over HTTP too, for a test driver that does not embed the engine:
+
+```bash
+curl localhost:3000/__mock/world                 # entities, seed, pending writes
+curl localhost:3000/__mock/world/User?limit=10   # a page
+curl -X POST localhost:3000/__mock/world/User -d '{"name":"Ada"}'
+curl -X DELETE localhost:3000/__mock/world       # reset to the seeded world
+```
+
+```bash
+ferrimock world explain --dir mocks/   # what is in the world, and from where
+```
+
+Details in [Mock Engine](docs/MOCK_ENGINE.md).
+
 ## Packages
 
 | Package | Description |
 |---------|-------------|
 | `ferrimock` (npm) | The MSW drop-in surface (`ferrimock` + `ferrimock/node`), alias of `ferrimock` |
 | `ferrimock` | setupServer, interceptor, HttpResponse, config loader |
-| `@ferrimock/node` | Rust NAPI bindings (http, graphql, HttpResponse builders, fake, FerrimockServer) |
+| `@ferrimock/node` | Rust NAPI bindings (http, graphql, HttpResponse builders, fake, world, FerrimockServer) |
 | `@ferrimock/playwright` | Playwright fixture adapter |
 
 ## Rust Library
@@ -371,6 +445,7 @@ ferrimock mock serve mocks/                # Serve mocks with hot reload
 ferrimock mock create "/api/users/:id"     # Create a mock
 ferrimock mock test -m GET /api/users/123  # Test matching
 ferrimock fake data email --count 10       # Generate fake data
+ferrimock world explain                    # Entities a mocks dir builds
 ```
 
 ## License

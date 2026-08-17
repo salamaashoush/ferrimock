@@ -224,8 +224,7 @@ mod tests {
 
     #[test]
     fn every_occurrence_is_reported_not_just_the_first() {
-        let source =
-            "\"a \"b\" c\"\ntype A { f: String }\n\"d \"e\" f\"\ntype B { g: String }";
+        let source = "\"a \"b\" c\"\ntype A { f: String }\n\"d \"e\" f\"\ntype B { g: String }";
         let defects = find_defects(source);
         assert_eq!(defects.len(), 2);
         assert_eq!(defects[0].line, 1);

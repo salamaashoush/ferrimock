@@ -77,6 +77,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             }
         })
         .collect();
@@ -87,6 +88,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     }
 }
 
@@ -248,6 +250,7 @@ async fn a_request_nothing_answers_is_reported_unmatched() {
         enabled: true,
         vars: None,
         mocks: vec![],
+        world: None,
     };
 
     let report = verify(
@@ -283,6 +286,7 @@ async fn answering_from_a_foreign_lineage_is_cross_talk() {
     }
     let consolidated = MockCollectionConfig {
         mocks: vec![catch_all],
+        world: None,
         ..original.clone()
     };
 
@@ -331,6 +335,7 @@ async fn a_dropped_field_is_a_shape_divergence_not_a_status_one() {
     });
     let consolidated = MockCollectionConfig {
         mocks: vec![lossy],
+        world: None,
         ..original.clone()
     };
 
@@ -376,6 +381,7 @@ async fn a_changed_status_is_a_status_divergence() {
     });
     let consolidated = MockCollectionConfig {
         mocks: vec![wrong_status],
+        world: None,
         ..original.clone()
     };
 
@@ -423,6 +429,7 @@ async fn a_value_the_group_never_varied_must_not_start_varying() {
     });
     let consolidated = MockCollectionConfig {
         mocks: vec![drifted],
+        world: None,
         ..original.clone()
     };
 
@@ -493,6 +500,7 @@ async fn a_value_every_list_element_agreed_on_must_not_be_invented() {
     });
     let consolidated = MockCollectionConfig {
         mocks: vec![inventive],
+        world: None,
         ..original.clone()
     };
 
@@ -556,6 +564,7 @@ async fn an_element_field_the_group_varied_is_free_to_vary_on_replay() {
     });
     let consolidated = MockCollectionConfig {
         mocks: vec![merged],
+        world: None,
         ..original.clone()
     };
 
@@ -607,6 +616,7 @@ async fn an_element_field_only_some_entries_carried_is_optional_not_constant() {
     });
     let consolidated = MockCollectionConfig {
         mocks: vec![merged],
+        world: None,
         ..original.clone()
     };
 
@@ -861,6 +871,7 @@ async fn examples_are_capped_but_counts_are_not() {
         enabled: true,
         vars: None,
         mocks: vec![],
+        world: None,
     };
 
     let report = verify(

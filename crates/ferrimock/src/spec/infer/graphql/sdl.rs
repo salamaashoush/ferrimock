@@ -51,7 +51,9 @@ pub fn parse_sdl(source: &str) -> crate::Result<ParsedSchema> {
 /// Returns what was repaired so a caller can report it. Never silent: a tool
 /// that rewrites its input without saying so cannot be trusted with the next
 /// file.
-pub fn parse_sdl_lenient(source: &str) -> crate::Result<(ParsedSchema, Vec<super::defects::SdlDefect>)> {
+pub fn parse_sdl_lenient(
+    source: &str,
+) -> crate::Result<(ParsedSchema, Vec<super::defects::SdlDefect>)> {
     if let Ok(document) = async_graphql_parser::parse_schema(source) {
         return Ok((from_document(&document), Vec::new()));
     }
@@ -115,8 +117,11 @@ fn from_document(document: &ast::ServiceDocument) -> ParsedSchema {
     // names, which is how most hand-written SDL is spelled.
     let (query, mutation, subscription) = roots;
     let query = query.or_else(|| types.contains_key("Query").then(|| "Query".to_string()));
-    let mutation =
-        mutation.or_else(|| types.contains_key("Mutation").then(|| "Mutation".to_string()));
+    let mutation = mutation.or_else(|| {
+        types
+            .contains_key("Mutation")
+            .then(|| "Mutation".to_string())
+    });
     let subscription = subscription.or_else(|| {
         types
             .contains_key("Subscription")
@@ -201,11 +206,7 @@ fn type_definition(node: &ast::TypeDefinition) -> TypeDefinition {
         }
         ast::TypeKind::InputObject(input) => {
             definition.kind = TypeKind::InputObject;
-            definition.input_fields = input
-                .fields
-                .iter()
-                .map(|f| input_value(&f.node))
-                .collect();
+            definition.input_fields = input.fields.iter().map(|f| input_value(&f.node)).collect();
         }
     }
 
@@ -297,7 +298,13 @@ fn deprecation_reason(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::get_unwrap, clippy::indexing_slicing)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::get_unwrap,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -367,10 +374,9 @@ mod tests {
 
     #[test]
     fn an_explicit_schema_block_wins() {
-        let schema = parse_sdl(
-            "schema { query: Root } type Root { a: String } type Query { b: String }",
-        )
-        .unwrap();
+        let schema =
+            parse_sdl("schema { query: Root } type Root { a: String } type Query { b: String }")
+                .unwrap();
         assert_eq!(schema.query_type.as_deref(), Some("Root"));
     }
 
@@ -424,10 +430,8 @@ mod tests {
 
     #[test]
     fn an_extension_merges_rather_than_replaces() {
-        let schema = parse_sdl(
-            "type User { id: ID! } extend type User { nickname: String }",
-        )
-        .unwrap();
+        let schema =
+            parse_sdl("type User { id: ID! } extend type User { nickname: String }").unwrap();
         let user = schema.types.get("User").unwrap();
         let names: Vec<_> = user.fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["id", "nickname"]);

@@ -23,14 +23,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::classify::{self, RootKind, RootPlan};
 use super::value::{to_gql, to_json};
+use crate::core::World;
+use crate::core::world::algebra::{Cursor, Mutation, Page, Predicate, Selection, SortKey};
+use crate::core::world::model::{Carrier, EntityGraph, EntityKey, ValueSpec};
+use crate::core::world::store::values::{ValueSeed, generate};
+use crate::core::world::store::{EntityStore, PageResult, Record, Written};
 use crate::graphql::introspection::{
     FieldDefinition, ParsedSchema, TypeDefinition, TypeKind, TypeRef,
 };
-use crate::spec::algebra::{Cursor, Mutation, Page, Predicate, Selection, SortKey};
 use crate::spec::infer::graphql::entities::{SchemaFacts, value_spec_of};
-use crate::spec::model::{Carrier, EntityGraph, EntityKey, ValueSpec};
-use crate::spec::store::values::{ValueSeed, generate};
-use crate::spec::store::{EntityStore, PageResult, Record, Written};
 
 /// How many instances a list returns when the query does not say.
 const DEFAULT_PAGE_SIZE: usize = 10;
@@ -108,11 +109,15 @@ impl Coverage {
     }
 }
 
-/// An executable GraphQL schema backed by the entity store.
+/// An executable GraphQL schema backed by the engine's entity world.
+///
+/// Holds the world rather than a store: adding a schema rebuilds the store,
+/// and a backend that had captured the old `Arc` would go on serving a world
+/// nobody can write to any more.
 pub struct GraphQLBackend {
     schema: Schema,
     coverage: Arc<Coverage>,
-    store: Arc<EntityStore>,
+    world: Arc<World>,
 }
 
 impl std::fmt::Debug for GraphQLBackend {
@@ -125,7 +130,8 @@ impl std::fmt::Debug for GraphQLBackend {
 
 impl GraphQLBackend {
     /// Register every declared type and wire its resolvers.
-    pub fn build(parsed: &ParsedSchema, store: Arc<EntityStore>) -> crate::Result<Self> {
+    pub fn build(parsed: &ParsedSchema, world: Arc<World>) -> crate::Result<Self> {
+        let store = world.store();
         let mut coverage = Coverage::default();
         let query_root = parsed
             .query_type
@@ -179,13 +185,8 @@ impl GraphQLBackend {
                     ));
                 }
                 TypeKind::Object => {
-                    builder = builder.register(object(
-                        definition,
-                        parsed,
-                        graph,
-                        &facts,
-                        &mut coverage,
-                    ));
+                    builder =
+                        builder.register(object(definition, parsed, graph, &facts, &mut coverage));
                 }
                 TypeKind::Interface => builder = builder.register(interface(definition)),
                 TypeKind::Union => {
@@ -228,7 +229,7 @@ impl GraphQLBackend {
 
         let coverage = Arc::new(coverage);
         let schema = builder
-            .data(Arc::clone(&store))
+            .data(Arc::clone(&world))
             .data(Arc::clone(&coverage))
             .finish()
             .map_err(|e| crate::mp_err!("Could not build an executable schema: {e}"))?;
@@ -236,7 +237,7 @@ impl GraphQLBackend {
         Ok(Self {
             schema,
             coverage,
-            store,
+            world,
         })
     }
 
@@ -255,9 +256,10 @@ impl GraphQLBackend {
         &self.coverage
     }
 
+    /// The world this backend serves. Shared with every other lane.
     #[must_use]
-    pub fn store(&self) -> &Arc<EntityStore> {
-        &self.store
+    pub fn world(&self) -> &Arc<World> {
+        &self.world
     }
 }
 
@@ -370,9 +372,11 @@ fn object(
             // object's declared field types matters more than keeping an
             // `implements` edge, because those types are what a client
             // generates code from.
-            coverage
-                .dropped_interfaces
-                .push(format!("{} implements {}", definition.name, interface_ref.name()));
+            coverage.dropped_interfaces.push(format!(
+                "{} implements {}",
+                definition.name,
+                interface_ref.name()
+            ));
         }
     }
 
@@ -515,7 +519,7 @@ fn resolve_entity_field(
             let store = store_of(ctx)?;
             resolve_on_record(
                 ctx,
-                store,
+                &store,
                 record,
                 owner,
                 field_name,
@@ -755,14 +759,12 @@ fn resolve_root(
         } => {
             let targets = concrete_or(entity, members);
             let record = if key_arg.is_empty() {
-                targets
-                    .iter()
-                    .find_map(|target| {
-                        store
-                            .keys(target.as_str())
-                            .first()
-                            .and_then(|key| store.get(target.as_str(), key))
-                    })
+                targets.iter().find_map(|target| {
+                    store
+                        .keys(target.as_str())
+                        .first()
+                        .and_then(|key| store.get(target.as_str(), key))
+                })
             } else {
                 argument_string(ctx, key_arg)
                     .and_then(|key| store.get_any(&targets, &EntityKey::single(key)))
@@ -777,7 +779,7 @@ fn resolve_root(
             ..
         } => {
             let targets = concrete_or(entity, members);
-            let selection = selection_from_args(ctx, store, entity.as_str());
+            let selection = selection_from_args(ctx, &store, entity.as_str());
             let page = store
                 .list_any(&targets, &selection)
                 .map_err(|e| async_graphql::Error::new(e.to_string()))?;
@@ -840,12 +842,7 @@ fn resolve_root(
             // stops being readable.
             let removed = store.get(entity.as_str(), &entity_key);
             store
-                .apply(
-                    entity.as_str(),
-                    Mutation::Remove {
-                        key: entity_key,
-                    },
-                )
+                .apply(entity.as_str(), Mutation::Remove { key: entity_key })
                 .map_err(|e| async_graphql::Error::new(e.to_string()))?;
             Ok(removed.map(|record| wrap_payload(shape, Parent::Entity(record))))
         }
@@ -854,7 +851,7 @@ fn resolve_root(
             if let Ok(coverage) = ctx.data::<Arc<Coverage>>() {
                 coverage.fallback_hits.fetch_add(1, Ordering::Relaxed);
             }
-            Ok(fallback_value(ctx, store, named_type, shape))
+            Ok(fallback_value(ctx, &store, named_type, shape))
         }
     }
 }
@@ -940,8 +937,13 @@ fn wrap_payload(shape: &ReturnShape, parent: Parent) -> FieldValue<'static> {
     }
 }
 
-fn store_of<'a>(ctx: &'a ResolverContext<'_>) -> async_graphql::Result<&'a Arc<EntityStore>> {
-    ctx.data::<Arc<EntityStore>>()
+/// The store to answer this resolution from.
+///
+/// Read per call rather than captured at build: the world swaps its store when
+/// a schema is added, and a resolver holding the old one would answer from a
+/// world that no longer takes writes.
+fn store_of(ctx: &ResolverContext<'_>) -> async_graphql::Result<Arc<EntityStore>> {
+    Ok(ctx.data::<Arc<World>>()?.store())
 }
 
 /// The concrete entities a plan reads from: the members behind an abstract
@@ -955,7 +957,7 @@ fn concrete_or(entity: &LeanString, members: &[LeanString]) -> Vec<LeanString> {
 }
 
 fn seed_of(ctx: &ResolverContext<'_>) -> u64 {
-    ctx.data::<Arc<EntityStore>>().map_or(0, |store| store.seed())
+    ctx.data::<Arc<World>>().map_or(0, |world| world.seed())
 }
 
 fn argument_string(ctx: &ResolverContext<'_>, name: &str) -> Option<String> {
@@ -1146,11 +1148,9 @@ mod cov_tests {
         ";
         let parsed = crate::spec::infer::graphql::parse_sdl(sdl).unwrap();
         let graph = crate::spec::infer::graphql::to_entity_graph(&parsed);
-        let store = std::sync::Arc::new(crate::spec::store::EntityStore::new(
-            std::sync::Arc::new(graph),
-            crate::spec::store::StoreConfig::seeded(1),
-        ));
-        match GraphQLBackend::build(&parsed, store) {
+        let world = std::sync::Arc::new(World::new());
+        world.add_entities(&graph).unwrap();
+        match GraphQLBackend::build(&parsed, world) {
             Ok(_) => println!("BUILD OK"),
             Err(e) => println!("BUILD FAILED: {e}"),
         }

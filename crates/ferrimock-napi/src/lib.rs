@@ -20,4 +20,5 @@ mod server;
 mod services;
 mod sse_ns;
 mod types;
+mod world_ns;
 mod ws_ns;

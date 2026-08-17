@@ -72,12 +72,17 @@ fn to_gql_value(value: &JsonValue) -> crate::Result<GqlValue> {
                         .ok_or_else(|| crate::mp_err!("Non-finite number in GraphQL variables"))?,
                 )
             } else {
-                return Err(crate::mp_err!("Unrepresentable number in GraphQL variables"));
+                return Err(crate::mp_err!(
+                    "Unrepresentable number in GraphQL variables"
+                ));
             }
         }
-        JsonValue::Array(items) => {
-            GqlValue::List(items.iter().map(to_gql_value).collect::<crate::Result<_>>()?)
-        }
+        JsonValue::Array(items) => GqlValue::List(
+            items
+                .iter()
+                .map(to_gql_value)
+                .collect::<crate::Result<_>>()?,
+        ),
         JsonValue::Object(fields) => GqlValue::Object(
             fields
                 .iter()
@@ -134,10 +139,9 @@ mod tests {
 
     #[test]
     fn nested_numbers_survive() {
-        let request = parse_request(
-            br#"{"query":"{x}","variables":{"page":{"first":10,"tags":[1.5,2.5]}}}"#,
-        )
-        .unwrap();
+        let request =
+            parse_request(br#"{"query":"{x}","variables":{"page":{"first":10,"tags":[1.5,2.5]}}}"#)
+                .unwrap();
         let GqlValue::Object(map) = request.variables.into_value() else {
             panic!("variables should decode to an object")
         };

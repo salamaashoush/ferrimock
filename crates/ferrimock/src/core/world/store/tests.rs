@@ -6,8 +6,8 @@
 )]
 
 use super::*;
-use crate::spec::algebra::{Predicate, Selection, SortKey};
-use crate::spec::model::{
+use crate::core::world::algebra::{Predicate, Selection, SortKey};
+use crate::core::world::model::{
     Carrier, Confidence, EntityType, FieldDef, Provenance, Relation, Rule, Scalar, ScalarKind,
 };
 
@@ -34,7 +34,7 @@ fn relation_field(name: &str, target: &str, cardinality: Cardinality) -> FieldDe
 fn entity(name: &str) -> EntityType {
     EntityType::new(
         name,
-        crate::spec::model::CompositeKey::single("id"),
+        crate::core::world::model::CompositeKey::single("id"),
         Provenance::new(Rule::GraphQLSchema, name),
     )
     .with_field(scalar_field("id", ScalarKind::Id))
@@ -117,9 +117,7 @@ fn every_foreign_key_resolves() {
         let post = store.get("Post", &key).unwrap();
         let author_key = post.get("author").unwrap().as_str().unwrap();
         assert!(
-            store
-                .get("User", &EntityKey::single(author_key))
-                .is_some(),
+            store.get("User", &EntityKey::single(author_key)).is_some(),
             "a derived foreign key must land inside the parent census"
         );
     }
@@ -277,7 +275,12 @@ fn creating_the_same_key_twice_is_refused() {
     let store = blog_store(4, 2, 2);
     let values = serde_json::json!({ "id": "u-1", "name": "Ada" });
     store
-        .apply("User", Mutation::Insert { values: values.clone() })
+        .apply(
+            "User",
+            Mutation::Insert {
+                values: values.clone(),
+            },
+        )
         .unwrap();
     assert!(store.apply("User", Mutation::Insert { values }).is_err());
 }
@@ -319,7 +322,10 @@ fn a_replace_drops_unmentioned_fields_but_keeps_the_key() {
 
     let updated = store.get("User", &key).unwrap();
     assert_eq!(updated.get("name").unwrap(), "Grace");
-    assert_eq!(updated.get("id").unwrap().as_str().unwrap(), key.to_string());
+    assert_eq!(
+        updated.get("id").unwrap().as_str().unwrap(),
+        key.to_string()
+    );
 }
 
 #[test]
@@ -440,7 +446,10 @@ fn offset_pages_cover_the_set_exactly_once() {
     let mut skip = 0;
     loop {
         let page = store
-            .list("Post", &Selection::new().paged(Page::Offset { skip, take: 3 }))
+            .list(
+                "Post",
+                &Selection::new().paged(Page::Offset { skip, take: 3 }),
+            )
             .unwrap();
         assert_eq!(page.total, 10);
         if page.records.is_empty() {
@@ -581,4 +590,115 @@ fn a_many_to_many_is_not_a_single_owner() {
         shared,
         "at least one doc should belong to more than one collection"
     );
+}
+
+/// A list with nothing to filter or sort by is answered from the census, so
+/// only the requested window is derived. That fast path must agree with the
+/// general one exactly — it is the difference between microseconds and tens of
+/// milliseconds on a large entity, and a page that disagreed would be worse
+/// than a slow one.
+#[test]
+fn the_census_fast_path_agrees_with_materialising_everything() {
+    let store = blog_store(11, 40, 5);
+
+    // The general path, forced by a sort that does not change the order the
+    // keys were already in.
+    let materialised = |page: Page| {
+        let mut records: Vec<Record> = store
+            .keys("User")
+            .into_iter()
+            .filter_map(|key| store.get("User", &key))
+            .collect();
+        sort_records(&mut records, &[]);
+        paginate(&records, &page)
+    };
+
+    let cursor = {
+        let first = store.list(
+            "User",
+            &Selection::new().paged(Page::Offset { skip: 3, take: 1 }),
+        );
+        first.unwrap().end_cursor.unwrap()
+    };
+
+    for page in [
+        Page::All,
+        Page::Offset { skip: 0, take: 10 },
+        Page::Offset { skip: 7, take: 10 },
+        // Past the end, and a window that runs off it.
+        Page::Offset {
+            skip: 100,
+            take: 10,
+        },
+        Page::Offset { skip: 35, take: 10 },
+        Page::After {
+            cursor: Some(cursor.clone()),
+            first: 5,
+        },
+        Page::After {
+            cursor: None,
+            first: 5,
+        },
+        Page::Before {
+            cursor: Some(cursor),
+            last: 5,
+        },
+        Page::Before {
+            cursor: None,
+            last: 5,
+        },
+    ] {
+        let fast = store
+            .list("User", &Selection::new().paged(page.clone()))
+            .unwrap();
+        let slow = materialised(page.clone());
+
+        assert_eq!(fast.total, slow.total, "total for {page:?}");
+        assert_eq!(fast.has_next, slow.has_next, "has_next for {page:?}");
+        assert_eq!(
+            fast.has_previous, slow.has_previous,
+            "has_previous for {page:?}"
+        );
+        assert_eq!(
+            fast.start_cursor, slow.start_cursor,
+            "start_cursor for {page:?}"
+        );
+        assert_eq!(fast.end_cursor, slow.end_cursor, "end_cursor for {page:?}");
+        assert_eq!(fast.records, slow.records, "records for {page:?}");
+    }
+}
+
+/// The fast path reads through the delta like any other read.
+#[test]
+fn the_census_fast_path_sees_writes() {
+    let store = blog_store(11, 5, 2);
+
+    let created = match store
+        .apply(
+            "User",
+            Mutation::Insert {
+                values: serde_json::json!({ "name": "Ada" }),
+            },
+        )
+        .unwrap()
+    {
+        Written::Created(record) => record.key,
+        other => panic!("expected a creation, got {other:?}"),
+    };
+    let removed = store.keys("User")[0].clone();
+    store
+        .apply(
+            "User",
+            Mutation::Remove {
+                key: removed.clone(),
+            },
+        )
+        .unwrap();
+
+    let page = store.list("User", &Selection::new()).unwrap();
+    let keys: Vec<_> = page.records.iter().map(|r| r.key.clone()).collect();
+
+    assert_eq!(page.total, 5, "one created, one removed, five to start");
+    assert!(keys.contains(&created), "a creation has to appear");
+    assert!(!keys.contains(&removed), "a tombstone has to disappear");
 }

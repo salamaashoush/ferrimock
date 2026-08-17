@@ -246,6 +246,7 @@ impl MockConsolidator {
             enabled: collection.enabled,
             vars: None,
             mocks: consolidated_mocks,
+            world: None,
         })
     }
 

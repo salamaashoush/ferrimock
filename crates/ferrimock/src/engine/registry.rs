@@ -225,6 +225,11 @@ pub struct MockRegistry {
     has_href_regex_mocks: Arc<AtomicBool>,
     /// Global variables from MockConfig.vars, cascaded into all loaded collections
     global_vars: Arc<RwLock<Option<serde_json::Map<String, serde_json::Value>>>>,
+    /// Typed, relational state: the entities a schema populates and every
+    /// lane shares. Sits beside `persistence_store` on purpose — one is
+    /// untyped scratch state, the other is the world a mocked API pretends
+    /// to have, and neither belongs to whatever loaded it.
+    world: Arc<crate::core::World>,
     /// Live WS/SSE connections per mock id; removal paths close them so
     /// reloaded definitions never keep serving through stale handlers
     streaming_conns: Arc<crate::streaming::StreamingConnections>,
@@ -399,6 +404,16 @@ impl std::error::Error for VerifyError {}
 impl MockRegistry {
     /// Create a new empty mock registry
     pub fn new() -> Self {
+        Self::with_world(crate::core::global_world())
+    }
+
+    /// A registry over a world of the caller's choosing.
+    ///
+    /// [`Self::new`] takes the process-global world, which is what templates
+    /// and scripts reach — so a registry built this way serves entities the
+    /// `entity_*` template functions cannot see. Use it when isolation matters
+    /// more than that reach, as tests running in one process need.
+    pub fn with_world(world: Arc<crate::core::World>) -> Self {
         // Get or create the global persistence store and share it with templates
         let persistence_store = crate::template::get_global_persistence_store();
 
@@ -431,6 +446,7 @@ impl MockRegistry {
             has_header_dependent_mocks: Arc::new(AtomicBool::new(false)),
             has_href_regex_mocks: Arc::new(AtomicBool::new(false)),
             global_vars: Arc::new(RwLock::new(None)),
+            world,
             streaming_conns: Arc::new(crate::streaming::StreamingConnections::default()),
             #[cfg(feature = "scripting")]
             script_host: Arc::new(crate::scripting::ScriptHost::new()),
@@ -513,6 +529,7 @@ impl MockRegistry {
         let mut collection_files = Vec::new();
         let mut har_files = Vec::new();
         let mut script_files = Vec::new();
+        let mut spec_files = Vec::new();
         while let Some(entry) = entries
             .next_entry()
             .await
@@ -526,12 +543,24 @@ impl MockRegistry {
                     har_files.push(entry_path);
                 } else if matches!(ext, "js" | "mjs" | "ts" | "mts") {
                     script_files.push(entry_path);
+                } else if matches!(ext, "graphql" | "gql") {
+                    spec_files.push(entry_path);
                 }
             }
         }
 
         if !options.load_scripts {
             script_files.clear();
+        }
+
+        #[cfg(not(feature = "spec"))]
+        if !spec_files.is_empty() {
+            tracing::warn!(
+                ignored = spec_files.len(),
+                directory = %path.display(),
+                "spec files ignored; build with the `spec` feature to serve .graphql schemas"
+            );
+            spec_files.clear();
         }
 
         #[cfg(not(feature = "scripting"))]
@@ -544,13 +573,68 @@ impl MockRegistry {
             script_files.clear();
         }
 
-        // Load all collection files in parallel using join_all
-        let collection_tasks: Vec<_> = collection_files
-            .iter()
-            .map(|path| self.load_collection_file(path))
-            .collect();
+        // Parse every collection before registering any of them: a `serve:`
+        // mock resolves against the world, and the world is not complete until
+        // every collection's `world:` block and every schema has been read.
+        let parsed_collections = futures::future::join_all(
+            collection_files
+                .iter()
+                .map(crate::config::MockCollectionConfig::from_file),
+        )
+        .await;
 
-        let collection_results = futures::future::join_all(collection_tasks).await;
+        let mut collections = Vec::with_capacity(parsed_collections.len());
+        for (i, result) in parsed_collections.into_iter().enumerate() {
+            let Some(file) = collection_files.get(i) else {
+                continue;
+            };
+            match result {
+                Ok(collection) if collection.enabled => {
+                    collections.push((file.clone(), collection));
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(file = %file.display(), error = %e, "failed to parse mock collection");
+                }
+            }
+        }
+
+        // World phase: settings and schemas, from collections first so a
+        // `world.counts` is in force before anything seeds, then the schemas
+        // dropped bare in the directory.
+        for (file, collection) in &collections {
+            if let Err(e) = self.apply_collection_world(collection, file).await {
+                tracing::warn!(file = %file.display(), error = %e, "failed to build the world");
+            }
+        }
+
+        #[cfg(feature = "spec")]
+        for file in &spec_files {
+            match self.load_schema_file(file).await {
+                Ok(entities) => {
+                    tracing::debug!(file = %file.display(), entities, "loaded a schema");
+                }
+                Err(e) => {
+                    tracing::warn!(file = %file.display(), error = %e, "failed to load schema");
+                }
+            }
+        }
+
+        #[cfg_attr(not(feature = "spec"), allow(unused_variables))]
+        let any_serve = collections
+            .iter()
+            .any(|(_, collection)| collection.mocks.iter().any(|mock| mock.serve.is_some()));
+
+        // Register phase: `serve:` can now resolve.
+        let collection_results = futures::future::join_all(collections.into_iter().map(
+            |(file, collection)| async move {
+                let path = file.clone();
+                self.register_collection(collection, &path)
+                    .await
+                    .map_err(|e| (file, e))
+            },
+        ))
+        .await;
 
         // Load all HAR files in parallel
         let har_tasks: Vec<_> = har_files
@@ -562,15 +646,13 @@ impl MockRegistry {
 
         // Sum up loaded counts and log errors for collection files
         let mut loaded_count = 0;
-        for (i, result) in collection_results.into_iter().enumerate() {
+        for result in collection_results {
             match result {
                 Ok(count) => {
                     loaded_count += count;
                 }
-                Err(e) => {
-                    if let Some(file) = collection_files.get(i) {
-                        tracing::warn!(file = %file.display(), error = %e, "failed to load mock collection");
-                    }
+                Err((file, e)) => {
+                    tracing::warn!(file = %file.display(), error = %e, "failed to load mock collection");
                 }
             }
         }
@@ -587,6 +669,18 @@ impl MockRegistry {
                     }
                 }
             }
+        }
+
+        // A schema that nobody serves is almost always a mistake — most often
+        // a `serve:` that was never written — so say so rather than starting
+        // a server that answers nothing.
+        #[cfg(feature = "spec")]
+        if !self.world.is_empty() && !any_serve {
+            tracing::warn!(
+                entities = self.world.entities().len(),
+                "the world has entities but no mock serves them; add a mock with \
+                 `serve: graphql` and a `match.url` saying where the API answers"
+            );
         }
 
         // Load script files in parallel (each gets its own engine)
@@ -633,7 +727,41 @@ impl MockRegistry {
         Ok(count)
     }
 
-    /// Load a single mock collection file
+    /// The entity world this registry serves.
+    ///
+    /// Shared with templates, scripts and the HTTP API: a write through any
+    /// one of them is visible to the others, and to every spec-derived route.
+    pub fn world(&self) -> &Arc<crate::core::World> {
+        &self.world
+    }
+
+    /// Read a schema file into the world.
+    ///
+    /// Registers no mocks. A schema declares *entities*; where they are served
+    /// is a mock's business, because a schema file has nowhere to write down
+    /// that it lives behind `https://api.example.com` rather than on localhost.
+    #[cfg(feature = "spec")]
+    pub async fn load_schema_file(&self, path: &std::path::Path) -> crate::Result<usize> {
+        let loaded = crate::spec::load_schema_file(path, &self.world, false).await?;
+        for defect in &loaded.repaired {
+            tracing::warn!(file = %path.display(), defect = %defect, "repaired a malformed schema");
+        }
+        for conflict in &loaded.conflicts {
+            tracing::warn!(
+                file = %path.display(),
+                conflict = %conflict,
+                "a write could not be carried onto the rebuilt world"
+            );
+        }
+        Ok(loaded.entities)
+    }
+
+    /// Load a single mock collection file.
+    ///
+    /// Runs the collection's `world:` block first, because a `serve:` mock in
+    /// the same file resolves against the world that block populates. Loading
+    /// one collection in isolation therefore rebuilds the world's store; the
+    /// directory loader batches the phase across every file instead.
     pub async fn load_collection_file(&self, path: &std::path::Path) -> crate::Result<usize> {
         use crate::config::MockCollectionConfig;
 
@@ -646,6 +774,79 @@ impl MockRegistry {
             return Ok(0);
         }
 
+        self.apply_collection_world(&collection, path).await?;
+        self.register_collection(collection, path).await
+    }
+
+    /// Populate the world from a collection's `world:` block.
+    ///
+    /// Settings first, then schemas: both rebuild the store, and applying the
+    /// counts before seeding avoids building a census twice.
+    #[cfg(feature = "spec")]
+    async fn apply_collection_world(
+        &self,
+        collection: &crate::config::MockCollectionConfig,
+        path: &std::path::Path,
+    ) -> crate::Result<()> {
+        let Some(config) = &collection.world else {
+            return Ok(());
+        };
+
+        let settings = crate::core::WorldSettings {
+            seed: config.seed,
+            default_count: config.count,
+            counts: config
+                .counts
+                .iter()
+                .flatten()
+                .map(|(entity, count)| (LeanString::from(entity.as_str()), *count))
+                .collect(),
+        };
+        self.world.configure(&settings, path)?;
+
+        let config_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        for schema in &config.schemas {
+            let resolved = config_dir.join(schema);
+            let loaded =
+                crate::spec::load_schema_file(&resolved, &self.world, config.lenient).await?;
+            for defect in &loaded.repaired {
+                tracing::warn!(file = %resolved.display(), defect = %defect, "repaired a malformed schema");
+            }
+            for conflict in &loaded.conflicts {
+                tracing::warn!(
+                    file = %resolved.display(),
+                    conflict = %conflict,
+                    "a write could not be carried onto the rebuilt world"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "spec"))]
+    #[allow(clippy::unused_async)]
+    async fn apply_collection_world(
+        &self,
+        collection: &crate::config::MockCollectionConfig,
+        path: &std::path::Path,
+    ) -> crate::Result<()> {
+        if collection.world.is_some() {
+            tracing::warn!(
+                file = %path.display(),
+                "`world:` ignored; build with the `spec` feature to load schemas"
+            );
+        }
+        Ok(())
+    }
+
+    /// Register a parsed collection's mocks, expanding any `serve:` against
+    /// the world.
+    async fn register_collection(
+        &self,
+        collection: crate::config::MockCollectionConfig,
+        path: &std::path::Path,
+    ) -> crate::Result<usize> {
         // Extract the directory of the config file for resolving relative paths
         let config_dir = path.parent();
 
@@ -653,7 +854,7 @@ impl MockRegistry {
         let global_vars = self.global_vars.read().clone();
 
         let definitions = collection
-            .into_mock_definitions_with_dir(config_dir, global_vars.as_ref())
+            .into_mock_definitions_in(config_dir, global_vars.as_ref(), Some(&self.world))
             .await
             .map_err(|e| {
                 crate::mp_err!("Failed to convert mocks from {}: {}", path.display(), e)
@@ -1517,11 +1718,68 @@ impl MockRegistry {
                     }
                     Ok(count)
                 }
+                #[cfg(feature = "spec")]
+                "graphql" | "gql" => self.reload_schema_file(path).await,
                 _ => Err(crate::mp_err!("Unsupported file extension: {ext}")),
             }
         } else {
             Err(crate::mp_err!("File has no extension"))
         }
+    }
+
+    /// Re-read a schema and rebuild the routes bound to it.
+    ///
+    /// Reading the schema alone is not enough: entity *data* is read through
+    /// the world on every request, so live routes pick that up, but the
+    /// executable schema is built once from the SDL. A renamed field would
+    /// otherwise keep serving under its old name until restart.
+    ///
+    /// Only collections that actually carry a `serve:` are re-registered, and
+    /// only in the schema's own directory — a schema in one tree cannot be
+    /// bound by a collection the loader never looked at.
+    #[cfg(feature = "spec")]
+    async fn reload_schema_file(&self, path: &std::path::Path) -> crate::Result<usize> {
+        let entities = self.load_schema_file(path).await?;
+        tracing::debug!(file = %path.display(), entities, "reloaded a schema");
+
+        let Some(dir) = path.parent() else {
+            return Ok(0);
+        };
+        let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+            return Ok(0);
+        };
+
+        let mut reloaded = 0;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let candidate = entry.path();
+            if !candidate
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e, "json" | "yaml" | "yml"))
+            {
+                continue;
+            }
+
+            let Ok(collection) = crate::config::MockCollectionConfig::from_file(&candidate).await
+            else {
+                continue;
+            };
+            if !collection.enabled || collection.mocks.iter().all(|mock| mock.serve.is_none()) {
+                continue;
+            }
+
+            for id in self.get_mocks_by_source(&candidate.to_string_lossy()) {
+                self.remove_mock(&id);
+            }
+            match self.register_collection(collection, &candidate).await {
+                Ok(count) => reloaded += count,
+                Err(e) => {
+                    tracing::warn!(file = %candidate.display(), error = %e, "failed to rebind after a schema reload");
+                }
+            }
+        }
+
+        Ok(reloaded)
     }
 
     /// Remove all mocks from a specific source file
@@ -1663,7 +1921,11 @@ mod tests {
     fn handler_mocks_do_not_disable_the_exact_index() {
         let registry = MockRegistry::with_mocks(vec![
             exact_mock("inline", "/a", BodySource::inline("{}")),
-            exact_mock("handler", "/b", handler_body(crate::types::ContextNeeds::ALL)),
+            exact_mock(
+                "handler",
+                "/b",
+                handler_body(crate::types::ContextNeeds::ALL),
+            ),
         ]);
 
         // A handler matches on method+path like any other mock; treating it as

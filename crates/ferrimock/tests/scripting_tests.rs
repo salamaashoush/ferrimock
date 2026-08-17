@@ -2140,3 +2140,47 @@ proxy.addEventListener('connection', ({{ client, server }}) => {{
         assert_eq!(third, "roundtrip");
     }
 }
+
+/// A generator that returns a number has to reach a script as a number.
+///
+/// `serde_json/arbitrary_precision` is force-enabled workspace-wide by
+/// rolldown, and under it `Value::Number`'s `Serialize` emits a private
+/// one-key map — so `fake.price()` used to arrive as an object. The
+/// bindings walk JSON into native values instead of serialising it; this
+/// pins that.
+#[tokio::test(flavor = "multi_thread")]
+async fn fake_generators_returning_numbers_arrive_as_numbers() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write_mock(
+        dir.path(),
+        "numbers.mjs",
+        r"
+http.get('/numbers', () => {
+    const price = fake.price({ min: 1, max: 100 });
+    return HttpResponse.json({
+        priceType: typeof price,
+        // A tagged map would not compare, so this pins a real number.
+        arithmetic: price + 1 > price,
+        inRange: price >= 1 && price <= 100,
+        // `fake_amount` is a formatted string, not a number — kept here so
+        // the test says which generators are which.
+        amountType: typeof fake.amount(),
+        uuidType: typeof fake.uuid(),
+    });
+});
+",
+    );
+
+    let host = ScriptHost::new();
+    let mocks = host.load_file(&path, None).await.expect("load");
+    let resp = call_handler(&mocks[0], request("GET", "/numbers"))
+        .await
+        .expect("handler");
+    let body: serde_json::Value = serde_json::from_slice(&resp.body).expect("json body");
+
+    assert_eq!(body["priceType"], "number", "unexpected: {body}");
+    assert_eq!(body["arithmetic"], true, "a number has to do arithmetic");
+    assert_eq!(body["inRange"], true, "unexpected: {body}");
+    assert_eq!(body["amountType"], "string");
+    assert_eq!(body["uuidType"], "string");
+}

@@ -1,0 +1,20 @@
+type NapiUser {
+  id: ID!
+  name: String!
+  email: String!
+}
+
+type NapiFolder {
+  id: ID!
+  name: String!
+  owner: NapiUser!
+}
+
+type Query {
+  napiUsers: [NapiUser!]!
+  napiFolders: [NapiFolder!]!
+}
+
+type Mutation {
+  createNapiFolder(name: String!): NapiFolder
+}

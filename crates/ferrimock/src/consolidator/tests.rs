@@ -42,6 +42,7 @@ fn create_test_mock(id: &str, method: &str, url: &str, response_body: &str) -> M
         network_error: None,
         sse: None,
         ws: None,
+        serve: None,
     }
 }
 
@@ -75,6 +76,7 @@ async fn test_consolidation_creates_valid_mocks() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -171,6 +173,7 @@ async fn test_consolidation_uses_modern_url_format() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -234,6 +237,7 @@ async fn test_consolidation_generates_concise_output() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     // Serialize original collection
@@ -299,6 +303,7 @@ async fn test_template_generation_for_varying_fields() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -356,6 +361,7 @@ async fn test_duplicate_removal() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -393,6 +399,7 @@ async fn test_express_style_pattern_generation() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -463,6 +470,7 @@ async fn test_uuid_pattern_generation() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -520,6 +528,7 @@ async fn test_consolidation_with_disabled_templates() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let options = ConsolidatorOptions {
@@ -568,6 +577,7 @@ async fn test_consolidation_preserves_mock_properties() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -604,6 +614,7 @@ async fn test_consolidation_statistics_accuracy() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -639,6 +650,7 @@ async fn test_min_pattern_threshold() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -684,6 +696,7 @@ async fn a_merged_template_is_not_outranked_by_a_recording_it_was_built_from() {
             ),
             create_test_mock("m4", "GET", "/v2/status", r#"{"error": "unavailable"}"#),
         ],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -746,6 +759,7 @@ async fn a_merged_mock_answers_with_the_id_it_matched_on() {
                 r#"{"theme": {"id": 1}, "folder": {"id": 9850348888, "name": "Three"}}"#,
             ),
         ],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -814,6 +828,7 @@ async fn a_scorer_decides_ahead_of_the_size_threshold() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let consolidate = |mocks, scorer: Option<Arc<dyn MergeScorer>>| {
@@ -865,6 +880,7 @@ async fn a_scorer_that_declines_leaves_the_size_threshold_in_charge() {
             create_test_mock("m1", "GET", "/api/items/1", r#"{"id": 1}"#),
             create_test_mock("m2", "GET", "/api/items/2", r#"{"id": 2}"#),
         ],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::with_options(ConsolidatorOptions {
@@ -908,6 +924,7 @@ async fn test_non_json_responses_not_templated() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1012,6 +1029,7 @@ async fn test_priority_aware_grouping() {
         enabled: true,
         vars: None,
         mocks: vec![mock_low, mock_high],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1045,6 +1063,7 @@ async fn test_enabled_state_grouping() {
         enabled: true,
         vars: None,
         mocks: vec![mock_enabled, mock_disabled],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1123,6 +1142,7 @@ async fn test_fuzzy_pagination_field_detection() {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         },
         MockConfig {
             id: "test-2".into(),
@@ -1152,6 +1172,7 @@ async fn test_fuzzy_pagination_field_detection() {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         },
     ];
 
@@ -1252,6 +1273,7 @@ async fn test_consolidation_groups_by_priority() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1298,6 +1320,7 @@ async fn test_consolidation_empty_collection() {
         enabled: true,
         vars: None,
         mocks: vec![],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1322,6 +1345,7 @@ async fn test_consolidation_single_mock() {
             "/api/solo",
             r#"{"ok": true}"#,
         )],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1348,6 +1372,7 @@ async fn test_consolidation_mixed_content_types() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1391,6 +1416,7 @@ async fn test_consolidation_special_characters_in_body() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1447,6 +1473,7 @@ async fn test_consolidation_output_is_valid_json() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1481,6 +1508,7 @@ async fn test_consolidation_different_methods_not_grouped() {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1507,6 +1535,7 @@ async fn test_consolidation_preserves_collection_metadata() {
             "/api/test",
             r#"{"ok": true}"#,
         )],
+        world: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -2043,6 +2072,7 @@ mod generalizing {
             enabled: true,
             vars: None,
             mocks,
+            world: None,
         };
         MockConsolidator::with_options(ConsolidatorOptions {
             generalize: true,

@@ -9,8 +9,8 @@
 use lean_string::LeanString;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
+use crate::core::world::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
 use crate::fake_data::{self, rng};
-use crate::spec::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
 use crate::type_detector::FieldType;
 
 /// How many elements a generated list holds when nothing constrains it.
@@ -50,7 +50,11 @@ pub fn generate(spec: &ValueSpec, path: &str, seed: ValueSeed<'_>) -> JsonValue 
 }
 
 /// Generate a whole record's value fields.
-pub fn generate_fields(fields: &[FieldDef], prefix: &str, seed: ValueSeed<'_>) -> JsonMap<String, JsonValue> {
+pub fn generate_fields(
+    fields: &[FieldDef],
+    prefix: &str,
+    seed: ValueSeed<'_>,
+) -> JsonMap<String, JsonValue> {
     let mut record = JsonMap::new();
     for field in fields {
         if field.relation().is_some() {
@@ -66,12 +70,7 @@ pub fn generate_fields(fields: &[FieldDef], prefix: &str, seed: ValueSeed<'_>) -
     record
 }
 
-fn generate_in_scope(
-    spec: &ValueSpec,
-    path: &str,
-    seed: ValueSeed<'_>,
-    derived: u64,
-) -> JsonValue {
+fn generate_in_scope(spec: &ValueSpec, path: &str, seed: ValueSeed<'_>, derived: u64) -> JsonValue {
     match spec {
         ValueSpec::Scalar(scalar) => scalar_value(scalar, path),
         ValueSpec::Enum(options) => options
@@ -141,9 +140,7 @@ fn semantic_value(field_type: &FieldType, constraints: &Constraints) -> Option<J
         FieldType::ETag => JsonValue::String(fake_data::fake_etag()),
         FieldType::NumericStringId => JsonValue::String(fake_data::fake_numeric_id()),
         FieldType::ApiEndpoint => JsonValue::String(fake_data::fake_api_endpoint()),
-        FieldType::Timestamp { format } => {
-            JsonValue::String(fake_data::fake_timestamp_in(*format))
-        }
+        FieldType::Timestamp { format } => JsonValue::String(fake_data::fake_timestamp_in(*format)),
         FieldType::IsoDate { format } => JsonValue::String(fake_data::fake_date_in(*format)),
         FieldType::Boolean { spelling } => {
             let flag = fake_data::fake_boolean();
@@ -215,7 +212,10 @@ fn bounded_string(constraints: &Constraints, path: &str) -> String {
     if text.is_empty() {
         // A zero-length bound is legal and a caller still needs something
         // stable to key on; the path is the only stable thing available.
-        text = path.chars().take(constraints.max_length.unwrap_or(0)).collect();
+        text = path
+            .chars()
+            .take(constraints.max_length.unwrap_or(0))
+            .collect();
     }
     text
 }
@@ -370,7 +370,8 @@ mod tests {
 
     #[test]
     fn semantic_types_beat_the_declared_kind() {
-        let spec = ValueSpec::Scalar(Scalar::new(ScalarKind::String).with_semantic(FieldType::Email));
+        let spec =
+            ValueSpec::Scalar(Scalar::new(ScalarKind::String).with_semantic(FieldType::Email));
         let value = generate(&spec, "contact", ValueSeed::new(5, "User", 0));
         assert!(value.as_str().unwrap().contains('@'));
     }
@@ -401,7 +402,7 @@ mod tests {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod shape_tests {
     use super::*;
-    use crate::spec::model::TextShape;
+    use crate::core::world::model::TextShape;
 
     #[test]
     fn a_word_shaped_field_is_a_word_not_a_sentence() {

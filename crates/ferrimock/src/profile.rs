@@ -249,6 +249,7 @@ impl ConsolidationProfile for CompositeProfile {
             .iter()
             .find_map(|profile| profile.redact(field, value))
     }
+
 }
 
 /// The profile used when a caller supplies none.

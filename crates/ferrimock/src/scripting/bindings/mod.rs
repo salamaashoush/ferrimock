@@ -1,8 +1,10 @@
 //! Host bindings installed on every script VM: the MSW-compatible
 //! surface (`http`, `graphql`, `HttpResponse`, `FormData`, `File`,
-//! `ReadableStream`, `fake`, `delay`) plus `console`.
+//! `ReadableStream`, `fake`, `delay`), `world` for the shared entity store,
+//! plus `console`.
 
 mod console;
+pub mod convert;
 mod delay;
 mod fake;
 pub mod form_data;
@@ -12,6 +14,7 @@ pub mod response;
 pub mod sse;
 pub mod streams;
 mod url;
+pub mod world;
 pub mod ws;
 
 use rquickjs::atom::PredefinedAtom;
@@ -64,6 +67,7 @@ pub fn install_all(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     ws::install(ctx)?;
     url::install(ctx)?;
     fake::install(ctx)?;
+    world::install(ctx)?;
     delay::install(ctx)?;
     console::install(ctx)?;
     Ok(())

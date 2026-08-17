@@ -108,6 +108,45 @@ pub enum Written {
     Removed(EntityKey),
 }
 
+/// Every write applied to a store, lifted out so a rebuilt store can take them
+/// back on. The base layer is pure, so this is the entire mutable state.
+#[derive(Debug, Clone, Default)]
+pub struct DeltaSnapshot {
+    entries: Vec<(LeanString, EntityKey, Delta)>,
+    created: FxHashMap<LeanString, Vec<EntityKey>>,
+    next_created: u64,
+}
+
+impl DeltaSnapshot {
+    /// How many writes it carries. Zero means the world is exactly its seed.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// A write that could not be carried onto a rebuilt store.
+///
+/// Only ever a patch: a creation carries its own fields and a tombstone on a
+/// key that no longer exists has already got what it wanted.
+#[derive(Debug, Clone)]
+pub struct DeltaConflict {
+    pub entity: LeanString,
+    pub key: EntityKey,
+    pub reason: &'static str,
+}
+
+impl std::fmt::Display for DeltaConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "`{}` `{}`: {}", self.entity, self.key, self.reason)
+    }
+}
+
 /// The keys of one entity, without any of their fields.
 #[derive(Debug, Clone, Default)]
 struct Census {
@@ -188,11 +227,7 @@ impl EntityStore {
     #[must_use]
     pub fn count(&self, entity: &str) -> usize {
         let derived = self.census.get(entity).map_or(0, |c| c.derived.len());
-        let created = self
-            .created
-            .read()
-            .get(entity)
-            .map_or(0, Vec::len);
+        let created = self.created.read().get(entity).map_or(0, Vec::len);
         let tombstoned = self
             .delta
             .iter()
@@ -290,6 +325,16 @@ impl EntityStore {
             return Err(crate::mp_err!("Unknown entity `{entity}`"));
         }
 
+        // A page with nothing to filter or sort by is answerable from the
+        // census alone: keys are already in their final order, so only the
+        // requested window has to be derived. Without this a `limit: 25` on a
+        // large entity builds every record and throws all but 25 away —
+        // measurably the difference between microseconds and tens of
+        // milliseconds on the request path.
+        if selection.filters.is_empty() && selection.sort.is_empty() {
+            return Ok(self.page_from_keys(entity, &selection.page));
+        }
+
         let mut records: Vec<Record> = self
             .keys(entity)
             .into_iter()
@@ -299,6 +344,55 @@ impl EntityStore {
 
         sort_records(&mut records, &selection.sort);
         Ok(paginate(&records, &selection.page))
+    }
+
+    /// Slice a page out of an entity's keys, deriving only that window.
+    ///
+    /// Sound only when nothing filters or sorts: cursors are the record's key
+    /// and `keys` is already the order `paginate` would have produced, so the
+    /// answer is identical to materialising everything first.
+    fn page_from_keys(&self, entity: &str, page: &Page) -> PageResult {
+        let keys = self.keys(entity);
+        let total = keys.len();
+
+        let (start, end) = match page {
+            Page::All => (0, total),
+            Page::Offset { skip, take } => {
+                let start = (*skip).min(total);
+                (start, start.saturating_add(*take).min(total))
+            }
+            Page::After { cursor, first } => {
+                let start = cursor
+                    .as_ref()
+                    .and_then(|c| key_position(&keys, c).map(|i| i + 1))
+                    .unwrap_or(0)
+                    .min(total);
+                (start, start.saturating_add(*first).min(total))
+            }
+            Page::Before { cursor, last } => {
+                let end = cursor
+                    .as_ref()
+                    .and_then(|c| key_position(&keys, c))
+                    .unwrap_or(total)
+                    .min(total);
+                (end.saturating_sub(*last), end)
+            }
+        };
+
+        let window = keys.get(start..end).unwrap_or_default();
+        let records: Vec<Record> = window
+            .iter()
+            .filter_map(|key| self.get(entity, key))
+            .collect();
+
+        PageResult {
+            has_previous: start > 0,
+            has_next: end < total,
+            start_cursor: window.first().map(|key| Cursor::new(key.to_string())),
+            end_cursor: window.last().map(|key| Cursor::new(key.to_string())),
+            records,
+            total,
+        }
     }
 
     /// Follow a relation from one instance.
@@ -396,35 +490,41 @@ impl EntityStore {
             // holds several files. Membership has to be computed the same way
             // from either end, or the two directions disagree.
             if points_back_many(target, entity) {
-                children.extend(self.keys(member.as_str()).into_iter().filter_map(
-                    |child_key| {
-                        let child_ordinal = self.ordinal_of(member.as_str(), &child_key)?;
-                        self.shares_membership(
-                            entity,
-                            parent_ordinal,
-                            member.as_str(),
-                            child_ordinal,
-                            parent_count,
-                        )
-                        .then(|| self.get(member.as_str(), &child_key))?
-                    },
-                ));
+                children.extend(
+                    self.keys(member.as_str())
+                        .into_iter()
+                        .filter_map(|child_key| {
+                            let child_ordinal = self.ordinal_of(member.as_str(), &child_key)?;
+                            self.shares_membership(
+                                entity,
+                                parent_ordinal,
+                                member.as_str(),
+                                child_ordinal,
+                                parent_count,
+                            )
+                            .then(|| self.get(member.as_str(), &child_key))?
+                        }),
+                );
                 continue;
             }
 
             let role = reciprocal_field(target, entity).unwrap_or_default();
-            children.extend(self.keys(member.as_str()).into_iter().filter_map(|child_key| {
-                let child_ordinal = self.ordinal_of(member.as_str(), &child_key)?;
-                let owner = owner_ordinal(
-                    self.config.seed,
-                    member.as_str(),
-                    child_ordinal,
-                    entity,
-                    &role,
-                    parent_count,
-                )?;
-                (owner == parent_ordinal).then(|| self.get(member.as_str(), &child_key))?
-            }));
+            children.extend(
+                self.keys(member.as_str())
+                    .into_iter()
+                    .filter_map(|child_key| {
+                        let child_ordinal = self.ordinal_of(member.as_str(), &child_key)?;
+                        let owner = owner_ordinal(
+                            self.config.seed,
+                            member.as_str(),
+                            child_ordinal,
+                            entity,
+                            &role,
+                            parent_count,
+                        )?;
+                        (owner == parent_ordinal).then(|| self.get(member.as_str(), &child_key))?
+                    }),
+            );
         }
         children
     }
@@ -454,8 +554,14 @@ impl EntityStore {
         } else {
             right_ordinal
         };
-        membership_of(self.config.seed, anchor, anchor_count, member, member_ordinal)
-            .contains(&wanted)
+        membership_of(
+            self.config.seed,
+            anchor,
+            anchor_count,
+            member,
+            member_ordinal,
+        )
+        .contains(&wanted)
     }
 
     /// Which concrete entity an abstract link resolves to for one instance.
@@ -662,6 +768,68 @@ impl EntityStore {
         ))
     }
 
+    /// Lift every write off the store.
+    ///
+    /// The base layer is derived from the seed and never stored, so a snapshot
+    /// plus the seed is the whole world.
+    #[must_use]
+    pub fn export_delta(&self) -> DeltaSnapshot {
+        let mut entries: Vec<(LeanString, EntityKey, Delta)> = self
+            .delta
+            .iter()
+            .map(|e| {
+                let (entity, key) = e.key();
+                (entity.clone(), key.clone(), e.value().clone())
+            })
+            .collect();
+        // DashMap iterates arbitrarily; a snapshot that reorders writes would
+        // make a rebuild depend on hash order.
+        entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        DeltaSnapshot {
+            entries,
+            created: self.created.read().clone(),
+            next_created: self.next_created.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Put a snapshot's writes back on, reporting the ones that no longer fit.
+    ///
+    /// A creation carries its own fields, so it survives any rebuild. A patch
+    /// is a layer over a derived record, so it survives only while the record
+    /// it layers over still exists — shrinking an entity's count can take that
+    /// away, and the caller is told rather than left with a silent hole.
+    pub fn import_delta(&self, snapshot: DeltaSnapshot) -> Vec<DeltaConflict> {
+        let mut conflicts = Vec::new();
+
+        for (entity, key, delta) in snapshot.entries {
+            if matches!(delta, Delta::Patched(_))
+                && self.ordinal_of(entity.as_str(), &key).is_none()
+            {
+                conflicts.push(DeltaConflict {
+                    entity,
+                    key,
+                    reason: "the record this patch layered over no longer exists",
+                });
+                continue;
+            }
+            self.delta.insert((entity, key), delta);
+        }
+
+        *self.created.write() = snapshot.created;
+        self.next_created
+            .store(snapshot.next_created, Ordering::Relaxed);
+
+        conflicts
+    }
+
+    /// Drop every write, leaving exactly what the seed derives.
+    pub fn reset(&self) {
+        self.delta.clear();
+        self.created.write().clear();
+        self.next_created.store(0, Ordering::Relaxed);
+    }
+
     fn is_tombstoned(&self, entity: &str, key: &EntityKey) -> bool {
         matches!(
             self.delta.get(&(entity.into(), key.clone())).as_deref(),
@@ -814,9 +982,7 @@ fn points_back_many(entity: &EntityType, other: &str) -> bool {
 fn reciprocal_field(entity: &EntityType, target: &str) -> Option<String> {
     entity
         .relations()
-        .find(|(_, relation)| {
-            relation.target == target && relation.cardinality == Cardinality::One
-        })
+        .find(|(_, relation)| relation.target == target && relation.cardinality == Cardinality::One)
         .map(|(field, _)| field.name.to_string())
 }
 
@@ -842,10 +1008,7 @@ fn json_to_key_part(value: &JsonValue) -> Option<String> {
 /// fastest way to lose a client's trust.
 fn write_key_fields(entity: &EntityType, key: &EntityKey, fields: &mut JsonMap<String, JsonValue>) {
     for (part, value) in entity.key.iter().zip(key.parts()) {
-        fields.insert(
-            part.field.to_string(),
-            JsonValue::String(value.to_string()),
-        );
+        fields.insert(part.field.to_string(), JsonValue::String(value.to_string()));
     }
 }
 
@@ -967,6 +1130,13 @@ fn paginate(records: &[Record], page: &Page) -> PageResult {
         records: slice,
         total,
     }
+}
+
+/// Where a cursor sits among keys — the key-level twin of [`position_of`],
+/// which needs materialised records to ask the same question.
+fn key_position(keys: &[EntityKey], cursor: &Cursor) -> Option<usize> {
+    keys.iter()
+        .position(|key| key.to_string() == cursor.as_str())
 }
 
 fn position_of(records: &[Record], cursor: &Cursor) -> Option<usize> {

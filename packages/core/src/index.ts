@@ -60,8 +60,8 @@ export type {
 } from "./sse.js";
 export type { EventSourceLike } from "./event-source.js";
 
-// Ferrimock-native surface (fake data, embedded server, services)
-export { fake, FerrimockServer, services } from "@ferrimock/node";
+// Ferrimock-native surface (fake data, entity world, embedded server, services)
+export { fake, FerrimockServer, services, world } from "@ferrimock/node";
 
 export type {
   RequestHandler,

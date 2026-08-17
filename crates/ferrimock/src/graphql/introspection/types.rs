@@ -390,7 +390,10 @@ mod type_ref_tests {
     fn deeply_wrapped_round_trips() {
         let t = TypeRef::from_introspection(&wrap(
             "NON_NULL",
-            wrap("LIST", wrap("NON_NULL", wrap("LIST", wrap("NON_NULL", named("Int"))))),
+            wrap(
+                "LIST",
+                wrap("NON_NULL", wrap("LIST", wrap("NON_NULL", named("Int")))),
+            ),
         ));
         assert_eq!(t.to_string(), "[[Int!]!]!");
     }

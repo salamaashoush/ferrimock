@@ -604,7 +604,9 @@ async fn test_validate_config_directly() {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }],
+        world: None,
     };
 
     let validator = MockValidator::new();
@@ -1324,7 +1326,9 @@ async fn test_validate_config_directly_with_errors() {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }],
+        world: None,
     };
 
     let validator = MockValidator::new();
@@ -1381,6 +1385,7 @@ async fn test_validate_config_with_warnings() {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
             MockConfig {
                 id: "duplicate".into(),
@@ -1415,8 +1420,10 @@ async fn test_validate_config_with_warnings() {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
         ],
+        world: None,
     };
 
     let validator = MockValidator::new();

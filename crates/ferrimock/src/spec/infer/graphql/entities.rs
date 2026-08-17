@@ -9,11 +9,11 @@
 use lean_string::LeanString;
 use rustc_hash::FxHashSet;
 
-use crate::graphql::introspection::{ParsedSchema, TypeDefinition, TypeKind, TypeRef};
-use crate::spec::model::{
+use crate::core::world::model::{
     Cardinality, Carrier, CompositeKey, Confidence, ConnectionShape, EntityGraph, EntityType,
     FieldDef, Provenance, Relation, Rule, Scalar, ScalarKind, ValueSpec,
 };
+use crate::graphql::introspection::{ParsedSchema, TypeDefinition, TypeKind, TypeRef};
 use crate::spec::infer::descriptions::{DescriptionHint, hint};
 use crate::spec::infer::semantics::{semantic_of, text_shape_of};
 
@@ -26,12 +26,7 @@ use crate::spec::infer::semantics::{semantic_of, text_shape_of};
 const MAX_EMBED_DEPTH: usize = 4;
 
 /// The four fields the Relay spec gives `PageInfo`.
-const PAGE_INFO_FIELDS: [&str; 4] = [
-    "hasNextPage",
-    "hasPreviousPage",
-    "startCursor",
-    "endCursor",
-];
+const PAGE_INFO_FIELDS: [&str; 4] = ["hasNextPage", "hasPreviousPage", "startCursor", "endCursor"];
 
 /// What a schema says about itself, computed once and reused.
 ///
@@ -559,7 +554,13 @@ pub fn connection_types(schema: &ParsedSchema) -> Connections {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::get_unwrap, clippy::indexing_slicing)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::get_unwrap,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
     use crate::spec::infer::graphql::sdl::parse_sdl;
@@ -704,7 +705,10 @@ mod tests {
         let graph = to_entity_graph(&schema);
         let media = graph.get("Part").unwrap().field("mediaType").unwrap();
         let ValueSpec::Enum(values) = &media.value else {
-            panic!("mediaType should take its vocabulary from the description, got {:?}", media.value)
+            panic!(
+                "mediaType should take its vocabulary from the description, got {:?}",
+                media.value
+            )
         };
         assert_eq!(values, &["text/plain", "image/png"]);
     }
@@ -864,6 +868,9 @@ mod tests {
             depth += 1;
             assert!(depth < 20, "expansion should be bounded");
         }
-        assert!(depth <= MAX_EMBED_DEPTH + 1, "depth {depth} exceeded the cap");
+        assert!(
+            depth <= MAX_EMBED_DEPTH + 1,
+            "depth {depth} exceeded the cap"
+        );
     }
 }

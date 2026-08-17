@@ -128,6 +128,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             }
         })
         .collect();
@@ -138,6 +139,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     }
 }
 
@@ -242,6 +244,7 @@ async fn run_through_har(recorded: Vec<Recorded>) -> (usize, FidelityReport) {
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     };
 
     let fidelity = FidelityOptions {

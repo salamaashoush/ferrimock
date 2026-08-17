@@ -187,6 +187,11 @@ name = "script_performance"
 harness = false
 required-features = ["scripting"]
 
+[[bench]]
+name = "world_performance"
+harness = false
+required-features = ["spec"]
+
 # Uses the `graphql` module — only build under the `graphql` feature so default
 # `cargo test`/`nextest` runs don't fail to compile it.
 [[example]]

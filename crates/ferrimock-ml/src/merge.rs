@@ -334,6 +334,7 @@ async fn collection_from(
         enabled: true,
         vars: None,
         mocks,
+        world: None,
     })
 }
 
@@ -695,6 +696,7 @@ mod tests {
             enabled: true,
             vars: None,
             mocks,
+            world: None,
         }
     }
 

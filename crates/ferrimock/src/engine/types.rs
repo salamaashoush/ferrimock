@@ -230,6 +230,8 @@ impl ResponseGeneratorExt for ResponseGenerator {
     }
 
     fn can_generate_sync(&self) -> bool {
-        self.delay.is_none() && !matches!(&self.body, BodySource::File(_)) && !self.body.is_handler()
+        self.delay.is_none()
+            && !matches!(&self.body, BodySource::File(_))
+            && !self.body.is_handler()
     }
 }

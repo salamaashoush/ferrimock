@@ -12,6 +12,7 @@ mod status;
 mod store;
 pub mod types;
 pub mod verify;
+mod world;
 
 pub use state::{MockApiConfig, MockApiState};
 
@@ -19,7 +20,7 @@ mod state;
 
 use axum::{
     Router,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
 };
 
 /// Default route prefix for the mock management API.
@@ -94,6 +95,23 @@ pub fn create_mock_router_with_prefix(prefix: &str) -> Router<MockApiState> {
         .route(&format!("{p}/unmatched"), delete(verify::reset_unmatched))
         .route(&format!("{p}/suggestions"), get(verify::get_suggestions))
         // Persistence store debugging
+        // Entity world: typed, relational state, beside the untyped store
+        .route(&format!("{p}/world"), get(world::get_world))
+        .route(&format!("{p}/world/reset"), post(world::reset_world))
+        .route(&format!("{p}/world/{{entity}}"), get(world::list_entity))
+        .route(&format!("{p}/world/{{entity}}"), post(world::create_entity))
+        .route(
+            &format!("{p}/world/{{entity}}/{{key}}"),
+            get(world::get_entity),
+        )
+        .route(
+            &format!("{p}/world/{{entity}}/{{key}}"),
+            patch(world::update_entity),
+        )
+        .route(
+            &format!("{p}/world/{{entity}}/{{key}}"),
+            delete(world::delete_entity),
+        )
         .route(&format!("{p}/store"), get(store::get_all_store))
         .route(&format!("{p}/store"), delete(store::clear_store))
         .route(&format!("{p}/store/{{key}}"), get(store::get_store_key))

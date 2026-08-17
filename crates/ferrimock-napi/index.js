@@ -593,4 +593,5 @@ module.exports.fake = nativeBinding.fake
 module.exports.graphql = nativeBinding.graphql
 module.exports.http = nativeBinding.http
 module.exports.services = nativeBinding.services
+module.exports.world = nativeBinding.world
 module.exports.ws = nativeBinding.ws

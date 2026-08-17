@@ -1459,6 +1459,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
             MockConfig {
                 id: "test-2".into(),
@@ -1491,6 +1492,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
         ];
 
@@ -1678,6 +1680,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
             MockConfig {
                 id: "test-2".into(),
@@ -1717,6 +1720,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
         ];
 
@@ -1779,6 +1783,7 @@ mod tests {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }];
 
         let responses: Vec<serde_json::Value> = mocks
@@ -1839,6 +1844,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -1872,6 +1878,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
         ];
 
@@ -1921,6 +1928,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -1954,6 +1962,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
         ];
 
@@ -2007,6 +2016,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -2041,6 +2051,7 @@ mod tests {
                 network_error: None,
                 sse: None,
                 ws: None,
+                serve: None,
             },
         ];
 
@@ -2082,6 +2093,7 @@ mod tests {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }];
 
         let analysis = ResponseAnalyzer::analyze_graphql_variables(&mocks);
@@ -2117,6 +2129,7 @@ mod tests {
             network_error: None,
             sse: None,
             ws: None,
+            serve: None,
         }];
 
         let analysis = ResponseAnalyzer::analyze_graphql_variables(&mocks);
