@@ -88,6 +88,7 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
         exclude_static_assets: opts.exclude_static_assets,
         strip_sensitive_headers: opts.strip_sensitive_headers,
         strip_infrastructure_headers: opts.strip_infrastructure_headers,
+        extra_infrastructure_headers: None,
         strip_sensitive_query_params: opts.strip_sensitive_headers,
         sequence_repeated_requests: opts.sequence_repeated_requests,
         preserve_latency: opts.preserve_latency,

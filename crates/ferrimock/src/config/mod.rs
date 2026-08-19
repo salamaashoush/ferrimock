@@ -29,7 +29,7 @@ pub mod streaming;
 pub mod template_formatter;
 
 // Re-export commonly used types
-pub use har::{DomainFilter, HarLoadOptions, HarLoader, parse_har};
+pub use har::{DomainFilter, HarLoadOptions, HarLoader, HeaderFilter, parse_har};
 pub use matcher::{
     BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig,
 };

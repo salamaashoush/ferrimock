@@ -179,6 +179,28 @@ where
     }
 }
 
+/// Names infrastructure headers beyond the ones the loader already knows.
+///
+/// The built-in list covers what a browser recording picks up from proxies and
+/// CDNs everywhere -- `x-envoy-*`, `x-amz-*`, `x-forwarded-*`. A header a
+/// single deployment's gateway adds is not something the loader can guess, and
+/// leaving it in makes it part of the mock's matcher.
+///
+/// Closures with signature `Fn(&str) -> bool` automatically implement this trait.
+pub trait HeaderFilter: Send + Sync {
+    /// Returns true if the header (lowercased) is infrastructure, not payload.
+    fn is_infrastructure(&self, name: &str) -> bool;
+}
+
+impl<F> HeaderFilter for F
+where
+    F: Fn(&str) -> bool + Send + Sync,
+{
+    fn is_infrastructure(&self, name: &str) -> bool {
+        self(name)
+    }
+}
+
 /// Check if a URL points to a static asset based on file extension
 fn is_static_asset(raw_url: &str) -> bool {
     // Strip query string and fragment
@@ -434,6 +456,10 @@ pub struct HarLoadOptions {
     pub strip_sensitive_headers: bool,
     /// Remove date, server, x-envoy-*, alt-svc, etc. (default: true)
     pub strip_infrastructure_headers: bool,
+    /// Infrastructure headers a particular deployment adds, beyond the ones
+    /// every recording carries. Consulted only while
+    /// `strip_infrastructure_headers` is on.
+    pub extra_infrastructure_headers: Option<Arc<dyn HeaderFilter>>,
     /// Remove access_token, api_key from query strings (default: true)
     pub strip_sensitive_query_params: bool,
     /// Replay a request recorded several times with differing answers in the
@@ -465,6 +491,7 @@ impl Default for HarLoadOptions {
             exclude_static_assets: true,
             strip_sensitive_headers: true,
             strip_infrastructure_headers: true,
+            extra_infrastructure_headers: None,
             strip_sensitive_query_params: true,
             sequence_repeated_requests: true,
             body_output_dir: None,
@@ -487,6 +514,10 @@ impl std::fmt::Debug for HarLoadOptions {
             .field(
                 "strip_infrastructure_headers",
                 &self.strip_infrastructure_headers,
+            )
+            .field(
+                "extra_infrastructure_headers",
+                &self.extra_infrastructure_headers.is_some(),
             )
             .field(
                 "strip_sensitive_query_params",
@@ -993,6 +1024,12 @@ impl HarLoader {
             {
                 return true;
             }
+
+            if let Some(ref filter) = self.options.extra_infrastructure_headers
+                && filter.is_infrastructure(&lower)
+            {
+                return true;
+            }
         }
 
         false
@@ -1495,6 +1532,30 @@ mod tests {
         assert!(loader.should_strip_header("alt-svc"));
         assert!(loader.should_strip_header("x-amz-request-id"));
         assert!(loader.should_strip_header("x-forwarded-for"));
+    }
+
+    #[test]
+    fn a_deployment_names_its_own_infrastructure_headers() {
+        let loader = HarLoader::with_options(HarLoadOptions {
+            extra_infrastructure_headers: Some(Arc::new(|name: &str| {
+                name.starts_with("x-gateway-")
+            })),
+            ..Default::default()
+        });
+        assert!(loader.should_strip_header("X-Gateway-Route"));
+        assert!(!loader.should_strip_header("x-request-id"));
+    }
+
+    #[test]
+    fn extra_infrastructure_headers_follow_the_toggle() {
+        let loader = HarLoader::with_options(HarLoadOptions {
+            strip_infrastructure_headers: false,
+            extra_infrastructure_headers: Some(Arc::new(|name: &str| {
+                name.starts_with("x-gateway-")
+            })),
+            ..Default::default()
+        });
+        assert!(!loader.should_strip_header("x-gateway-route"));
     }
 
     #[test]
