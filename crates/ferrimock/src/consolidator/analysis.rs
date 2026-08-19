@@ -130,7 +130,7 @@ impl GraphQLVariableAnalysis {
     }
 }
 
-// Type conversions to mock-codegen types
+// Type conversions to codegen types
 
 impl From<&PaginationPattern> for crate::codegen::PaginationInfo {
     fn from(pattern: &PaginationPattern) -> Self {

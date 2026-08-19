@@ -1,6 +1,6 @@
 //! Template code generation utilities
 //!
-//! This crate provides utilities for converting field types (from `type-detector`)
+//! This module provides utilities for converting field types (from the type detector)
 //! into Tera template expressions for mock data generation.
 //!
 //! It includes:

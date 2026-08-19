@@ -1,6 +1,6 @@
-//! Re-export all types from mock-types and provide template rendering extensions
+//! Re-export all types from `crate::types` and provide template rendering extensions
 
-// Re-export everything from mock-types
+// Re-export everything from `crate::types`
 pub use crate::types::*;
 
 use http::HeaderMap;
@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 /// Extension trait for ResponseGenerator to add template rendering support
 ///
 /// This trait provides the original `generate()` and `generate_dynamic()` methods
-/// that were removed from mock-types to avoid circular dependencies.
+/// that were removed from `crate::types` to avoid circular dependencies.
 pub trait ResponseGeneratorExt {
     /// Generate the response as bytes (supports templates)
     fn generate(

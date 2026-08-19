@@ -1549,7 +1549,7 @@ async fn test_consolidation_preserves_collection_metadata() {
     assert!(consolidated.enabled, "Should preserve enabled state");
 }
 
-// Note: End-to-end recording -> consolidation test is in mock-recorder
+// Note: End-to-end recording -> consolidation test lives with the recorder
 // (test_streaming_output_loadable_by_consolidator) since it needs the recorder crate.
 
 /// A GraphQL request is its operation *and* its variables.

@@ -1,7 +1,6 @@
 //! Terminal UI utilities for ferrimock CLI
 //!
-//! Provides formatting helpers for CLI output. This module replaces the
-//! cli-ui crate with a self-contained implementation using colored and indicatif.
+//! Provides formatting helpers for CLI output using colored and indicatif.
 
 use colored::Colorize;
 use comfy_table::{Cell, CellAlignment, Color, Table, presets};

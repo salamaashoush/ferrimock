@@ -2151,7 +2151,7 @@ mocks:
       headers:
         add:
           x-trace-id: test-trace
-          x-forwarded-by: gateway
+          x-forwarded-by: mock-gateway
         remove:
           - x-debug
       query:

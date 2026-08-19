@@ -1291,8 +1291,8 @@ impl ResponseGenerator {
 
     /// Generate the response body for non-template sources only
     ///
-    /// Note: Template rendering is not available in mock-types.
-    /// Use mock-template or mock-engine for template support.
+    /// Note: Template rendering is not available here. Use the engine's
+    /// `ResponseGeneratorExt` for template support.
     pub async fn generate_static(&self) -> Result<bytes::Bytes, crate::FerrimockError> {
         // Apply delay if configured
         if let Some(delay) = self.delay {
@@ -1313,7 +1313,7 @@ impl ResponseGenerator {
                 Ok((**cached_bytes).clone())
             }
             BodySource::Template { .. } => Err(crate::mp_err!(
-                "Template rendering not available in mock-types. Use mock-template or mock-engine."
+                "Template rendering not available here. Use the engine's ResponseGeneratorExt."
             )),
             BodySource::Handler { .. } | BodySource::ForeignHandler(_) => Err(crate::mp_err!(
                 "Handler-based responses require generate_dynamic(). Use the engine's ResponseGeneratorExt."

@@ -18,7 +18,7 @@ pub mod suggestions;
 pub mod types;
 pub mod validation;
 
-// Export only mock-engine specific types
+// Export only engine-specific types
 pub use diagnostics::{Criterion, CriterionOutcome, MatchAttempt, MatchReport};
 pub use har_export::export_mocks_to_har;
 pub use matcher::{MockAction, MockMatch, MockMatcher};

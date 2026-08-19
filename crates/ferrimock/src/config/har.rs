@@ -987,7 +987,6 @@ impl HarLoader {
 
             // Prefix-based infrastructure headers
             if lower.starts_with("x-envoy-")
-                || lower.starts_with("x-gateway-")
                 || lower.starts_with("x-amz-")
                 || lower.starts_with("x-cdn-")
                 || lower.starts_with("x-forwarded-")
