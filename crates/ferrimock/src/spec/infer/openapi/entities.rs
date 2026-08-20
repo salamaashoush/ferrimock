@@ -1270,7 +1270,7 @@ components:
     }
 
     #[test]
-    fn a_field_named_like_another_entitys_key_becomes_a_link() {
+    fn a_field_named_like_another_entity_key_becomes_a_link() {
         let (_, inference) = filestore();
         let folder = inference.graph.get("Folder").unwrap();
 

@@ -7,6 +7,8 @@ nto = "nto"
 Nd = "Nd"
 # An identifier prefix a real API mints: `wrk_9s2Kf3aB1`
 wrk = "wrk"
+# "matchers are ANDed" -- the boolean operator, not a misspelt `Dead`
+Ded = "Ded"
 
 [files]
 extend-exclude = [
