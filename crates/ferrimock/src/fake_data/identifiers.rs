@@ -11,6 +11,52 @@ pub fn fake_uuid() -> String {
 }
 
 /// Generate a random ISBN
+/// A ULID: a millisecond timestamp then randomness, in Crockford base32.
+///
+/// The point is the ordering. A v4 uuid carries nothing, so sorting a
+/// collection by id puts it in an order unrelated to when anything happened —
+/// which no real API does, because every id family in use either counts or
+/// embeds a clock. Twenty-six characters, lexicographically sortable, and
+/// still opaque to a client.
+#[must_use]
+pub fn ulid_at(millis: i64, high: u64, low: u64) -> String {
+    const CROCKFORD: [u8; 32] = *b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+    let mut written = String::with_capacity(26);
+    let time = u64::try_from(millis.max(0)).unwrap_or(0) & ((1 << 48) - 1);
+    // Ten characters of time, most significant first, then sixteen of noise.
+    for slot in (0..10).rev() {
+        let at = usize::try_from((time >> (slot * 5)) & 0x1f).unwrap_or(0);
+        written.push(char::from(CROCKFORD.get(at).copied().unwrap_or(b'0')));
+    }
+    for word in [high, low] {
+        for slot in (0..8_u32).rev() {
+            let at = usize::try_from((word >> (slot * 5)) & 0x1f).unwrap_or(0);
+            written.push(char::from(CROCKFORD.get(at).copied().unwrap_or(b'0')));
+        }
+    }
+    written
+}
+
+/// A short prefix an entity's ids can be told apart by.
+///
+/// A real API's opaque ids say what they address — `fold_`, `usr_`, `whsec_` —
+/// so an id pasted into a bug report can be recognised without its context.
+#[must_use]
+pub fn id_prefix(entity: &str) -> String {
+    let letters: String = entity
+        .chars()
+        .filter(char::is_ascii_alphabetic)
+        .flat_map(char::to_lowercase)
+        .take(4)
+        .collect();
+    if letters.is_empty() {
+        "obj".to_string()
+    } else {
+        letters
+    }
+}
+
 pub fn fake_isbn() -> String {
     Isbn().fake_with_rng(&mut rng())
 }

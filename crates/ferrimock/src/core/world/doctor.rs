@@ -602,16 +602,27 @@ fn check_id_time_order(entity: &EntityType, records: &[Record], report: &mut Rep
         );
         return;
     }
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    // The way a client would sort them: a numeric id sorts by its value, and
+    // an opaque one by its text.
+    let numeric = pairs.iter().all(|(key, _)| key.parse::<i128>().is_ok());
+    if numeric {
+        pairs.sort_by_key(|(key, _)| key.parse::<i128>().unwrap_or(0));
+    } else {
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+
     let stamps: Vec<i64> = pairs.into_iter().map(|(_, stamp)| stamp).collect();
+    // Signed, not absolute: an id that counts *backwards* through time is as
+    // wrong as one that carries no time at all, and a client comparing two of
+    // them would infer the opposite of the truth.
     let agreement = concordance(&stamps);
-    if agreement.abs() < AGREES_ABOVE {
+    if agreement < AGREES_ABOVE {
         report.fail(
             Check::IdTimeOrder,
             subject,
             format!(
-                "key order and time agree {:.0}% of the time over {} record(s)",
-                (agreement.abs() * 100.0),
+                "id order and time agree {:.0}% of the time over {} record(s)",
+                agreement * 100.0,
                 stamps.len()
             ),
         );

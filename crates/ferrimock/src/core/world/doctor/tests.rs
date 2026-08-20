@@ -114,14 +114,13 @@ fn skipped(report: &Report, check: Check) -> Vec<&Unmeasured> {
 fn the_doctor_names_the_tells_the_generators_leave() {
     let report = examine(&wide_world(3, 400));
 
-    for check in [Check::SmallVocabulary, Check::IdTimeOrder] {
-        assert!(
-            !failed(&report, check).is_empty(),
-            "`{}` should fire on the world as it stands: {}",
-            check.name(),
-            check.tell()
-        );
-    }
+    let check = Check::SmallVocabulary;
+    assert!(
+        !failed(&report, check).is_empty(),
+        "`{}` should fire on the world as it stands: {}",
+        check.name(),
+        check.tell()
+    );
 }
 
 /// Closed tells. Each of these read as a flat line, a constant, or a support
@@ -137,6 +136,7 @@ fn the_calendar_no_longer_gives_the_world_away() {
         Check::ConstantListLength,
         Check::FairCoin,
         Check::UniformEnum,
+        Check::IdTimeOrder,
     ] {
         assert!(
             failed(&report, check).is_empty(),

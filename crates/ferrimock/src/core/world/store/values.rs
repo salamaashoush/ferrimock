@@ -11,6 +11,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::core::world::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
 use crate::core::world::store::bus;
+use crate::core::world::store::clock;
 use crate::core::world::store::distribution::{
     self, Ranking, Spread, falls_within, lopsided_chance,
 };
@@ -55,6 +56,8 @@ pub struct ValueSeed<'a> {
     pub seed: u64,
     pub entity: &'a str,
     pub ordinal: u64,
+    /// When this record came into being.
+    pub arrived: i64,
 }
 
 impl<'a> ValueSeed<'a> {
@@ -64,6 +67,22 @@ impl<'a> ValueSeed<'a> {
             seed,
             entity,
             ordinal,
+            arrived: clock::moment_of(seed, entity, ordinal),
+        }
+    }
+
+    /// A record whose arrival the store already knows.
+    ///
+    /// A record a client just created came into being now, whatever ordinal
+    /// it derives its values from — its ordinal sits past the census, which
+    /// is where the *oldest* instances are.
+    #[must_use]
+    pub fn arriving(seed: u64, entity: &'a str, ordinal: u64, arrived: i64) -> Self {
+        Self {
+            seed,
+            entity,
+            ordinal,
+            arrived,
         }
     }
 
@@ -459,8 +478,16 @@ fn semantic_value(
         FieldType::ETag => JsonValue::String(fake_data::fake_etag()),
         FieldType::NumericStringId => JsonValue::String(fake_data::fake_numeric_id()),
         FieldType::ApiEndpoint => JsonValue::String(fake_data::fake_api_endpoint()),
-        FieldType::Timestamp { format } => JsonValue::String(fake_data::fake_timestamp_in(*format)),
-        FieldType::IsoDate { format } => JsonValue::String(fake_data::fake_date_in(*format)),
+        // The world's clock, not a fresh draw: a record's timestamps are a
+        // fact about when it arrived, and every field of it moves together.
+        FieldType::Timestamp { format } => JsonValue::String(fake_data::write_timestamp(
+            moment(seed.arrived, derived, path),
+            *format,
+        )),
+        FieldType::IsoDate { format } => JsonValue::String(fake_data::write_date(
+            moment(seed.arrived, derived, path),
+            *format,
+        )),
         FieldType::Boolean { spelling } => {
             let flag = falls_within(lopsided_chance(seed.per_field(path, "flag")), derived);
             let (falsy, truthy) = spelling.pair();
@@ -572,6 +599,18 @@ fn bounded_string(constraints: &Constraints, path: &str) -> String {
     text
 }
 
+/// The instant one timestamp field of a record names.
+///
+/// A record was created, then touched, then closed, so each field sits its own
+/// distance past the record's arrival and `order_lifecycle` deals the results
+/// back out in the order the names imply.
+fn moment(arrived: i64, derived: u64, path: &str) -> chrono::DateTime<chrono::Utc> {
+    let leaf = path.rsplit('.').next().unwrap_or(path);
+    let stage = lifecycle_rank(leaf).unwrap_or(0);
+    chrono::DateTime::from_timestamp(clock::field_moment(arrived, derived, stage), 0)
+        .unwrap_or_else(chrono::Utc::now)
+}
+
 /// How a number inside a declared range is spread.
 ///
 /// Two decades or more and equal-mass-per-decade is the realistic answer;
@@ -645,12 +684,37 @@ fn json_float(value: f64, low: f64, high: f64) -> JsonValue {
 ///
 /// Keys must be derivable without materialising the record: the census hands
 /// out keys, and only a read that actually happens builds the fields.
+/// When an instance came into being.
+///
+/// An id has to carry this or it cannot sort. A sequential number already
+/// does, because ordinal and age rise together; an opaque one has to embed it.
+#[derive(Debug, Clone, Copy)]
+pub struct Arrival {
+    pub moment: i64,
+}
+
+impl Arrival {
+    #[must_use]
+    pub fn seeded(seed: u64, entity: &str, ordinal: u64) -> Self {
+        Self {
+            moment: clock::moment_of(seed, entity, ordinal),
+        }
+    }
+
+    /// A record a client made, which is newer than anything the seed derived.
+    #[must_use]
+    pub const fn created(moment: i64) -> Self {
+        Self { moment }
+    }
+}
+
 pub fn derive_key_value(
     seed: u64,
     entity: &str,
     field: Option<&str>,
     key_field: &Scalar,
     ordinal: u64,
+    arrival: Arrival,
 ) -> LeanString {
     // A key of one part keeps the stream and the wording it has always had, so
     // adding composite keys did not renumber every world that already exists —
@@ -670,16 +734,44 @@ pub fn derive_key_value(
     // is the whole point: a field named `id` reads as a uuid to the detector,
     // so a document declaring `id: { type: integer }` used to be keyed by uuids
     // — which made `GET /users/1` a 404 on every integer-keyed API there is.
+    // Ordinal and age rise together, so counting from one already counts the
+    // way creation time does — and `GET /orders/1` resolving is what makes an
+    // integer-keyed document usable by hand.
+    let numbered = || LeanString::from((ordinal + 1).to_string());
+    // A `format: uuid` is the document's own answer and stands. Everything
+    // else was a guess from a field name, and a v4 uuid is the one family that
+    // carries neither a count nor a clock — so sorting a collection by id put
+    // it in an order unrelated to anything, which no real API does.
+    let declared_uuid = key_field
+        .constraints
+        .format
+        .as_deref()
+        .is_some_and(|format| format.eq_ignore_ascii_case("uuid"));
+
     match &key_field.kind {
-        ScalarKind::Int | ScalarKind::Float => LeanString::from((ordinal + 1).to_string()),
+        ScalarKind::Int | ScalarKind::Float => numbered(),
+        _ if declared_uuid => fake_data::fake_uuid().into(),
         _ => match &key_field.semantic {
             Some(FieldType::NumericStringId) => fake_data::fake_numeric_id().into(),
-            Some(FieldType::SequentialNumber { .. }) => LeanString::from((ordinal + 1).to_string()),
-            Some(FieldType::Uuid) => fake_data::fake_uuid().into(),
-            _ if key_field.kind == ScalarKind::Id => fake_data::fake_uuid().into(),
-            _ => LeanString::from(format!("{}-{}", slug(label), ordinal + 1)),
+            Some(FieldType::SequentialNumber { .. }) => numbered(),
+            Some(FieldType::Uuid) => stamped_id(arrival.moment, derived).into(),
+            _ if key_field.kind == ScalarKind::Id => stamped_id(arrival.moment, derived).into(),
+            _ => LeanString::from(format!(
+                "{}_{}",
+                fake_data::id_prefix(label),
+                stamped_id(arrival.moment, derived)
+            )),
         },
     }
+}
+
+/// An opaque id that sorts the way its record was created.
+fn stamped_id(moment: i64, derived: u64) -> String {
+    fake_data::ulid_at(
+        moment.saturating_mul(1000),
+        derived,
+        derived.rotate_left(31) ^ 0x9E37_79B9_7F4A_7C15,
+    )
 }
 
 /// A key rendered as the kind the schema declared it.
@@ -711,13 +803,6 @@ pub fn key_text(value: &JsonValue) -> Option<String> {
         JsonValue::Number(number) => Some(number.to_string()),
         _ => None,
     }
-}
-
-fn slug(name: &str) -> String {
-    name.chars()
-        .flat_map(char::to_lowercase)
-        .filter(char::is_ascii_alphanumeric)
-        .collect()
 }
 
 #[cfg(test)]
@@ -1274,15 +1359,22 @@ mod tests {
         assert!(value.as_str().unwrap().contains('@'));
     }
 
+    fn keyed(scalar: &Scalar, ordinal: u64) -> LeanString {
+        derive_key_value(
+            11,
+            "User",
+            None,
+            scalar,
+            ordinal,
+            Arrival::seeded(11, "User", ordinal),
+        )
+    }
+
     #[test]
     fn keys_are_unique_and_stable_per_ordinal() {
         let key = Scalar::new(ScalarKind::Id);
-        let first: Vec<_> = (0..50)
-            .map(|i| derive_key_value(11, "User", None, &key, i))
-            .collect();
-        let again: Vec<_> = (0..50)
-            .map(|i| derive_key_value(11, "User", None, &key, i))
-            .collect();
+        let first: Vec<_> = (0..50).map(|i| keyed(&key, i)).collect();
+        let again: Vec<_> = (0..50).map(|i| keyed(&key, i)).collect();
         assert_eq!(first, again);
         let unique: std::collections::BTreeSet<_> = first.iter().collect();
         assert_eq!(unique.len(), first.len(), "derived keys must not collide");
@@ -1291,8 +1383,62 @@ mod tests {
     #[test]
     fn integer_keys_read_like_integers() {
         let key = Scalar::new(ScalarKind::Int);
-        assert_eq!(derive_key_value(11, "User", None, &key, 0).as_str(), "1");
-        assert_eq!(derive_key_value(11, "User", None, &key, 41).as_str(), "42");
+        for ordinal in 0..50 {
+            assert!(
+                keyed(&key, ordinal).parse::<i64>().is_ok(),
+                "an integer key has to reach the wire as an integer"
+            );
+        }
+    }
+
+    /// A sequential id counts the way creation time does, which it can only do
+    /// because the ordinal and the age rise together.
+    #[test]
+    fn a_sequential_id_counts_the_way_time_does() {
+        let key = Scalar::new(ScalarKind::Int);
+        let number = |ordinal: u64| keyed(&key, ordinal).parse::<i64>().unwrap();
+        for ordinal in 1..50 {
+            assert!(number(ordinal) > number(ordinal - 1));
+            assert!(
+                clock::moment_of(11, "User", ordinal) > clock::moment_of(11, "User", ordinal - 1),
+                "a higher id has to be a later record"
+            );
+        }
+    }
+
+    /// A `format: uuid` is the document's own answer. Everything else was a
+    /// guess from a field name, and a v4 uuid is the one family carrying
+    /// neither a count nor a clock — so sorting a collection by id put it in
+    /// an order unrelated to anything that happened.
+    #[test]
+    fn an_opaque_id_sorts_the_way_its_record_was_created() {
+        let key = Scalar::new(ScalarKind::Id);
+        let mut held: Vec<(i64, String)> = (0..80)
+            .map(|i| (clock::moment_of(11, "User", i), keyed(&key, i).to_string()))
+            .collect();
+        assert!(held.iter().all(|(_, id)| id.len() == 26), "{held:?}");
+
+        held.sort_by_key(|(moment, _)| *moment);
+        let by_time: Vec<&String> = held.iter().map(|(_, id)| id).collect();
+        let mut by_id = by_time.clone();
+        by_id.sort();
+        assert_eq!(by_id, by_time, "sorting by id has to sort by time");
+    }
+
+    #[test]
+    fn a_numeric_string_id_still_reads_as_a_numeric_string() {
+        let key = Scalar::new(ScalarKind::String).with_semantic(FieldType::NumericStringId);
+        let held = keyed(&key, 0);
+        assert!(held.parse::<u64>().is_ok(), "{held}");
+    }
+
+    #[test]
+    fn a_declared_uuid_stays_a_uuid() {
+        let mut key = Scalar::new(ScalarKind::String);
+        key.constraints.format = Some("uuid".into());
+        let held = keyed(&key, 0);
+        assert_eq!(held.len(), 36, "{held}");
+        assert_eq!(held.matches('-').count(), 4, "{held}");
     }
 }
 

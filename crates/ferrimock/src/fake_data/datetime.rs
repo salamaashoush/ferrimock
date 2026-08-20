@@ -22,7 +22,8 @@ const SECONDS_PER_YEAR: i64 = 365 * 24 * 60 * 60;
 /// with wall-clock time rather than staying fixed. Read once per process
 /// rather than per call, so two records built a second apart still agree with
 /// each other. The world clock replaces this outright when there is one.
-fn anchor() -> DateTime<Utc> {
+#[must_use]
+pub fn anchor() -> DateTime<Utc> {
     static ANCHOR: OnceLock<DateTime<Utc>> = OnceLock::new();
     *ANCHOR.get_or_init(Utc::now)
 }
@@ -61,9 +62,14 @@ pub fn fake_iso_date() -> String {
 /// field with `2024-03-17` changes the value's shape, and anything parsing it
 /// breaks on the reply.
 pub fn fake_date_in(format: crate::type_detector::DateFormat) -> String {
+    write_date(drawn_moment(), format)
+}
+
+/// Write a moment the world already decided on as a date.
+#[must_use]
+pub fn write_date(moment: DateTime<Utc>, format: crate::type_detector::DateFormat) -> String {
     use crate::type_detector::DateFormat;
 
-    let moment = drawn_moment();
     let (year, month, day) = (moment.year(), moment.month(), moment.day());
 
     match format {
@@ -76,6 +82,15 @@ pub fn fake_date_in(format: crate::type_detector::DateFormat) -> String {
 
 /// Generate a moment in time, written the way the field wrote it.
 pub fn fake_timestamp_in(format: crate::type_detector::TimestampFormat) -> String {
+    write_timestamp(drawn_moment(), format)
+}
+
+/// Write a moment the world already decided on, in the field's own format.
+#[must_use]
+pub fn write_timestamp(
+    moment: DateTime<Utc>,
+    format: crate::type_detector::TimestampFormat,
+) -> String {
     use crate::type_detector::TimestampFormat;
 
     const OFFSETS: [i32; 6] = [3600, 7200, -18_000, -28_800, 19_800, 32_400];
@@ -83,7 +98,6 @@ pub fn fake_timestamp_in(format: crate::type_detector::TimestampFormat) -> Strin
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
 
-    let moment = drawn_moment();
     let date = format!(
         "{:04}-{:02}-{:02}",
         moment.year(),

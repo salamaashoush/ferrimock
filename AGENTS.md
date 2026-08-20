@@ -415,6 +415,29 @@ one per write -- that keeping them apart prevents.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+`core::world::store::clock` is the world's history. A creation time is a
+monotone function of the ordinal and of nothing else -- in particular not of
+how many instances exist, because placing arrival *i* among *N* would make
+every timestamp a function of the count, so bumping `world.counts` or mounting
+a second schema would silently rewrite the creation time of every record that
+already existed. Both ends of the window are anchored without consulting the
+count: the first arrival at the start of the entity's own history, the rest
+closing on the present, so the newest is recent whether the world holds twelve
+records or six hundred. The stated consequence is that arrivals are heavily
+recency-weighted, the way a service whose volume grew is, rather than spread
+evenly. The seasonal warp -- two humps a working day, a lull at lunch, almost
+nothing overnight or at a weekend -- is *monotone*, pushing an instant's
+position within its week through a rising cumulative intensity without ever
+moving the week: any reshuffle inside a day would break an id that carries a
+creation time as soon as two arrivals fall closer together than a day.
+
+Ordinal, key and age rise together, which is what lets an id agree with a
+timestamp. An integer key still counts from one, so `GET /orders/1` resolves on
+an integer-keyed document. An opaque one is a ULID rather than a v4 uuid: a
+uuid is the only id family in use that carries neither a count nor a clock, so
+sorting a collection by it put the collection in an order unrelated to anything
+that happened. A `format: uuid` is the document's own answer and still wins.
+
 `core::world::store::bus` settles the fields of a record that are *functions*
 of other fields of it: `full_name` is `first_name` plus `last_name`, `email`
 holds a slug of the name, `slug` is the title slugified, an avatar URL ends in

@@ -16,6 +16,7 @@
 //! writes.
 
 pub mod bus;
+pub mod clock;
 pub mod distribution;
 pub mod pattern;
 pub mod values;
@@ -34,7 +35,7 @@ use super::model::{
     ScalarKind, ValueSpec,
 };
 use crate::fake_data::rng;
-use values::ValueSeed;
+use values::{Arrival, ValueSeed};
 
 /// How many instances an entity at the top of the graph gets when neither it
 /// nor the caller says.
@@ -1370,10 +1371,18 @@ impl EntityStore {
 
         // Fields the caller left out still have to exist: the response is
         // validated against the same schema a real one would be.
+        // A record a client just made came into being now, whatever ordinal
+        // it derives its values from: the census runs backward in time and its
+        // far end is where the oldest instances are.
         let mut fields = values::generate_fields(
             &entity.fields,
             "",
-            ValueSeed::new(self.config.seed, entity.name.as_str(), ordinal),
+            ValueSeed::arriving(
+                self.config.seed,
+                entity.name.as_str(),
+                ordinal,
+                clock::now(),
+            ),
         );
         // A created record is not part of the derived partition, so its links
         // are drawn from the child position its ordinal would have had — enough
@@ -1548,7 +1557,14 @@ impl EntityStore {
         // under one key is worse than a gap in the numbering.
         let mut ordinal = base.saturating_add(sequence);
         loop {
-            let key = derive_key(self.config.seed, entity.name.as_str(), &scalars, ordinal);
+            let arrival = Arrival::created(clock::now());
+            let key = derive_key(
+                self.config.seed,
+                entity.name.as_str(),
+                &scalars,
+                ordinal,
+                arrival,
+            );
             let clashes = census.is_some_and(|census| census.slots.contains_key(&key))
                 || created.contains(entity.name.as_str(), &key);
             if !clashes {
@@ -2099,13 +2115,15 @@ fn build_census(
                     field,
                     scalar,
                     ordinal,
+                    Arrival::seeded(seed, entity.name.as_str(), ordinal),
                 ));
                 slots.insert(key.clone(), slot_at(ordinal, derived.len()));
                 derived.push(key);
             }
         } else {
             for ordinal in 0..count as u64 {
-                let key = derive_key(seed, entity.name.as_str(), &scalars, ordinal);
+                let arrival = Arrival::seeded(seed, entity.name.as_str(), ordinal);
+                let key = derive_key(seed, entity.name.as_str(), &scalars, ordinal, arrival);
                 slots.insert(key.clone(), slot_at(ordinal, derived.len()));
                 derived.push(key);
             }
@@ -2115,7 +2133,8 @@ fn build_census(
 
     let mut ordinal = 0_u64;
     while derived.len() < count {
-        let key = derive_key(seed, entity.name.as_str(), &scalars, ordinal);
+        let arrival = Arrival::seeded(seed, entity.name.as_str(), ordinal);
+        let key = derive_key(seed, entity.name.as_str(), &scalars, ordinal, arrival);
         if !reserved.contains(&key) {
             slots.insert(key.clone(), slot_at(ordinal, derived.len()));
             derived.push(key);
@@ -2171,9 +2190,10 @@ fn derive_key(
     entity: &str,
     scalars: &[(Option<LeanString>, Scalar)],
     ordinal: u64,
+    arrival: Arrival,
 ) -> EntityKey {
     EntityKey::from_parts(scalars.iter().map(|(field, scalar)| {
-        values::derive_key_value(seed, entity, field.as_deref(), scalar, ordinal)
+        values::derive_key_value(seed, entity, field.as_deref(), scalar, ordinal, arrival)
     }))
 }
 
