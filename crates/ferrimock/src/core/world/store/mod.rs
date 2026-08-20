@@ -34,7 +34,7 @@ use super::model::{
     Cardinality, Carrier, EntityGraph, EntityKey, EntityType, FieldDef, Relation, Scalar,
     ScalarKind, ValueSpec,
 };
-use crate::fake_data::rng;
+use crate::fake_data::{self, rng};
 use values::{Arrival, ValueSeed};
 
 /// How many instances an entity at the top of the graph gets when neither it
@@ -1677,6 +1677,63 @@ impl EntityStore {
         Some(self.census.get(entity)?.slots.get(key)?.index)
     }
 
+    /// Where a record is.
+    ///
+    /// One hop, along the derived path only. A folder's files are in the same
+    /// place the folder is, which is what a place is *for* — but the parent's
+    /// own place is its own draw rather than its parent's, because a chain
+    /// would put every record in the world in one country, and because
+    /// resolving a parent through the delta would reach `get`, which reaches
+    /// `base_fields`, which is where this is called from.
+    ///
+    /// The stated consequence: a client that retargets a relation gets a child
+    /// whose placed fields still agree with the parent the seed gave it.
+    fn place_of(&self, entity: &EntityType, key: &EntityKey) -> &'static fake_data::Place {
+        let ordinal = self.ordinal_of(entity.name.as_str(), key);
+        let own =
+            || ValueSeed::place_for(self.config.seed, entity.name.as_str(), ordinal.unwrap_or(0));
+        let Some(index) = self.index_of(entity.name.as_str(), key) else {
+            return own();
+        };
+        let Some(parent) = self.parent_of(entity, index) else {
+            return own();
+        };
+        parent
+    }
+
+    /// The place of the instance this one's first functional link points at.
+    fn parent_of(&self, entity: &EntityType, index: u32) -> Option<&'static fake_data::Place> {
+        for (field, relation) in entity.relations() {
+            if relation.cardinality != Cardinality::One {
+                continue;
+            }
+            for target in relation.concrete_targets() {
+                if target == &entity.name {
+                    continue;
+                }
+                let Some(owner) = self.owner_key(
+                    entity.name.as_str(),
+                    index,
+                    field.name.as_str(),
+                    target.as_str(),
+                ) else {
+                    continue;
+                };
+                let ordinal = self
+                    .census
+                    .get(target.as_str())
+                    .and_then(|census| census.slots.get(&owner))
+                    .map(|slot| slot.ordinal)?;
+                return Some(ValueSeed::place_for(
+                    self.config.seed,
+                    target.as_str(),
+                    ordinal,
+                ));
+            }
+        }
+        None
+    }
+
     /// Who owns whom for one relation.
     fn ownership(&self, child: &str, parent: &str, role: &str) -> Arc<Ownership> {
         let slot = (
@@ -1751,7 +1808,8 @@ impl EntityStore {
         key: &EntityKey,
     ) -> Option<JsonMap<String, JsonValue>> {
         let ordinal = self.ordinal_of(entity.name.as_str(), key)?;
-        let seed = ValueSeed::new(self.config.seed, entity.name.as_str(), ordinal);
+        let seed = ValueSeed::new(self.config.seed, entity.name.as_str(), ordinal)
+            .at_place(self.place_of(entity, key));
         let mut fields = values::generate_fields(&entity.fields, "", seed);
         let index = self.index_of(entity.name.as_str(), key);
         self.write_links(entity, ordinal, index, &mut fields);

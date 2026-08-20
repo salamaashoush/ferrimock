@@ -415,6 +415,26 @@ one per write -- that keeping them apart prevents.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+A record is somewhere. Fields inside one were mutually independent, because
+every value derived from `(seed, entity, ordinal, path)` and nothing else -- so
+a user in Tokyo got a French name, a `+44` phone and an `America/Bogota`
+timezone, none of them individually implausible and the combination impossible.
+`fake_data::place` is the *discrete* confounder that fixes it: name, phone,
+country, currency, timezone, locale and postal code all read from one place per
+record, and conditional independence given the place is the real generative
+structure rather than an approximation of one. A continuous shared factor is
+deliberately not there -- it would trade "every correlation is zero" for "every
+correlation is equal", which is rank-one with a flat residual spectrum and its
+own signature, and only loadings fitted from a recording remove that.
+
+The place travels *one hop* along the derived path: a folder's files are where
+the folder is, and the folder's own place is its own draw rather than its
+parent's. A chain would put every record in the world in one country, and
+resolving a parent through the delta would reach `get`, which reaches
+`base_fields`, which is where the place is read from. Stated consequence: a
+client that retargets a relation gets a child whose placed fields still agree
+with the parent the seed gave it.
+
 A status field is a position in a lifecycle, not a categorical draw.
 `world.states` declares one per `Entity.field`, and what it declares is an
 *implication*: `shipped` means `shipped_at` holds a value and `delivered_at`

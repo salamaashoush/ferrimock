@@ -60,6 +60,8 @@ pub struct ValueSeed<'a> {
     pub ordinal: u64,
     /// When this record came into being.
     pub arrived: i64,
+    /// Where it is, and everything that has to agree with that.
+    pub place: &'static fake_data::Place,
 }
 
 impl<'a> ValueSeed<'a> {
@@ -70,7 +72,20 @@ impl<'a> ValueSeed<'a> {
             entity,
             ordinal,
             arrived: clock::moment_of(seed, entity, ordinal),
+            place: place_of(seed, entity, ordinal),
         }
+    }
+
+    /// The place one record's own draw lands in, before anything inherits it.
+    #[must_use]
+    pub fn place_for(seed: u64, entity: &str, ordinal: u64) -> &'static fake_data::Place {
+        place_of(seed, entity, ordinal)
+    }
+
+    #[must_use]
+    pub fn at_place(mut self, place: &'static fake_data::Place) -> Self {
+        self.place = place;
+        self
     }
 
     /// A record whose arrival the store already knows.
@@ -85,6 +100,7 @@ impl<'a> ValueSeed<'a> {
             entity,
             ordinal,
             arrived,
+            place: place_of(seed, entity, ordinal),
         }
     }
 
@@ -111,6 +127,11 @@ impl<'a> ValueSeed<'a> {
         let stream = format!("{}#{path}#{aspect}#field", self.entity);
         rng::derive_seed(self.seed, &stream, 0)
     }
+}
+
+fn place_of(seed: u64, entity: &str, ordinal: u64) -> &'static fake_data::Place {
+    let stream = format!("{entity}#place");
+    fake_data::place_of(rng::derive_seed(seed, &stream, ordinal))
 }
 
 /// Whether one field of one record carries a value at all.
@@ -516,7 +537,9 @@ fn semantic_value(
         FieldType::Uuid => JsonValue::String(fake_data::fake_uuid()),
         FieldType::Email => JsonValue::String(fake_data::fake_email()),
         FieldType::Username => JsonValue::String(fake_data::fake_username()),
-        FieldType::Name => JsonValue::String(fake_data::fake_name()),
+        // Everything a place decides, so a record does not hold a French name
+        // beside a `+44` phone and an `America/Bogota` timezone.
+        FieldType::Name => JsonValue::String(seed.place.person()),
         // Composed rather than lorem: a title is read by a person, and
         // `perferendis non adipisci asperiores` is the thing that makes a
         // mocked screen look mocked.
@@ -524,9 +547,14 @@ fn semantic_value(
         FieldType::Paragraph => JsonValue::String(fake_data::fake_prose(2)),
         FieldType::Url | FieldType::ImageUrl => JsonValue::String(fake_data::fake_url()),
         FieldType::IpAddress => JsonValue::String(fake_data::fake_ipv4()),
-        FieldType::PhoneNumber => JsonValue::String(fake_data::fake_phone()),
+        FieldType::PhoneNumber => JsonValue::String(seed.place.phone()),
         FieldType::FileName => JsonValue::String(fake_data::fake_filename()),
         FieldType::MimeType => JsonValue::String(fake_data::fake_mime_type()),
+        FieldType::CountryCode => JsonValue::String(seed.place.country_code.to_string()),
+        FieldType::CurrencyCode => JsonValue::String(seed.place.currency.to_string()),
+        FieldType::Timezone => JsonValue::String(seed.place.timezone.to_string()),
+        FieldType::LocaleCode => JsonValue::String(seed.place.locale.to_string()),
+        FieldType::PostalCode => JsonValue::String(seed.place.postal_code()),
         FieldType::Token => JsonValue::String(fake_data::fake_token()),
         FieldType::ETag => JsonValue::String(fake_data::fake_etag()),
         FieldType::NumericStringId => JsonValue::String(fake_data::fake_numeric_id()),

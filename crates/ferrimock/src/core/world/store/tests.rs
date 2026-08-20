@@ -2245,3 +2245,109 @@ fn a_written_state_still_decides_what_the_record_holds() {
     let record = store.get("Order", &draft).unwrap();
     assert_eq!(record.get("status").unwrap().as_str(), Some("paid"));
 }
+
+fn placed_field(name: &str, field_type: crate::type_detector::FieldType) -> FieldDef {
+    let mut inner = Scalar::new(ScalarKind::String);
+    inner.semantic = Some(field_type);
+    FieldDef::new(name, ValueSpec::Scalar(inner), false)
+}
+
+/// Fields inside a record were mutually independent, so a user in Tokyo got a
+/// French name, a `+44` phone and an `America/Bogota` timezone. None of those
+/// is individually implausible and the combination is impossible.
+#[test]
+fn a_record_is_somewhere_rather_than_nowhere() {
+    use crate::type_detector::FieldType;
+
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Account")
+            .with_field(placed_field("holder", FieldType::Name))
+            .with_field(placed_field("phone", FieldType::PhoneNumber))
+            .with_field(placed_field("country", FieldType::CountryCode))
+            .with_field(placed_field("currency", FieldType::CurrencyCode))
+            .with_field(placed_field("timezone", FieldType::Timezone))
+            .with_field(placed_field("locale", FieldType::LocaleCode))
+            .with_field(placed_field("postcode", FieldType::PostalCode)),
+    );
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(4).with_count("Account", 200),
+    );
+
+    let mut countries: Vec<String> = Vec::new();
+    for key in store.keys("Account") {
+        let record = store.get("Account", &key).unwrap();
+        let text = |name: &str| {
+            record
+                .get(name)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+        };
+
+        let place = crate::fake_data::places()
+            .iter()
+            .find(|place| place.country_code == text("country"))
+            .unwrap_or_else(|| panic!("`{}` is not a country", text("country")));
+
+        assert_eq!(text("currency"), place.currency);
+        assert_eq!(text("timezone"), place.timezone);
+        assert_eq!(text("locale"), place.locale);
+        assert!(
+            text("phone").starts_with(place.calling_code),
+            "{}",
+            text("phone")
+        );
+        let family = text("holder").split(' ').next_back().unwrap_or_default();
+        assert!(
+            place.family.contains(&family),
+            "`{}` is not a name from {}",
+            text("holder"),
+            place.country
+        );
+        assert!(!text("postcode").is_empty());
+        countries.push(text("country").to_string());
+    }
+
+    countries.sort_unstable();
+    countries.dedup();
+    assert!(countries.len() > 4, "the world should not be one country");
+}
+
+/// One hop, along the derived path only: a folder's files are in the same
+/// place the folder is, and the folder's own place is its own draw rather than
+/// its parent's — a chain would put every record in the world in one country.
+#[test]
+fn a_child_is_where_its_parent_is() {
+    use crate::type_detector::FieldType;
+
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("Office").with_field(placed_field("country", FieldType::CountryCode)));
+    graph.insert(
+        entity("Worker")
+            .with_field(placed_field("country", FieldType::CountryCode))
+            .with_field(relation_field("office", "Office", Cardinality::One)),
+    );
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(6)
+            .with_count("Office", 12)
+            .with_count("Worker", 200),
+    );
+    let office_relation = relation_of(&store, "Worker", "office");
+
+    let mut agreed = 0;
+    for key in store.keys("Worker") {
+        let worker = store.get("Worker", &key).unwrap();
+        let office = store
+            .relation_target("Worker", &key, "office", office_relation)
+            .expect("every worker has an office");
+        assert_eq!(
+            worker.get("country"),
+            office.get("country"),
+            "a worker is where the office is"
+        );
+        agreed += 1;
+    }
+    assert!(agreed > 0);
+}
