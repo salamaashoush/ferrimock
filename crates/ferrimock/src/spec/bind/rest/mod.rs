@@ -59,10 +59,11 @@ impl RestBackend {
         let pagination = pagination_names(profile);
 
         let mut coverage = Coverage::default();
+        let bound = world.viewer();
         let mut plans = Vec::with_capacity(table.operations.len());
         for operation in &table.operations {
             let plan = classify(table, operation, &graph);
-            coverage.record(operation.id.as_str(), &plan);
+            coverage.record(operation.id.as_str(), &plan, bound.as_ref());
             plans.push(plan);
         }
         let coverage = Arc::new(coverage);

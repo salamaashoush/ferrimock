@@ -758,17 +758,35 @@ fn resolve_root(
             key_arg,
         } => {
             let targets = concrete_or(entity, members);
-            let record = if key_arg.is_empty() {
-                targets.iter().find_map(|target| {
-                    store
-                        .keys(target.as_str())
-                        .first()
-                        .and_then(|key| store.get(target.as_str(), key))
-                })
-            } else {
-                argument_string(ctx, key_arg)
-                    .and_then(|key| store.get_any(&targets, &EntityKey::single(key)))
+            let record = argument_string(ctx, key_arg)
+                .and_then(|key| store.get_any(&targets, &EntityKey::single(key)));
+            Ok(record.map(|record| wrap_payload(shape, Parent::Entity(record))))
+        }
+
+        // Answered as the caller rather than as record zero. A GraphQL schema
+        // has no status codes, so a request with no credential is an error
+        // beside a null field, which is what a real GraphQL service answers.
+        RootPlan::Viewer { entity, members } => {
+            use crate::core::world::viewer::Credential;
+
+            let targets = concrete_or(entity, members);
+            let Some(bound) = viewer_of(ctx).filter(|held| targets.contains(held)) else {
+                return Err(async_graphql::Error::new(format!(
+                    "`{entity}` has no viewer: name one with `world.viewer` and the credential \
+                     will resolve to an instance of it"
+                )));
             };
+            let credential = ctx
+                .data::<Credential>()
+                .cloned()
+                .unwrap_or(Credential::Absent);
+            if credential == Credential::Absent {
+                return Err(async_graphql::Error::new("no credential was presented"));
+            }
+            let keys = store.keys(bound.as_str());
+            let record = credential
+                .bound_to(store.seed(), bound.as_str(), &keys)
+                .and_then(|key| store.get(bound.as_str(), &key));
             Ok(record.map(|record| wrap_payload(shape, Parent::Entity(record))))
         }
 
@@ -954,6 +972,12 @@ fn concrete_or(entity: &LeanString, members: &[LeanString]) -> Vec<LeanString> {
     } else {
         members.to_vec()
     }
+}
+
+fn viewer_of(ctx: &ResolverContext<'_>) -> Option<LeanString> {
+    ctx.data::<Arc<World>>()
+        .ok()
+        .and_then(|world| world.viewer())
 }
 
 fn seed_of(ctx: &ResolverContext<'_>) -> u64 {

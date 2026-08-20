@@ -18,6 +18,7 @@ pub mod doctor;
 pub mod model;
 pub mod overrides;
 pub mod store;
+pub mod viewer;
 
 use lean_string::LeanString;
 use parking_lot::RwLock;
@@ -44,6 +45,7 @@ struct Settings {
     scale: Option<f64>,
     counts: FxHashMap<LeanString, usize>,
     cascade_delete: Option<bool>,
+    viewer: Option<LeanString>,
     overrides: FieldRules,
 }
 
@@ -94,6 +96,8 @@ pub struct WorldSettings {
     /// Whether removing a record also removes what points at it. `None` keeps
     /// whatever the world already had.
     pub cascade_delete: Option<bool>,
+    /// Which entity a request's credential is an instance of.
+    pub viewer: Option<LeanString>,
     /// What a field should hold, where the schema does not say. Collections
     /// accumulate these rather than contesting them: two files naming the same
     /// field is the last one loaded winning, which is the same rule `counts`
@@ -321,6 +325,13 @@ impl World {
         Arc::clone(&self.graph.read())
     }
 
+    /// Which entity a request's credential is an instance of, when a mount
+    /// said.
+    #[must_use]
+    pub fn viewer(&self) -> Option<LeanString> {
+        self.settings.read().viewer.clone()
+    }
+
     #[must_use]
     pub fn seed(&self) -> u64 {
         self.store.read().seed()
@@ -386,6 +397,10 @@ impl World {
 
             if let Some(cascade) = settings.cascade_delete {
                 current.cascade_delete = Some(cascade);
+            }
+
+            if let Some(viewer) = &settings.viewer {
+                current.viewer = Some(viewer.clone());
             }
         }
 

@@ -64,12 +64,20 @@ fn classify_read(target: &Target, key_arg: Option<LeanString>) -> RootPlan {
         };
     }
 
+    // A path that addresses nothing — `/me`, `/users/current` — is a read of
+    // one instance with no key to read it by, which is the one endpoint whose
+    // whole purpose is to answer differently per caller.
+    let Some(key_arg) = key_arg else {
+        return RootPlan::Viewer {
+            entity: target.entity.clone(),
+            members: target.members.clone(),
+        };
+    };
+
     RootPlan::Get {
         entity: target.entity.clone(),
         members: target.members.clone(),
-        // A path that addresses nothing (`/me`, `/users/current`) is still a
-        // read of one instance; there is simply no key to read it by.
-        key_arg: key_arg.unwrap_or_default(),
+        key_arg,
     }
 }
 
@@ -267,16 +275,14 @@ components:
         assert_eq!(key_arg.as_str(), "folder_id");
     }
 
+    /// `/me` is a read of one instance with no key to read it by, which makes
+    /// it the caller rather than a lookup that lost its argument.
     #[test]
-    fn a_path_addressing_nothing_still_reads_one() {
-        let RootPlan::Get {
-            entity, key_arg, ..
-        } = plan("getCurrentUser")
-        else {
-            panic!("/me should read one user")
+    fn a_path_addressing_nothing_reads_the_caller() {
+        let RootPlan::Viewer { entity, .. } = plan("getCurrentUser") else {
+            panic!("/me should be the caller")
         };
         assert_eq!(entity.as_str(), "User");
-        assert!(key_arg.is_empty(), "there is no key to read");
     }
 
     #[test]

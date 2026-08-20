@@ -160,13 +160,14 @@ fn classify_query(field: &FieldDefinition, target: &Target, graph: &EntityGraph)
             members: target.members.clone(),
             key_arg,
         },
-        // A single entity with no way to say *which* one is not a lookup; it
-        // is something like `viewer`, answered from the store all the same but
-        // without pretending the argument list said so.
-        None if field.args.is_empty() => RootPlan::Get {
+        // A single entity with no way to say *which* one is not a lookup. It is
+        // `viewer`, `me`, `currentUser` — the one entry point whose whole
+        // purpose is to answer differently per caller, which is why it cannot
+        // be a `Get` with an empty key: that resolved to record zero, for
+        // everyone, with or without a token.
+        None if field.args.is_empty() => RootPlan::Viewer {
             entity: target.entity.clone(),
             members: target.members.clone(),
-            key_arg: LeanString::new(),
         },
         None => RootPlan::Unclassified,
     }
@@ -356,16 +357,15 @@ mod tests {
         assert_eq!(key_arg.as_str(), "id");
     }
 
+    /// A single entity with no way to say which one is not a lookup. Reading
+    /// it as one meant an empty key, and an empty key meant record zero — for
+    /// every caller, with or without a token.
     #[test]
-    fn a_single_entity_with_no_arguments_still_resolves() {
-        let RootPlan::Get {
-            entity, key_arg, ..
-        } = plan("Query", "viewer")
-        else {
-            panic!("viewer should resolve to an entity")
+    fn a_single_entity_with_no_arguments_is_the_caller() {
+        let RootPlan::Viewer { entity, .. } = plan("Query", "viewer") else {
+            panic!("viewer should be the caller, not a lookup")
         };
         assert_eq!(entity.as_str(), "User");
-        assert!(key_arg.is_empty(), "there is no key to read");
     }
 
     #[test]

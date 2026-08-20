@@ -95,9 +95,17 @@ fn mount(
     let delay = mock.response.delay;
     // A REST operation reads the path, the query string and the body; headers
     // are the transport's, so the matching lanes can skip marshalling them.
+    // The exception is the one endpoint that answers per caller: who is asking
+    // arrives in a header and nowhere else, and it is declared per operation
+    // so nothing that does not ask for it pays.
+    let needs = if matches!(operation.plan, crate::spec::bind::RootPlan::Viewer { .. }) {
+        ContextNeeds::ALL
+    } else {
+        ContextNeeds::body_only()
+    };
     let mut response = ResponseGenerator::new(
         StatusCode::from_u16(operation.status.as_u16()).unwrap_or(StatusCode::OK),
-        BodySource::handler_with_needs(Arc::new(handler), ContextNeeds::body_only()),
+        BodySource::handler_with_needs(Arc::new(handler), needs),
     );
     response.headers = headers;
     response

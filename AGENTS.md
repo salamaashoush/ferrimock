@@ -415,6 +415,20 @@ one per write -- that keeping them apart prevents.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+A root field returning one instance with no way to say *which* -- `viewer`,
+`me`, `currentUser`, `GET /me` -- is `RootPlan::Viewer`, not a `Get` that lost
+its argument. Read as a `Get` it had an empty key, and an empty key resolved to
+record zero: the same person for every caller, with or without a token, on the
+one endpoint whose entire purpose is to differ per caller. `world.viewer` names
+the entity a credential is an instance of, and which instance is *derived* from
+the credential -- so one token is one person across restarts and two tokens are
+two people, with no session table to keep. No credential is a 401 carrying
+`WWW-Authenticate`, because a client library that retries on 401 reads the
+scheme out of it. With nothing bound the endpoint is not answerable at all, so
+it is counted as unclassified and answered from its declared shape rather than
+answered wrongly. Only an operation that actually needs the credential declares
+`ContextNeeds` for headers, so nothing else pays to marshal them.
+
 A record is somewhere. Fields inside one were mutually independent, because
 every value derived from `(seed, entity, ordinal, path)` and nothing else -- so
 a user in Tokyo got a French name, a `+44` phone and an `America/Bogota`

@@ -120,6 +120,14 @@ pub struct WorldConfig {
     )]
     pub scalars: Option<std::collections::BTreeMap<String, FieldOverride>>,
 
+    /// Which entity a request's credential is an instance of.
+    ///
+    /// A root field returning one instance with no way to say which — `viewer`,
+    /// `me`, `currentUser` — is the one endpoint whose whole purpose is to be
+    /// different per caller, and a schema cannot say who the caller is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewer: Option<String>,
+
     /// What a status field means, keyed by `Entity.field`.
     ///
     /// A sequence rather than a mapping, because the order *is* the lifecycle:

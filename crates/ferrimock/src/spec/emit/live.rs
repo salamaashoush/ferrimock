@@ -83,6 +83,9 @@ async fn answer(
         Err(error) => return Ok(error_response(&error.to_string())),
     };
 
+    // Who is asking travels with the request: a `viewer` field cannot be
+    // answered without it, and a resolver has no other way to reach a header.
+    let request = request.data(crate::core::world::viewer::Credential::read(&ctx.headers));
     let response = backend.execute(request).await;
     let payload = serde_json::to_vec(&response)
         .map_err(|e| crate::mp_err!("Could not serialise the GraphQL response: {e}"))?;

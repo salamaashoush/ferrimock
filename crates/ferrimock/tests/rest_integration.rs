@@ -200,6 +200,8 @@ struct Call<'a> {
     path: &'a str,
     query: Option<&'a str>,
     body: Option<&'a str>,
+    /// What the request says about who is asking.
+    credential: Option<String>,
 }
 
 impl<'a> Call<'a> {
@@ -209,7 +211,13 @@ impl<'a> Call<'a> {
             path,
             query: None,
             body: None,
+            credential: None,
         }
+    }
+
+    fn presenting(mut self, token: &str) -> Self {
+        self.credential = Some(format!("Bearer {token}"));
+        self
     }
 
     fn post(path: &'a str, body: &'a str) -> Self {
@@ -218,6 +226,7 @@ impl<'a> Call<'a> {
             path,
             query: None,
             body: Some(body),
+            credential: None,
         }
     }
 
@@ -231,13 +240,35 @@ impl<'a> Call<'a> {
 /// does it — including the URL captures, which is how a path parameter reaches
 /// the operation at all.
 async fn request(registry: &Arc<MockRegistry>, call: Call<'_>) -> (String, StatusCode, JsonValue) {
+    let (id, status, body, _) = answered(registry, call).await;
+    (id, status, body)
+}
+
+/// The same call, keeping the headers the answer carried.
+async fn answered(
+    registry: &Arc<MockRegistry>,
+    call: Call<'_>,
+) -> (
+    String,
+    StatusCode,
+    JsonValue,
+    rustc_hash::FxHashMap<String, String>,
+) {
+    let mut sent = api_host();
+    if let Some(credential) = &call.credential {
+        sent.insert(
+            http::header::AUTHORIZATION,
+            credential.parse().expect("a header value"),
+        );
+    }
+
     let matcher = MockMatcher::new((**registry).clone());
     let found = matcher
         .find_match(
             &call.method,
             call.path,
             call.query,
-            &api_host(),
+            &sent,
             call.body.map(str::as_bytes),
         )
         .unwrap_or_else(|| panic!("no mock matches {} {}", call.method, call.path));
@@ -250,7 +281,7 @@ async fn request(registry: &Arc<MockRegistry>, call: Call<'_>) -> (String, Statu
             call.method.as_str(),
             call.path,
             call.query,
-            &api_host(),
+            &sent,
             call.body.map(str::as_bytes),
             found.captures,
             found.mock.vars.as_ref(),
@@ -266,7 +297,7 @@ async fn request(registry: &Arc<MockRegistry>, call: Call<'_>) -> (String, Statu
     } else {
         serde_json::from_slice(&response.body).expect("a JSON body")
     };
-    (id, status, body)
+    (id, status, body, response.headers.unwrap_or_default())
 }
 
 async fn first_folder_key(registry: &Arc<MockRegistry>) -> String {
@@ -370,6 +401,7 @@ async fn a_hand_written_mock_overrides_exactly_one_endpoint() {
             path: "/2.0/files/content",
             query: None,
             body: Some("{}"),
+            credential: None,
         },
     )
     .await;
@@ -439,6 +471,7 @@ async fn a_write_through_the_served_document_is_visible_to_the_world() {
             path: "/2.0/folders",
             query: None,
             body: Some(r#"{"name":"Reports"}"#),
+            credential: None,
         },
     )
     .await;
@@ -465,6 +498,7 @@ async fn a_delete_through_the_document_removes_the_record() {
             path: &format!("/2.0/folders/{key}"),
             query: None,
             body: None,
+            credential: None,
         },
     )
     .await;
@@ -1136,4 +1170,138 @@ async fn an_override_does_not_disturb_determinism() {
     let (_, _, twice) = request(&second, Call::get("/folders")).await;
 
     assert_eq!(once, twice, "the same seed still rebuilds the same world");
+}
+
+const VIEWER_DOC: &str = "
+openapi: 3.0.3
+info: { title: Directory, version: '1' }
+paths:
+  /me:
+    get:
+      operationId: getCurrentUser
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/User' } }
+  /users/{user_id}:
+    parameters:
+      - { name: user_id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getUser
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+";
+
+async fn load_viewer(bound: bool) -> (tempfile::TempDir, Arc<MockRegistry>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("directory.openapi.yaml"), VIEWER_DOC).unwrap();
+    let viewer = if bound { "  viewer: User\n" } else { "" };
+    std::fs::write(
+        dir.path().join("mocks.yaml"),
+        format!(
+            "name: Directory\nworld:\n  schemas:\n    - directory.openapi.yaml\n  seed: 5\n{viewer}\nmocks:\n  - id: dir\n    match:\n      url: https://api.example.com\n    serve: rest\n"
+        ),
+    )
+    .unwrap();
+
+    let registry = Arc::new(MockRegistry::with_world(Arc::new(World::new())));
+    registry.load_from_directory(dir.path()).await.unwrap();
+    (dir, registry)
+}
+
+/// `/me` answered with record zero, for every caller, with or without a token
+/// — the one endpoint whose whole purpose is to differ per caller.
+#[tokio::test]
+async fn the_viewer_is_whoever_presented_the_credential() {
+    let (_dir, registry) = load_viewer(true).await;
+
+    let call = |token: &str| Call::get("/me").presenting(token);
+
+    let (_, status, mine) = request(&registry, call("alice")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, again) = request(&registry, call("alice")).await;
+    assert_eq!(mine["id"], again["id"], "one token is one person");
+
+    let mut landed = std::collections::BTreeSet::new();
+    for token in 0..20 {
+        let (_, _, who) = request(&registry, call(&format!("t{token}"))).await;
+        landed.insert(who["id"].as_str().unwrap_or_default().to_string());
+    }
+    assert!(
+        landed.len() > 5,
+        "every caller was the same person: {landed:?}"
+    );
+
+    let (_, _, everyone) = request(&registry, Call::get("/users")).await;
+    assert!(
+        everyone
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|user| user["id"].as_str())
+            .any(|id| Some(id) == mine["id"].as_str()),
+        "the viewer has to be one of the world's own users"
+    );
+}
+
+#[tokio::test]
+async fn no_credential_is_a_401_that_says_what_to_present() {
+    let (_dir, registry) = load_viewer(true).await;
+
+    let (_, status, _, headers) = answered(&registry, Call::get("/me")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(
+        headers.iter().any(
+            |(name, value)| name.eq_ignore_ascii_case("www-authenticate")
+                && value.contains("Bearer")
+        ),
+        "a client that retries on 401 reads the scheme out of the header: {headers:?}"
+    );
+}
+
+/// With nothing bound, the endpoint is not answerable: the schema says a
+/// `User` comes back and nothing says which. Counted rather than answered
+/// wrongly.
+#[tokio::test]
+async fn an_unbound_viewer_is_counted_rather_than_guessed() {
+    let (_dir, registry) = load_viewer(false).await;
+
+    let (_, status, _) = request(&registry, Call::get("/me")).await;
+    assert_eq!(status, StatusCode::OK, "the declared shape still answers");
+
+    let world = registry.world();
+    let schema = world.schemas().into_iter().next().unwrap();
+    let ferrimock::core::world::Binding::OpenApi(table) = &schema.binding else {
+        panic!("an openapi document")
+    };
+    let backend = ferrimock::spec::bind::rest::RestBackend::build(table, world);
+    assert!(
+        backend
+            .coverage()
+            .unclassified()
+            .iter()
+            .any(|id| id.contains("getCurrentUser")),
+        "an unbound viewer is not classified: {:?}",
+        backend.coverage().unclassified()
+    );
 }

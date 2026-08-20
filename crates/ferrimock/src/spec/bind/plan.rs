@@ -58,6 +58,15 @@ pub enum RootPlan {
         key_arg: LeanString,
         payload_field: Option<LeanString>,
     },
+    /// One instance, and *which* one is the caller's own business.
+    ///
+    /// `viewer`, `me`, `currentUser`: a single entity with no argument saying
+    /// which. Answering it from record zero is not a small wrong answer — it
+    /// is the one endpoint whose whole purpose is to differ per caller.
+    Viewer {
+        entity: LeanString,
+        members: Vec<LeanString>,
+    },
     /// Nothing about the entry point says what it does. Answered from its
     /// declared return shape, stably, and counted.
     Unclassified,
@@ -68,6 +77,7 @@ impl RootPlan {
     pub fn rung(&self) -> &'static str {
         match self {
             RootPlan::Get { .. } => "get",
+            RootPlan::Viewer { .. } => "viewer",
             RootPlan::List { .. } => "list",
             RootPlan::Create { .. } => "create",
             RootPlan::Update { .. } => "update",
@@ -89,7 +99,8 @@ impl RootPlan {
             | RootPlan::List { entity, .. }
             | RootPlan::Create { entity, .. }
             | RootPlan::Update { entity, .. }
-            | RootPlan::Delete { entity, .. } => Some(entity),
+            | RootPlan::Delete { entity, .. }
+            | RootPlan::Viewer { entity, .. } => Some(entity),
             RootPlan::Unclassified => None,
         }
     }

@@ -78,8 +78,20 @@ impl Coverage {
             / f64::from(u32::try_from(total).unwrap_or(u32::MAX))
     }
 
-    pub(super) fn record(&mut self, id: &str, plan: &RootPlan) {
-        if plan.is_classified() {
+    /// Count one operation as backed by the store or not.
+    ///
+    /// A viewer with nothing bound to it is not backed: the schema says a
+    /// `User` comes back and nothing says which, so it answers from its
+    /// declared shape like any unclassified operation. Counting it as
+    /// classified would report a backend that answers `/me` when it does not.
+    pub(super) fn record(&mut self, id: &str, plan: &RootPlan, viewer: Option<&LeanString>) {
+        let answerable = match plan {
+            RootPlan::Viewer { entity, members } => {
+                viewer.is_some_and(|bound| bound == entity || members.contains(bound))
+            }
+            other => other.is_classified(),
+        };
+        if answerable {
             self.classified.push(id.to_string());
         } else {
             self.unclassified.push(id.to_string());
@@ -180,6 +192,8 @@ impl BoundOperation {
                 key_arg,
             } => self.answer_get(entity, members, key_arg, ctx),
 
+            RootPlan::Viewer { entity, members } => self.answer_viewer(entity, members, ctx),
+
             RootPlan::List { entity, .. } => self.answer_list(entity, ctx),
 
             RootPlan::Create { entity, .. } => {
@@ -255,6 +269,52 @@ impl BoundOperation {
                 self.coverage.fallback_hits.fetch_add(1, Ordering::Relaxed);
                 self.ok(&self.declared_value(ctx))
             }
+        }
+    }
+
+    /// Answer `/me` as the caller rather than as record zero.
+    ///
+    /// Which instance a credential is comes from the credential, so the same
+    /// token is the same person on every request and two tokens are two
+    /// people. With no viewer declared the endpoint is not answerable at all:
+    /// the schema says a `User` comes back and nothing says which, so it is
+    /// counted as unclassified rather than answered wrongly.
+    fn answer_viewer(
+        &self,
+        entity: &LeanString,
+        members: &[LeanString],
+        ctx: &RequestContext,
+    ) -> DynamicResponse {
+        use crate::core::world::viewer::{Credential, challenge};
+
+        let store = self.world.store();
+        let targets = concrete_or(entity, members);
+        let Some(bound) = self.world.viewer().filter(|held| targets.contains(held)) else {
+            self.coverage.fallback_hits.fetch_add(1, Ordering::Relaxed);
+            return self.ok(&self.declared_value(ctx));
+        };
+
+        let credential = Credential::read(&ctx.headers);
+        if credential == Credential::Absent {
+            let mut refused = Self::failed(StatusCode::UNAUTHORIZED, "no credential was presented");
+            refused.headers = Some(
+                std::iter::once(("www-authenticate".to_string(), challenge().to_string()))
+                    .collect(),
+            );
+            return refused;
+        }
+
+        let keys = store.keys(bound.as_str());
+        let record = credential
+            .bound_to(store.seed(), bound.as_str(), &keys)
+            .and_then(|key| store.get(bound.as_str(), &key));
+        match record {
+            Some(record) => {
+                let held = record.entity.clone();
+                let value = self.expand_with(&store, &held, record, 0);
+                self.ok(&self.wrap_payload(value))
+            }
+            None => Self::failed(StatusCode::NOT_FOUND, "the credential names nobody"),
         }
     }
 
@@ -612,7 +672,10 @@ impl BoundOperation {
             RootPlan::Create { payload_field, .. }
             | RootPlan::Update { payload_field, .. }
             | RootPlan::Delete { payload_field, .. } => payload_field.as_deref(),
-            RootPlan::Get { .. } | RootPlan::List { .. } | RootPlan::Unclassified => None,
+            RootPlan::Get { .. }
+            | RootPlan::Viewer { .. }
+            | RootPlan::List { .. }
+            | RootPlan::Unclassified => None,
         };
         match field {
             Some(field) => {

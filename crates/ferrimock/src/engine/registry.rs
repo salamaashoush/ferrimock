@@ -848,6 +848,7 @@ impl MockRegistry {
                 .map(|(entity, count)| (LeanString::from(entity.as_str()), *count))
                 .collect(),
             cascade_delete: config.cascade_delete,
+            viewer: config.viewer.as_deref().map(LeanString::from),
             overrides: config.field_rules()?,
         };
         self.world.configure(&settings, path)?;
