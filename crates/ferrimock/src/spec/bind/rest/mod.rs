@@ -161,7 +161,7 @@ fn bind_one(
                 .map(|parameter| parameter.name.as_str())
                 .collect();
             graph.get(entity.as_str()).map_or_else(Vec::new, |entity| {
-                let mut fields = filterable_fields(entity);
+                let mut fields = filterable_fields(entity, graph);
                 // A document that lists its query parameters has said which
                 // ones it takes; one that lists none leaves every field open,
                 // which is the useful default for a hand-written document.

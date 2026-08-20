@@ -359,6 +359,7 @@ world:
     - filestore-content.openapi.yaml     # merges into the SAME entity world
   seed: 42                 # same seed, same world, every run
   counts: { User: 25, Folder: 200 }
+  cascade_delete: true     # a delete takes dependent records with it
 
 mocks:
   - id: filestore-graphql

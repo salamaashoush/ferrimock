@@ -1063,7 +1063,7 @@ fn selection_from_args(
         }
     } else if let Some(limit) = limit {
         let skip = page_number
-            .map(|p| p.saturating_sub(1) * limit)
+            .map(|p| p.saturating_sub(1).saturating_mul(limit))
             .or(offset)
             .unwrap_or(0);
         Page::Offset { skip, take: limit }

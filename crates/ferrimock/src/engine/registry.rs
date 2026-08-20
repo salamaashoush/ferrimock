@@ -424,11 +424,22 @@ impl MockRegistry {
 
     /// A registry over a world of the caller's choosing.
     ///
-    /// [`Self::new`] takes the process-global world, which is what templates
-    /// and scripts reach — so a registry built this way serves entities the
-    /// `entity_*` template functions cannot see. Use it when isolation matters
-    /// more than that reach, as tests running in one process need.
+    /// Templates and scripts reach the world through the process-global handle,
+    /// so the first registry built this way publishes its world there — without
+    /// that, `entity_*` in a template reads a different world than the routes
+    /// serve, which looks like the world being empty.
+    ///
+    /// A *second* registry cannot publish over the first. That one keeps its
+    /// own world for matching and the HTTP API, and templates go on reading the
+    /// world that got there first; the isolation is real, its reach is not.
     pub fn with_world(world: Arc<crate::core::World>) -> Self {
+        if crate::core::set_global_world(Arc::clone(&world)).is_err()
+            && !Arc::ptr_eq(&crate::core::global_world(), &world)
+        {
+            tracing::debug!(
+                "a world is already installed process-wide; template and script                  `entity_*` calls will read that one rather than this registry's"
+            );
+        }
         // Get or create the global persistence store and share it with templates
         let persistence_store = crate::template::get_global_persistence_store();
 
@@ -835,6 +846,8 @@ impl MockRegistry {
                 .flatten()
                 .map(|(entity, count)| (LeanString::from(entity.as_str()), *count))
                 .collect(),
+            cascade_delete: config.cascade_delete,
+            overrides: config.field_rules()?,
         };
         self.world.configure(&settings, path)?;
 
@@ -844,6 +857,16 @@ impl MockRegistry {
             let loaded =
                 crate::spec::load_schema_file(&resolved, &self.world, config.lenient).await?;
             Self::report_schema_load(&resolved, &loaded);
+        }
+
+        // After the schemas, not before: a rule is judged against the world it
+        // was meant to describe, and settings are applied first.
+        for rejected in self.world.rejected_overrides() {
+            tracing::warn!(
+                file = %path.display(),
+                rejected = %rejected,
+                "a `world.fields` rule was not applied"
+            );
         }
 
         Ok(())
@@ -1751,7 +1774,7 @@ impl MockRegistry {
                     Ok(count)
                 }
                 #[cfg(feature = "spec")]
-                "graphql" | "gql" => self.reload_schema_file(path).await,
+                "graphql" | "gql" | "graphqls" => self.reload_schema_file(path).await,
                 _ => Err(crate::mp_err!("Unsupported file extension: {ext}")),
             }
         } else {

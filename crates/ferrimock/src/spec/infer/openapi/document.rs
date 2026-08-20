@@ -172,10 +172,13 @@ impl Operation {
     /// The last literal segment, which is what names the resource.
     #[must_use]
     pub fn resource_segment(&self) -> Option<&LeanString> {
-        self.segments.iter().rev().find_map(|segment| match segment {
-            Segment::Literal(name) => Some(name),
-            Segment::Param(_) => None,
-        })
+        self.segments
+            .iter()
+            .rev()
+            .find_map(|segment| match segment {
+                Segment::Literal(name) => Some(name),
+                Segment::Param(_) => None,
+            })
     }
 
     /// Whether the path ends in a parameter, which is what addresses one item.
@@ -784,10 +787,13 @@ fn read_paths(
     };
 
     let mut operations = Vec::new();
-    let mut seen: rustc_hash::FxHashSet<(http::Method, LeanString)> = rustc_hash::FxHashSet::default();
+    let mut seen: rustc_hash::FxHashSet<(http::Method, LeanString)> =
+        rustc_hash::FxHashSet::default();
 
     for (path, item) in paths {
-        let Some(item) = item.as_object() else { continue };
+        let Some(item) = item.as_object() else {
+            continue;
+        };
         let segments = parse_path(path);
 
         // Parameters declared on the path item apply to every operation under
@@ -892,10 +898,12 @@ fn derived_id(method: &http::Method, path: &str) -> String {
 fn parse_path(path: &str) -> Vec<Segment> {
     path.split('/')
         .filter(|segment| !segment.is_empty())
-        .map(|segment| match segment.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-            Some(name) => Segment::Param(LeanString::from(name)),
-            None => Segment::Literal(LeanString::from(segment)),
-        })
+        .map(
+            |segment| match segment.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+                Some(name) => Segment::Param(LeanString::from(name)),
+                None => Segment::Literal(LeanString::from(segment)),
+            },
+        )
         .collect()
 }
 
@@ -1259,7 +1267,12 @@ components:
         let table = filestore();
         let response = table.operation("getFolder").unwrap().success().unwrap();
         assert_eq!(
-            response.schema.as_ref().unwrap().name().map(LeanString::as_str),
+            response
+                .schema
+                .as_ref()
+                .unwrap()
+                .name()
+                .map(LeanString::as_str),
             Some("Folder"),
             "the reference is the relation signal; inlining it erases the target"
         );
@@ -1269,11 +1282,21 @@ components:
     fn the_most_specific_success_response_is_the_one_that_answers() {
         let table = filestore();
         assert_eq!(
-            table.operation("createFolder").unwrap().success().unwrap().status,
+            table
+                .operation("createFolder")
+                .unwrap()
+                .success()
+                .unwrap()
+                .status,
             StatusPattern::Exact(201)
         );
         assert_eq!(
-            table.operation("deleteFolder").unwrap().success().unwrap().status,
+            table
+                .operation("deleteFolder")
+                .unwrap()
+                .success()
+                .unwrap()
+                .status,
             StatusPattern::Exact(204)
         );
     }
@@ -1372,7 +1395,10 @@ components:
         let error = parse_openapi("name: my mocks\nmocks: []\n")
             .unwrap_err()
             .to_string();
-        assert!(error.contains("no `openapi:` version"), "unexpected: {error}");
+        assert!(
+            error.contains("no `openapi:` version"),
+            "unexpected: {error}"
+        );
     }
 
     #[test]
@@ -1401,8 +1427,16 @@ components:
 
     #[test]
     fn reading_is_order_independent() {
-        let a: Vec<String> = filestore().operations.iter().map(|op| op.id.to_string()).collect();
-        let b: Vec<String> = filestore().operations.iter().map(|op| op.id.to_string()).collect();
+        let a: Vec<String> = filestore()
+            .operations
+            .iter()
+            .map(|op| op.id.to_string())
+            .collect();
+        let b: Vec<String> = filestore()
+            .operations
+            .iter()
+            .map(|op| op.id.to_string())
+            .collect();
         assert_eq!(a, b);
     }
 }

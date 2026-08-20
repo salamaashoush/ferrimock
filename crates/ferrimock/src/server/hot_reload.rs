@@ -46,11 +46,15 @@ impl HotReloadManager {
         watch_dirs: Vec<PathBuf>,
         config: HotReloadConfig,
     ) -> crate::Result<Self> {
-        #[cfg(feature = "scripting")]
-        let filter = FileEventFilter::new()
-            .with_extensions(&["json", "yaml", "yml", "har", "js", "mjs", "ts", "mts"]);
-        #[cfg(not(feature = "scripting"))]
-        let filter = FileEventFilter::new().with_extensions(&["json", "yaml", "yml", "har"]);
+        // A schema is watched alongside the collections: `reload_file` already
+        // knows how to re-read one and re-mount the mocks serving it, and
+        // without the extension here that path was only ever reachable at
+        // startup — editing a `.graphql` left the old world being served.
+        let mut extensions = vec!["json", "yaml", "yml", "har", "graphql", "gql", "graphqls"];
+        if cfg!(feature = "scripting") {
+            extensions.extend_from_slice(&["js", "mjs", "ts", "mts"]);
+        }
+        let filter = FileEventFilter::new().with_extensions(&extensions);
         let watcher = FileWatcher::new(filter)?;
         let debouncer = EventDebouncer::new(Duration::from_millis(config.debounce_ms));
 

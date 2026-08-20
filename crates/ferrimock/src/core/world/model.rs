@@ -82,7 +82,7 @@ impl EntityGraph {
     #[must_use]
     pub fn seed_order(&self) -> SeedOrder {
         let mut state: FxHashMap<&str, VisitState> = FxHashMap::default();
-        let mut order = Vec::with_capacity(self.entities.len());
+        let mut order: Vec<&str> = Vec::with_capacity(self.entities.len());
         let mut broken = Vec::new();
 
         for entity in &self.entities {
@@ -95,19 +95,34 @@ impl EntityGraph {
         }
     }
 
+    /// Depth-first, over an explicit stack.
+    ///
+    /// The obvious recursion is one frame per link in the longest chain of
+    /// entities, and a production schema is exactly where that chain is long —
+    /// the same shape that already had to be capped when *value* objects were
+    /// inlined. A stack costs nothing here and cannot overflow.
     fn visit<'a>(
         &'a self,
-        entity: &'a EntityType,
+        start: &'a EntityType,
         state: &mut FxHashMap<&'a str, VisitState>,
         order: &mut Vec<&'a str>,
         broken: &mut Vec<BrokenCycle>,
     ) {
-        if state.contains_key(entity.name.as_str()) {
+        if state.contains_key(start.name.as_str()) {
             return;
         }
-        state.insert(entity.name.as_str(), VisitState::InProgress);
 
-        for field in &entity.fields {
+        let mut stack: Vec<(&'a EntityType, usize)> = vec![(start, 0)];
+        state.insert(start.name.as_str(), VisitState::InProgress);
+
+        while let Some((entity, cursor)) = stack.pop() {
+            let Some(field) = entity.fields.get(cursor) else {
+                state.insert(entity.name.as_str(), VisitState::Done);
+                order.push(entity.name.as_str());
+                continue;
+            };
+            stack.push((entity, cursor + 1));
+
             let Some(relation) = field.relation() else {
                 continue;
             };
@@ -117,22 +132,27 @@ impl EntityGraph {
             if target.name == entity.name {
                 continue;
             }
-            if state.get(target.name.as_str()) == Some(&VisitState::InProgress) {
-                broken.push(BrokenCycle {
+            match state.get(target.name.as_str()) {
+                Some(VisitState::InProgress) => broken.push(BrokenCycle {
                     from: entity.name.clone(),
                     field: field.name.clone(),
                     to: relation.target.clone(),
                     nullable: field.nullable,
                     cardinality: relation.cardinality,
-                });
-                continue;
+                }),
+                Some(VisitState::Done) => {}
+                None => {
+                    state.insert(target.name.as_str(), VisitState::InProgress);
+                    stack.push((target, 0));
+                }
             }
-            self.visit(target, state, order, broken);
         }
-
-        state.insert(entity.name.as_str(), VisitState::Done);
-        order.push(entity.name.as_str());
     }
+}
+
+/// Whether a later declaration of a field says strictly more than the one held.
+fn supersedes(incoming: &FieldDef, held: &FieldDef) -> bool {
+    incoming.relation().is_some() && held.relation().is_none()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,6 +229,33 @@ impl EntityType {
     #[must_use]
     pub fn field(&self, name: &str) -> Option<&FieldDef> {
         self.fields.iter().find(|f| f.name == name)
+    }
+
+    /// Fold another declaration of the same entity into this one.
+    ///
+    /// Two schemas describing one `User` describe one `User`: the REST document
+    /// knows about `email`, the GraphQL schema knows about `karma`, and a store
+    /// serving both has to hold every field or one of the two surfaces starts
+    /// answering with payloads its own schema rejects. So fields union.
+    ///
+    /// The first declaration wins a conflict, because *something* has to and
+    /// load order is the only tiebreak available — except where the later one
+    /// says strictly more: a link is more than the scalar key it is carried by,
+    /// and a declared field is more than one that was only guessed at.
+    pub fn absorb(&mut self, other: &Self) {
+        for field in &other.fields {
+            match self.fields.iter_mut().find(|held| held.name == field.name) {
+                Some(held) if supersedes(field, held) => *held = field.clone(),
+                Some(_) => {}
+                None => self.fields.push(field.clone()),
+            }
+        }
+        if self.typename.is_none() {
+            self.typename.clone_from(&other.typename);
+        }
+        if self.seed_count.is_none() {
+            self.seed_count = other.seed_count;
+        }
     }
 
     /// Fields that carry a relation, paired with it.
@@ -367,6 +414,12 @@ pub enum ValueSpec {
     Embedded(Vec<FieldDef>),
     /// A link to another entity.
     Relation(Box<Relation>),
+    /// A template rendered per value, in that value's own seeded stream.
+    ///
+    /// Only a `world.fields` override produces one: it is the escape hatch for
+    /// a value no generator names, and it costs a render per value, so only the
+    /// fields that ask for it pay.
+    Template(LeanString),
 }
 
 impl ValueSpec {
@@ -375,6 +428,14 @@ impl ValueSpec {
         match self {
             ValueSpec::Relation(r) => Some(r),
             ValueSpec::List(inner) => inner.relation(),
+            _ => None,
+        }
+    }
+
+    pub fn relation_mut(&mut self) -> Option<&mut Relation> {
+        match self {
+            ValueSpec::Relation(r) => Some(r),
+            ValueSpec::List(inner) => inner.relation_mut(),
             _ => None,
         }
     }
@@ -526,6 +587,12 @@ impl Relation {
         !self.members.is_empty()
     }
 
+    /// Whether a separate scalar field already carries this link's key.
+    #[must_use]
+    pub fn is_carried(&self) -> bool {
+        matches!(self.carrier, Carrier::ForeignKey(_))
+    }
+
     /// The concrete entities this link can resolve to.
     #[must_use]
     pub fn concrete_targets(&self) -> &[LeanString] {
@@ -554,6 +621,28 @@ pub enum Carrier {
     Subresource(LeanString),
     /// A Relay connection: `edges { node cursor }` plus `pageInfo`.
     Connection(ConnectionShape),
+}
+
+impl Carrier {
+    /// The field holding the target's key, given the field holding the link.
+    ///
+    /// Usually the same field: a link with no separate carrier writes the key
+    /// where the link is. A document that declares both — `user_id` beside an
+    /// embedded `customer` — has one link written twice, and naming the carrier
+    /// is what keeps the two spellings pointing at the same instance.
+    #[must_use]
+    pub fn key_field<'a>(&'a self, field: &'a LeanString) -> &'a LeanString {
+        match self {
+            Carrier::ForeignKey(name) => name,
+            _ => field,
+        }
+    }
+
+    /// Whether the link's own field holds the key rather than an object.
+    #[must_use]
+    pub fn is_inline_key(&self, field: &LeanString) -> bool {
+        matches!(self, Carrier::ForeignKey(name) if name == field)
+    }
 }
 
 /// The type names making up a recognised Relay connection, so the binding can

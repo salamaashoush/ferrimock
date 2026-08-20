@@ -107,6 +107,7 @@ lru = { workspace = true }
 nohash-hasher = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
+regex-syntax = { workspace = true }
 rustc-hash = { workspace = true }
 sha2 = { workspace = true }
 smallvec = { workspace = true }
@@ -154,6 +155,7 @@ sourcemap = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+regex = { workspace = true }
 proptest = { workspace = true }
 criterion = { workspace = true, features = ["html_reports", "async_tokio"] }
 futures = { workspace = true }
@@ -191,12 +193,6 @@ required-features = ["scripting"]
 name = "world_performance"
 harness = false
 required-features = ["spec"]
-
-# Uses the `graphql` module — only build under the `graphql` feature so default
-# `cargo test`/`nextest` runs don't fail to compile it.
-[[example]]
-name = "test_username_graphql"
-required-features = ["graphql"]
 
 [lints]
 workspace = true

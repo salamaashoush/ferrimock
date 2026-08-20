@@ -80,6 +80,173 @@ pub struct WorldConfig {
     /// Repair malformed schemas rather than refusing them.
     #[serde(default, skip_serializing_if = "is_false")]
     pub lenient: bool,
+
+    /// Whether removing a record also removes what points at it.
+    ///
+    /// On, a `DELETE` takes the children with it, the way a database with
+    /// `ON DELETE CASCADE` would. Off, a delete that would orphan children is
+    /// refused — which is what an API enforcing referential integrity does, and
+    /// what a test asserting on that behaviour needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cascade_delete: Option<bool>,
+
+    /// What a field should hold, keyed by `Entity.field` or `*.field`.
+    ///
+    /// A schema types a field as `String` and stops; which string it is remains
+    /// a product decision. `*.field` reaches every entity that has it, and
+    /// `Entity.field` beats it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
+    )]
+    pub fields: Option<std::collections::BTreeMap<String, FieldOverride>>,
+
+    /// The same, keyed by a *kind* of value rather than a place: a GraphQL
+    /// custom scalar (`Money`) or an OpenAPI `format` (`date-time`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
+    )]
+    pub scalars: Option<std::collections::BTreeMap<String, FieldOverride>>,
+}
+
+/// What an override says a field holds.
+///
+/// A bare string is either a generator name (`email`) or, when it looks like
+/// one, a Tera template (`"{{ fake_word() | upper }}"`). The template is the
+/// escape hatch: it costs a render per value and only the fields that ask for
+/// it pay, which is why the named form exists at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FieldOverride {
+    /// `email`, or `"{{ ... }}"`.
+    Named(String),
+    /// A shape with parameters.
+    Shaped(ShapedOverride),
+}
+
+/// The parameterised overrides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapedOverride {
+    /// `{ int: { min: 1, max: 10 } }`
+    Int(NumberRange),
+    /// `{ float: { min: 1.0, max: 99.99 } }`
+    Float(NumberRange),
+    /// `{ one_of: [pending, shipped] }`
+    OneOf(Vec<String>),
+    /// `{ constant: "ADD_METADATA" }`
+    Constant(serde_json::Value),
+    /// `{ pattern: "^[A-Z]{3}$" }`
+    Pattern(String),
+}
+
+/// Bounds on a generated number.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NumberRange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+impl WorldConfig {
+    /// Read the `fields:` and `scalars:` blocks into rules the world applies.
+    ///
+    /// A name nothing answers to is an error rather than a field that quietly
+    /// keeps whatever was inferred — a typo in a mapping file should be found
+    /// when the file is read, not from a payload that looks almost right.
+    pub fn field_rules(&self) -> crate::Result<crate::core::world::overrides::FieldRules> {
+        use crate::core::world::overrides::{FieldRules, RuleKey};
+
+        let mut rules = FieldRules::default();
+        for (target, stated) in self.fields.iter().flatten() {
+            rules.insert(parse_target(target), resolve(target, stated)?);
+        }
+        for (declared, stated) in self.scalars.iter().flatten() {
+            rules.insert(
+                RuleKey::Declared(LeanString::from(declared.as_str())),
+                resolve(declared, stated)?,
+            );
+        }
+        Ok(rules)
+    }
+}
+
+/// `User.email`, `*.email` or a bare `email` — all three name a place.
+fn parse_target(target: &str) -> crate::core::world::overrides::RuleKey {
+    use crate::core::world::overrides::RuleKey;
+
+    match target.split_once('.') {
+        Some(("*", field)) => RuleKey::AnyEntity(LeanString::from(field)),
+        Some((entity, field)) => RuleKey::Field {
+            entity: LeanString::from(entity),
+            field: LeanString::from(field),
+        },
+        None => RuleKey::AnyEntity(LeanString::from(target)),
+    }
+}
+
+fn resolve(
+    target: &str,
+    stated: &FieldOverride,
+) -> crate::Result<crate::core::world::overrides::FieldRule> {
+    use crate::core::world::overrides::{FieldRule, generator_named, generator_names};
+
+    match stated {
+        // A template is recognised by looking like one. Nothing else has to be
+        // declared, and a generator name can never contain `{{`.
+        FieldOverride::Named(named) if named.contains("{{") => {
+            Ok(FieldRule::Template(LeanString::from(named.as_str())))
+        }
+        FieldOverride::Named(named) => generator_named(named).ok_or_else(|| {
+            let nearest = generator_names()
+                .iter()
+                .map(|candidate| {
+                    (
+                        crate::core::levenshtein_distance(candidate, named),
+                        candidate,
+                    )
+                })
+                .filter(|(distance, _)| *distance <= 3)
+                .min_by_key(|(distance, _)| *distance)
+                .map(|(_, candidate)| *candidate);
+            match nearest {
+                Some(nearest) => crate::mp_err!(
+                    "`world.fields` for `{target}`: no generator called `{named}` — did you mean \
+                     `{nearest}`?"
+                ),
+                None => crate::mp_err!(
+                    "`world.fields` for `{target}`: no generator called `{named}`. Known: {}",
+                    generator_names().join(", ")
+                ),
+            }
+        }),
+        FieldOverride::Shaped(ShapedOverride::Int(range)) => Ok(FieldRule::Number {
+            float: false,
+            min: range.min,
+            max: range.max,
+        }),
+        FieldOverride::Shaped(ShapedOverride::Float(range)) => Ok(FieldRule::Number {
+            float: true,
+            min: range.min,
+            max: range.max,
+        }),
+        FieldOverride::Shaped(ShapedOverride::OneOf(options)) => Ok(FieldRule::OneOf(
+            options
+                .iter()
+                .map(|o| LeanString::from(o.as_str()))
+                .collect(),
+        )),
+        FieldOverride::Shaped(ShapedOverride::Constant(value)) => {
+            Ok(FieldRule::Constant(value.clone()))
+        }
+        FieldOverride::Shaped(ShapedOverride::Pattern(pattern)) => {
+            Ok(FieldRule::Pattern(LeanString::from(pattern.as_str())))
+        }
+    }
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]

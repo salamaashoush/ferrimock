@@ -202,7 +202,9 @@ async fn a_hand_written_mock_overrides_one_operation() {
 async fn overrides_and_served_routes_are_both_ordinary_mocks() {
     let (_dir, registry) = load().await;
 
-    let served = registry.get_mock("filestore-graphql").expect("the served route");
+    let served = registry
+        .get_mock("filestore-graphql")
+        .expect("the served route");
     let override_mock = registry.get_mock("quota-exceeded").expect("the override");
 
     assert!(
@@ -541,17 +543,19 @@ mod http_api {
     }
 }
 
-/// `with_world` buys isolation at the cost of template reach, and that
-/// trade-off has to stay visible.
+/// What a template sees when a registry was given its own world.
 ///
 /// Tera's function registry is stateless, so `entity_*` resolves the *global*
 /// world — there is nowhere to thread a per-registry handle through, the same
-/// constraint `PersistenceStore` already lives with. A registry given its own
-/// world therefore serves entities its own templates cannot see. Pinned here so
-/// the day someone finds a way to thread it, this test fails and says so
-/// rather than the behaviour changing unnoticed.
+/// constraint `PersistenceStore` already lives with. So `with_world` publishes
+/// its world there, and the first registry in a process gets templates that
+/// read exactly what its routes serve. A second one cannot displace it: it
+/// keeps its own world for matching, and templates go on reading the first.
+///
+/// Both halves are asserted, because which one this test lands in depends on
+/// what else in this binary ran first.
 #[tokio::test]
-async fn a_private_world_is_not_the_one_templates_read() {
+async fn a_registry_world_is_what_templates_read() {
     let (_dir, registry) = load().await;
 
     let private = registry.world().count("User");
@@ -562,13 +566,19 @@ async fn a_private_world_is_not_the_one_templates_read() {
         &RequestContext::new(),
     );
 
-    // An error means the global world has no `User` at all, which is equally
-    // "not this registry's world".
-    if let Ok(count) = rendered {
-        assert_ne!(
-            count,
+    if Arc::ptr_eq(&ferrimock::core::global_world(), registry.world()) {
+        assert_eq!(
+            rendered.expect("the installed world has a `User`"),
             private.to_string(),
-            "a template reads the global world, not the registry's"
+            "this registry's world is the installed one, so a template reads it"
         );
+        return;
     }
+
+    // Another registry got there first. The isolation is real and still holds.
+    assert_eq!(
+        registry.world().count("User"),
+        private,
+        "a registry that could not publish its world still serves it"
+    );
 }

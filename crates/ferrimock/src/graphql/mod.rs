@@ -1,40 +1,24 @@
-//! GraphQL schema introspection and mock generation
+//! Reading a GraphQL schema.
 //!
-//! This crate provides functionality to generate mock configurations from GraphQL schemas
-//! by analyzing introspection queries and mapping GraphQL types to fake data templates.
-//!
-//! ## Features
-//!
-//! - GraphQL schema introspection query and response parsing
-//! - SDL (Schema Definition Language) generation from parsed schemas
-//! - Generate mocks from GraphQL operations (queries, mutations, subscriptions)
-//! - Map GraphQL types to appropriate fake data generators
-//! - Support for nested types, lists, and custom scalars
-//! - Configurable mock generation options
+//! Introspection over the wire, the response parsed into a [`ParsedSchema`],
+//! and SDL written back out of one. What a schema *means* — which types have
+//! identity, how they link — is [`crate::spec::infer::graphql`]; what it
+//! *serves* is [`crate::spec::bind::graphql`]. This module only reads.
 //!
 //! ## Example
 //!
 //! ```rust,no_run
-//! use ferrimock::graphql::{MockGenerator, GeneratorOptions, ParsedSchema};
+//! use ferrimock::graphql::{SchemaParser, generate_sdl, get_introspection_query};
 //! use ferrimock::Result;
 //!
-//! fn generate_mocks(schema: ParsedSchema) -> Result<()> {
-//!     let options = GeneratorOptions {
-//!         endpoint_url: "/graphql".to_string(),
-//!         ..Default::default()
-//!     };
-//!
-//!     let generator = MockGenerator::new(schema, options);
-//!     let collection = generator.generate_all()?;
-//!
-//!     println!("Generated {} mocks", collection.mocks.len());
+//! fn print_sdl(response: ferrimock::graphql::IntrospectionResponse) -> Result<()> {
+//!     let schema = SchemaParser::parse(response)?;
+//!     println!("{}", generate_sdl(&schema));
 //!     Ok(())
 //! }
 //! ```
 
-pub mod generator;
 pub mod introspection;
-pub mod type_mapper;
 
 // Re-export introspection types
 pub use introspection::{
@@ -42,7 +26,3 @@ pub use introspection::{
     OperationType, ParsedSchema, SchemaParser, TypeDefinition, TypeKind, TypeRef, UnwrappedType,
     generate_sdl, get_introspection_query,
 };
-
-// Re-export mock-specific types
-pub use generator::{GeneratorOptions, MockGenerator};
-pub use type_mapper::TypeToFakeMapper;

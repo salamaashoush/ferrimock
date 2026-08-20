@@ -10,13 +10,23 @@
 //! `created_at` and `CREATED-AT` all land in the same place.
 
 use crate::core::world::model::TextShape;
-use crate::type_detector::semantic::matches_field_name;
+use crate::type_detector::semantic::{matches_any_field_name, matches_field_name};
 use crate::type_detector::{DateFormat, FieldType, TimestampFormat};
 
 /// Infer a field's meaning from its name and, failing that, from the name of
 /// the type the spec gave it.
+///
+/// `owner` is the entity the field belongs to, which is the only thing that can
+/// settle a bare `name`: on a `User` it is a person's name, on a `Folder` it is
+/// a folder's, and on a `File` it is a filename. Answering all three with
+/// `Cloyd Oberbrunner` is the kind of wrong a screenshot shows immediately.
 #[must_use]
-pub fn semantic_of(field_name: &str, type_name: &str, format: Option<&str>) -> Option<FieldType> {
+pub fn semantic_of(
+    field_name: &str,
+    type_name: &str,
+    format: Option<&str>,
+    owner: &str,
+) -> Option<FieldType> {
     // A declared format is the spec stating the answer, so it wins.
     if let Some(format) = format
         && let Some(field_type) = from_format(format)
@@ -26,7 +36,57 @@ pub fn semantic_of(field_name: &str, type_name: &str, format: Option<&str>) -> O
     if let Some(field_type) = from_type_name(type_name) {
         return Some(field_type);
     }
+    if let Some(field_type) = from_owned_name(field_name, owner) {
+        return Some(field_type);
+    }
     from_field_name(field_name)
+}
+
+/// What a bare `name` or `title` means, given what owns it.
+///
+/// Only the ambiguous spellings are decided here — `first_name` is a person's
+/// wherever it appears, and [`from_field_name`] still answers for it.
+fn from_owned_name(field_name: &str, owner: &str) -> Option<FieldType> {
+    const PEOPLE: [&str; 12] = [
+        "user",
+        "person",
+        "author",
+        "customer",
+        "contact",
+        "member",
+        "owner",
+        "employee",
+        "profile",
+        "recipient",
+        "sender",
+        "assignee",
+    ];
+    const DOCUMENTS: [&str; 8] = [
+        "file",
+        "document",
+        "attachment",
+        "asset",
+        "image",
+        "photo",
+        "upload",
+        "media",
+    ];
+
+    let bare = matches_any_field_name(field_name, &["name", "title", "label"]);
+    if !bare {
+        return None;
+    }
+
+    let owner = owner.to_ascii_lowercase().replace(['_', '-', '.'], "");
+    if PEOPLE.iter().any(|kind| owner.contains(kind)) {
+        return Some(FieldType::Name);
+    }
+    if DOCUMENTS.iter().any(|kind| owner.contains(kind)) {
+        return Some(FieldType::FileName);
+    }
+    // Anything else is named the way things are named, not the way people are:
+    // left to the text shape, which composes a noun phrase.
+    Some(FieldType::Sentence)
 }
 
 /// OpenAPI `format` and the common nonstandard spellings around it.
@@ -116,7 +176,16 @@ pub fn from_field_name(field_name: &str) -> Option<FieldType> {
     if any(&["username", "login", "handle", "nickname"]) {
         return Some(FieldType::Username);
     }
-    if any(&["name", "fullname", "firstname", "lastname", "displayname"]) {
+    // `name` on its own is decided by `from_owned_name`, which knows what owns
+    // it; these spellings are a person's name wherever they appear.
+    if any(&[
+        "fullname",
+        "firstname",
+        "lastname",
+        "displayname",
+        "givenname",
+        "surname",
+    ]) {
         return Some(FieldType::Name);
     }
     if contains(&["avatar", "thumbnail", "imageurl", "photourl", "picture"]) {
@@ -158,9 +227,8 @@ pub fn from_field_name(field_name: &str) -> Option<FieldType> {
     if any(&["etag"]) {
         return Some(FieldType::ETag);
     }
-    if any(&["slug"]) {
-        return Some(FieldType::Sentence);
-    }
+    // A slug is left to `text_shape_of`, which spells it as one. Claiming a
+    // semantic here would win over the shape and answer with prose.
     if any(&[
         "description",
         "bio",
@@ -182,22 +250,76 @@ pub fn from_field_name(field_name: &str) -> Option<FieldType> {
 mod tests {
     use super::*;
 
+    /// The two lanes share a vocabulary, not a rule set — and where both of
+    /// them answer they must agree.
+    ///
+    /// The recording lane confirms a guess about a name against the values it
+    /// saw; a spec has no values, so this one decides from the name, the
+    /// declared type and the format alone. Neither is a subset of the other.
+    /// But a `User` recorded and a `User` declared are the same `User`, so a
+    /// field they both have an opinion about had better get the same one.
+    #[test]
+    fn the_two_lanes_agree_wherever_both_of_them_answer() {
+        use crate::type_detector::{DetectionContext, detect_from_semantic_context};
+
+        let recording = |name: &str| {
+            detect_from_semantic_context(name, &[], &DetectionContext::builtin()).map(|(t, _)| t)
+        };
+
+        for name in [
+            "first_name",
+            "description",
+            "summary",
+            "avatar_url",
+            "email",
+            "username",
+            "created_at",
+            "phone",
+            "filename",
+            "etag",
+            "slug",
+        ] {
+            let (Some(spec), Some(recorded)) =
+                (semantic_of(name, "String", None, "Thing"), recording(name))
+            else {
+                continue;
+            };
+            assert_eq!(
+                std::mem::discriminant(&spec),
+                std::mem::discriminant(&recorded),
+                "`{name}`: spec says {spec:?}, recording says {recorded:?}"
+            );
+        }
+
+        // `name` is the deliberate exception: this lane knows what owns the
+        // field and the recording lane does not, so `Folder.name` is a folder's
+        // name here. Owned by a person, the two agree again.
+        assert!(matches!(
+            semantic_of("name", "String", None, "User"),
+            Some(FieldType::Name)
+        ));
+        assert!(matches!(
+            semantic_of("name", "String", None, "Folder"),
+            Some(FieldType::Sentence)
+        ));
+    }
+
     #[test]
     fn a_declared_format_wins_over_everything() {
-        let detected = semantic_of("title", "String", Some("uuid")).unwrap();
+        let detected = semantic_of("title", "String", Some("uuid"), "Thing").unwrap();
         assert!(matches!(detected, FieldType::Uuid));
     }
 
     #[test]
     fn a_custom_scalar_name_beats_the_field_name() {
-        let detected = semantic_of("cursor", "DateTime", None).unwrap();
+        let detected = semantic_of("cursor", "DateTime", None, "Thing").unwrap();
         assert!(matches!(detected, FieldType::Timestamp { .. }));
     }
 
     #[test]
     fn field_names_are_matched_across_case_conventions() {
         for spelling in ["created_at", "createdAt", "CreatedAt", "CREATED_AT"] {
-            let detected = semantic_of(spelling, "String", None);
+            let detected = semantic_of(spelling, "String", None, "Thing");
             assert!(
                 matches!(detected, Some(FieldType::Timestamp { .. })),
                 "`{spelling}` should read as a timestamp"
@@ -208,27 +330,27 @@ mod tests {
     #[test]
     fn common_conventions_are_recognised() {
         assert!(matches!(
-            semantic_of("email", "String", None),
+            semantic_of("email", "String", None, "Thing"),
             Some(FieldType::Email)
         ));
         assert!(matches!(
-            semantic_of("contactEmail", "String", None),
+            semantic_of("contactEmail", "String", None, "Thing"),
             Some(FieldType::Email)
         ));
         assert!(matches!(
-            semantic_of("avatarUrl", "String", None),
+            semantic_of("avatarUrl", "String", None, "Thing"),
             Some(FieldType::ImageUrl)
         ));
         assert!(matches!(
-            semantic_of("homepageUrl", "String", None),
+            semantic_of("homepageUrl", "String", None, "Thing"),
             Some(FieldType::Url)
         ));
         assert!(matches!(
-            semantic_of("id", "ID", None),
+            semantic_of("id", "ID", None, "Thing"),
             Some(FieldType::Uuid)
         ));
         assert!(matches!(
-            semantic_of("description", "String", None),
+            semantic_of("description", "String", None, "Thing"),
             Some(FieldType::Paragraph)
         ));
     }
@@ -257,14 +379,61 @@ mod tests {
     }
 
     #[test]
+    fn a_slug_is_left_to_its_shape_rather_than_typed_as_prose() {
+        assert!(
+            semantic_of("slug", "String", None, "Thing").is_none(),
+            "claiming a semantic here wins over the shape and answers with a sentence"
+        );
+        assert_eq!(text_shape_of("slug"), TextShape::Slug);
+    }
+
+    #[test]
+    fn what_owns_a_bare_name_decides_what_it_holds() {
+        assert!(
+            matches!(
+                semantic_of("name", "String", None, "User"),
+                Some(FieldType::Name)
+            ),
+            "a user's name is a person's"
+        );
+        assert!(
+            matches!(
+                semantic_of("name", "String", None, "File"),
+                Some(FieldType::FileName)
+            ),
+            "a file's name is a filename"
+        );
+        assert!(
+            matches!(
+                semantic_of("name", "String", None, "Folder"),
+                Some(FieldType::Sentence)
+            ),
+            "a folder is not called Cloyd Oberbrunner"
+        );
+    }
+
+    #[test]
+    fn an_explicit_person_name_is_one_whatever_owns_it() {
+        for spelling in ["first_name", "lastName", "full_name", "displayName"] {
+            assert!(
+                matches!(
+                    semantic_of(spelling, "String", None, "Folder"),
+                    Some(FieldType::Name)
+                ),
+                "`{spelling}` names a person wherever it appears"
+            );
+        }
+    }
+
+    #[test]
     fn an_unremarkable_field_stays_unremarkable() {
-        assert!(semantic_of("colour", "String", None).is_none());
-        assert!(semantic_of("weight", "Float", None).is_none());
+        assert!(semantic_of("colour", "String", None, "Thing").is_none());
+        assert!(semantic_of("weight", "Float", None, "Thing").is_none());
     }
 
     #[test]
     fn an_unknown_format_falls_through_rather_than_guessing() {
         // `binary` has no faithful scalar rendering, so the declared kind wins.
-        assert!(semantic_of("blob", "String", Some("binary")).is_none());
+        assert!(semantic_of("blob", "String", Some("binary"), "Thing").is_none());
     }
 }

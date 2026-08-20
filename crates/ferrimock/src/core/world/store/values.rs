@@ -10,6 +10,7 @@ use lean_string::LeanString;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::core::world::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
+use crate::core::world::store::pattern;
 use crate::fake_data::{self, rng};
 use crate::type_detector::FieldType;
 
@@ -67,12 +68,135 @@ pub fn generate_fields(
         };
         record.insert(field.name.to_string(), generate(&field.value, &path, seed));
     }
+    order_lifecycle(fields, &mut record);
     record
+}
+
+/// Where a timestamp sits in a record's life.
+///
+/// Drawing each field independently is what makes a record derivable without
+/// its neighbours, and it is also why `updated_at` lands before `created_at`
+/// half the time. Nothing about the *draws* has to change to fix that: the
+/// values a record already has can be dealt back out in the order the field
+/// names say they happened.
+fn lifecycle_rank(field: &str) -> Option<u8> {
+    const OPENED: [&str; 12] = [
+        "created",
+        "registered",
+        "added",
+        "opened",
+        "started",
+        "issued",
+        "submitted",
+        "requested",
+        "validfrom",
+        "effectivefrom",
+        "begins",
+        "since",
+    ];
+    const TOUCHED: [&str; 10] = [
+        "updated",
+        "modified",
+        "changed",
+        "edited",
+        "synced",
+        "published",
+        "approved",
+        "reviewed",
+        "confirmed",
+        "lastseen",
+    ];
+    const CLOSED: [&str; 14] = [
+        "completed",
+        "finished",
+        "resolved",
+        "shipped",
+        "delivered",
+        "paid",
+        "closed",
+        "ended",
+        "expires",
+        "expired",
+        "deleted",
+        "removed",
+        "archived",
+        "validuntil",
+    ];
+
+    let lowered = field.to_ascii_lowercase().replace(['_', '-'], "");
+    let has = |stems: &[&str]| stems.iter().any(|stem| lowered.contains(stem));
+    if has(&OPENED) {
+        return Some(0);
+    }
+    if has(&TOUCHED) {
+        return Some(1);
+    }
+    if has(&CLOSED) {
+        return Some(2);
+    }
+    None
+}
+
+/// How a timestamp is written, so only values that compare are reordered.
+///
+/// Two fields are comparable when they render the same way — a date sorts
+/// against a date and an RFC 3339 instant against another one, because in both
+/// cases the text orders the way the moment does. Mixing them would compare
+/// `2024-03-01` against `2024-03-01T09:12:44Z` and get it wrong.
+fn timestamp_shape(field: &FieldDef) -> Option<&'static str> {
+    let ValueSpec::Scalar(scalar) = &field.value else {
+        return None;
+    };
+    match scalar.semantic.as_ref()? {
+        FieldType::Timestamp { .. } => Some("instant"),
+        FieldType::IsoDate { .. } => Some("date"),
+        _ => None,
+    }
+}
+
+/// Deal a record's lifecycle timestamps back out in the order they happened.
+fn order_lifecycle(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>) {
+    let mut ordered: Vec<(&'static str, u8, &str)> = fields
+        .iter()
+        .filter_map(|field| {
+            let shape = timestamp_shape(field)?;
+            let rank = lifecycle_rank(field.name.as_str())?;
+            record
+                .get(field.name.as_str())
+                .filter(|value| value.is_string())
+                .map(|_| (shape, rank, field.name.as_str()))
+        })
+        .collect();
+    if ordered.len() < 2 {
+        return;
+    }
+    // Name breaks a tie, so two fields of the same rank land the same way on
+    // every run.
+    ordered.sort_unstable();
+
+    for shape in ["instant", "date"] {
+        let group: Vec<&str> = ordered
+            .iter()
+            .filter(|(held, _, _)| *held == shape)
+            .map(|(_, _, name)| *name)
+            .collect();
+        if group.len() < 2 {
+            continue;
+        }
+        let mut values: Vec<String> = group
+            .iter()
+            .filter_map(|name| record.get(*name)?.as_str().map(ToString::to_string))
+            .collect();
+        values.sort_unstable();
+        for (name, value) in group.iter().zip(values) {
+            record.insert((*name).to_string(), JsonValue::String(value));
+        }
+    }
 }
 
 fn generate_in_scope(spec: &ValueSpec, path: &str, seed: ValueSeed<'_>, derived: u64) -> JsonValue {
     match spec {
-        ValueSpec::Scalar(scalar) => scalar_value(scalar, path),
+        ValueSpec::Scalar(scalar) => scalar_value(scalar, path, seed.ordinal),
         ValueSpec::Enum(options) => options
             .get(pick_index(derived, options.len()))
             .map_or(JsonValue::Null, |v| JsonValue::String(v.to_string())),
@@ -88,10 +212,30 @@ fn generate_in_scope(spec: &ValueSpec, path: &str, seed: ValueSeed<'_>, derived:
             )
         }
         ValueSpec::Embedded(fields) => JsonValue::Object(generate_fields(fields, path, seed)),
+        // The escape hatch, rendered inside the scope this field already
+        // installed — so a template is as reproducible as everything around it,
+        // and `{{ fake_email() }}` draws from the same stream the built-in
+        // generators do.
+        ValueSpec::Template(template) => render(template),
         // A relation is resolved by the store against the entity graph, not
         // invented here; a caller reaching this has asked for the wrong thing.
         ValueSpec::Relation(_) => JsonValue::Null,
     }
+}
+
+/// Render an override's template into whatever JSON value it produced.
+///
+/// A template that yields `42` or `true` is that, not the string of it: the
+/// point of the escape hatch is to produce the value the API actually returns.
+/// A template that fails to render answers null rather than poisoning the
+/// record with its own error text.
+fn render(template: &str) -> JsonValue {
+    let Ok(rendered) =
+        crate::template::render_template(template, &crate::types::RequestContext::new())
+    else {
+        return JsonValue::Null;
+    };
+    serde_json::from_str(&rendered).unwrap_or(JsonValue::String(rendered))
 }
 
 fn list_len(inner: &ValueSpec) -> usize {
@@ -109,13 +253,30 @@ fn pick_index(derived: u64, len: usize) -> usize {
     usize::try_from(derived % len as u64).unwrap_or(0)
 }
 
-fn scalar_value(scalar: &Scalar, path: &str) -> JsonValue {
-    if let Some(semantic) = &scalar.semantic
-        && let Some(value) = semantic_value(semantic, &scalar.constraints)
-    {
+fn scalar_value(scalar: &Scalar, path: &str, ordinal: u64) -> JsonValue {
+    let value = scalar
+        .semantic
+        .as_ref()
+        .and_then(|semantic| semantic_value(semantic, &scalar.constraints, ordinal))
+        .unwrap_or_else(|| kind_value(scalar, path));
+
+    // A declared pattern is the strictest thing the spec said, so a value that
+    // does not satisfy it is wrong however realistic it reads. The realistic
+    // value is still preferred when it happens to satisfy the pattern, which
+    // is what keeps a permissive `^.+$` from replacing a name with noise.
+    let Some(declared) = &scalar.constraints.pattern else {
         return value;
+    };
+    match &value {
+        JsonValue::String(text) if pattern::matches(declared, text) => value,
+        JsonValue::String(_) => pattern::generate(
+            declared,
+            scalar.constraints.min_length,
+            scalar.constraints.max_length,
+        )
+        .map_or(value, JsonValue::String),
+        _ => value,
     }
-    kind_value(scalar, path)
 }
 
 /// A value for a field whose meaning the detector recognised.
@@ -123,14 +284,21 @@ fn scalar_value(scalar: &Scalar, path: &str) -> JsonValue {
 /// Only the variants a spec can actually produce are handled; the rest fall
 /// back to the declared kind, which is always safe because the kind is what
 /// the schema will be validated against.
-fn semantic_value(field_type: &FieldType, constraints: &Constraints) -> Option<JsonValue> {
+fn semantic_value(
+    field_type: &FieldType,
+    constraints: &Constraints,
+    ordinal: u64,
+) -> Option<JsonValue> {
     let value = match field_type {
         FieldType::Uuid => JsonValue::String(fake_data::fake_uuid()),
         FieldType::Email => JsonValue::String(fake_data::fake_email()),
         FieldType::Username => JsonValue::String(fake_data::fake_username()),
         FieldType::Name => JsonValue::String(fake_data::fake_name()),
-        FieldType::Sentence => JsonValue::String(fake_data::fake_sentence(8)),
-        FieldType::Paragraph => JsonValue::String(fake_data::fake_paragraph(3)),
+        // Composed rather than lorem: a title is read by a person, and
+        // `perferendis non adipisci asperiores` is the thing that makes a
+        // mocked screen look mocked.
+        FieldType::Sentence => JsonValue::String(fake_data::fake_headline()),
+        FieldType::Paragraph => JsonValue::String(fake_data::fake_prose(2)),
         FieldType::Url | FieldType::ImageUrl => JsonValue::String(fake_data::fake_url()),
         FieldType::IpAddress => JsonValue::String(fake_data::fake_ipv4()),
         FieldType::PhoneNumber => JsonValue::String(fake_data::fake_phone()),
@@ -153,7 +321,11 @@ fn semantic_value(field_type: &FieldType, constraints: &Constraints) -> Option<J
         }
         FieldType::Constant(value) => value.clone(),
         FieldType::SequentialNumber { start, step } => {
-            JsonValue::Number((*start).saturating_add(*step).into())
+            // Sequential means sequential *across instances*: the ordinal is
+            // the position in the sequence, so the field counts the way the
+            // recording it was detected from counted.
+            let offset = step.saturating_mul(i64::try_from(ordinal).unwrap_or(i64::MAX));
+            JsonValue::Number((*start).saturating_add(offset).into())
         }
         FieldType::RandomNumber { min, max } => {
             let low = constraints.min.map_or(min.unwrap_or(1), clamp_to_i64);
@@ -163,7 +335,7 @@ fn semantic_value(field_type: &FieldType, constraints: &Constraints) -> Option<J
         FieldType::RandomFloat { min, max } => {
             let low = constraints.min.or(*min).unwrap_or(0.0);
             let high = constraints.max.or(*max).unwrap_or(1000.0);
-            json_float(fake_data::fake_price(low, high))
+            json_float(fake_data::fake_price(low, high), low, high)
         }
         _ => return None,
     };
@@ -182,7 +354,7 @@ fn kind_value(scalar: &Scalar, path: &str) -> JsonValue {
         ScalarKind::Float => {
             let low = constraints.min.unwrap_or(0.0);
             let high = constraints.max.unwrap_or(1000.0);
-            json_float(fake_data::fake_price(low, high))
+            json_float(fake_data::fake_price(low, high), low, high)
         }
         ScalarKind::Id => JsonValue::String(fake_data::fake_uuid()),
         ScalarKind::String | ScalarKind::Custom(_) => JsonValue::String(match scalar.shape {
@@ -193,15 +365,17 @@ fn kind_value(scalar: &Scalar, path: &str) -> JsonValue {
     }
 }
 
-/// A string that satisfies whatever length bounds the spec set. Words are the
-/// readable default; bounds are met by truncating or padding with more words,
-/// because a spec that says `maxLength: 8` means it.
+/// A string that satisfies whatever length bounds the spec set.
+///
+/// A composed phrase is the readable default — a `String` a schema said nothing
+/// else about is still going to be read by someone. Bounds are met by
+/// truncating or padding, because a spec that says `maxLength: 8` means it.
 fn bounded_string(constraints: &Constraints, path: &str) -> String {
-    let mut text = fake_data::fake_words(3);
+    let mut text = fake_data::fake_headline();
     if let Some(min) = constraints.min_length {
         while text.chars().count() < min {
             text.push(' ');
-            text.push_str(&fake_data::fake_word());
+            text.push_str(&fake_data::fake_label());
         }
     }
     if let Some(max) = constraints.max_length
@@ -247,27 +421,91 @@ fn int_between(low: i64, high: i64) -> i64 {
 
 /// JSON numbers cannot be NaN or infinite; a bound that produces one is a spec
 /// error, and null is the honest answer rather than a silently clamped value.
-fn json_float(value: f64) -> JsonValue {
-    serde_json::Number::from_f64(value).map_or(JsonValue::Null, JsonValue::Number)
+///
+/// Two decimals is what a payload actually carries: `706.3558368819936` is a
+/// legal answer for a `number`, but no API writes one, and the extra digits are
+/// the first thing that makes a mocked payload read as generated. Bounds
+/// narrower than a hundredth keep the full value, because there the precision
+/// is the point.
+fn json_float(value: f64, low: f64, high: f64) -> JsonValue {
+    let rounded = (value * 100.0).round() / 100.0;
+    let kept = if rounded >= low && rounded <= high {
+        rounded
+    } else {
+        value
+    };
+    serde_json::Number::from_f64(kept).map_or(JsonValue::Null, JsonValue::Number)
 }
 
 /// The key value for the `ordinal`th derived instance of an entity.
 ///
 /// Keys must be derivable without materialising the record: the census hands
 /// out keys, and only a read that actually happens builds the fields.
-pub fn derive_key_value(seed: u64, entity: &str, key_field: &Scalar, ordinal: u64) -> LeanString {
-    let derived = rng::derive_seed(seed, &format!("{entity}#key"), ordinal);
+pub fn derive_key_value(
+    seed: u64,
+    entity: &str,
+    field: Option<&str>,
+    key_field: &Scalar,
+    ordinal: u64,
+) -> LeanString {
+    // A key of one part keeps the stream and the wording it has always had, so
+    // adding composite keys did not renumber every world that already exists —
+    // `derive_seed` is documented as stable across releases, and a key is the
+    // most visible thing it derives. Each part of a composite key is named by
+    // its own field instead, or `/repos/{owner}/{repo}` answers with a repo
+    // whose owner is called `repo-3`.
+    let label = field.unwrap_or(entity);
+    let stream = match field {
+        None => format!("{entity}#key"),
+        Some(field) => format!("{entity}#key:{field}"),
+    };
+    let derived = rng::derive_seed(seed, &stream, ordinal);
     let _scope = rng::scope_seeded(derived);
-    match (&key_field.kind, &key_field.semantic) {
-        (_, Some(FieldType::Uuid)) | (ScalarKind::Id, None) => fake_data::fake_uuid().into(),
-        (ScalarKind::Int, _) | (_, Some(FieldType::SequentialNumber { .. })) => {
-            LeanString::from((ordinal + 1).to_string())
-        }
-        (_, Some(FieldType::NumericStringId)) => fake_data::fake_numeric_id().into(),
+
+    // The declared kind is checked before the detected meaning, and that order
+    // is the whole point: a field named `id` reads as a uuid to the detector,
+    // so a document declaring `id: { type: integer }` used to be keyed by uuids
+    // — which made `GET /users/1` a 404 on every integer-keyed API there is.
+    match &key_field.kind {
+        ScalarKind::Int | ScalarKind::Float => LeanString::from((ordinal + 1).to_string()),
         _ => match &key_field.semantic {
+            Some(FieldType::NumericStringId) => fake_data::fake_numeric_id().into(),
+            Some(FieldType::SequentialNumber { .. }) => LeanString::from((ordinal + 1).to_string()),
             Some(FieldType::Uuid) => fake_data::fake_uuid().into(),
-            _ => LeanString::from(format!("{}-{}", slug(entity), ordinal + 1)),
+            _ if key_field.kind == ScalarKind::Id => fake_data::fake_uuid().into(),
+            _ => LeanString::from(format!("{}-{}", slug(label), ordinal + 1)),
         },
+    }
+}
+
+/// A key rendered as the kind the schema declared it.
+///
+/// Keys are held as text because that is what a path segment and a cursor are,
+/// but a payload has to carry the declared type: a client that POSTs
+/// `{"id": 42}` against `id: { type: integer }` and reads back `{"id": "42"}`
+/// has watched the mock change the type under it.
+#[must_use]
+pub fn key_json(kind: &ScalarKind, value: &str) -> JsonValue {
+    match kind {
+        ScalarKind::Int => value
+            .parse::<i64>()
+            .map_or_else(|_| JsonValue::String(value.to_string()), JsonValue::from),
+        ScalarKind::Float => value
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map_or_else(|| JsonValue::String(value.to_string()), JsonValue::Number),
+        _ => JsonValue::String(value.to_string()),
+    }
+}
+
+/// A key as text, however the payload happened to write it.
+#[must_use]
+pub fn key_text(value: &JsonValue) -> Option<String> {
+    match value {
+        JsonValue::String(text) => Some(text.clone()),
+        JsonValue::Number(number) => Some(number.to_string()),
+        _ => None,
     }
 }
 
@@ -369,6 +607,169 @@ mod tests {
     }
 
     #[test]
+    fn a_declared_pattern_is_satisfied() {
+        let spec = ValueSpec::Scalar(Scalar::new(ScalarKind::String).with_constraints(
+            Constraints {
+                pattern: Some(LeanString::from("^[A-Z]{3}-[0-9]{4}$")),
+                ..Constraints::default()
+            },
+        ));
+        let matcher = regex::Regex::new("^[A-Z]{3}-[0-9]{4}$").unwrap();
+        for ordinal in 0..20 {
+            let value = generate(&spec, "sku", ValueSeed::new(4, "Thing", ordinal));
+            let text = value.as_str().unwrap();
+            assert!(
+                matcher.is_match(text),
+                "{text} does not satisfy the pattern"
+            );
+        }
+    }
+
+    #[test]
+    fn a_realistic_value_that_already_satisfies_the_pattern_is_kept() {
+        let spec = ValueSpec::Scalar(
+            Scalar::new(ScalarKind::String)
+                .with_semantic(FieldType::Email)
+                .with_constraints(Constraints {
+                    pattern: Some(LeanString::from("@")),
+                    ..Constraints::default()
+                }),
+        );
+        let value = generate(&spec, "contact", ValueSeed::new(4, "User", 0));
+        let text = value.as_str().unwrap();
+        assert!(
+            text.contains('@') && text.contains('.'),
+            "a permissive pattern must not replace a real email, got {text}"
+        );
+    }
+
+    #[test]
+    fn a_sequential_number_advances_with_the_instance() {
+        let spec = ValueSpec::Scalar(
+            Scalar::new(ScalarKind::Int)
+                .with_semantic(FieldType::SequentialNumber { start: 10, step: 5 }),
+        );
+        let values: Vec<i64> = (0..4)
+            .map(|ordinal| {
+                generate(&spec, "position", ValueSeed::new(1, "Row", ordinal))
+                    .as_i64()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            values,
+            [10, 15, 20, 25],
+            "sequential means across instances"
+        );
+    }
+
+    #[test]
+    fn a_generated_float_reads_like_a_payload_writes_one() {
+        let spec = ValueSpec::Scalar(Scalar::new(ScalarKind::Float));
+        for ordinal in 0..20 {
+            let value = generate(&spec, "total", ValueSeed::new(6, "Order", ordinal));
+            let text = value.to_string();
+            let decimals = text.split_once('.').map_or(0, |(_, rest)| rest.len());
+            assert!(
+                decimals <= 2,
+                "{text} carries more precision than an API does"
+            );
+        }
+    }
+
+    #[test]
+    fn a_record_s_timestamps_happen_in_the_order_their_names_say() {
+        let stamp = |name: &str| {
+            FieldDef::new(
+                name,
+                ValueSpec::Scalar(Scalar::new(ScalarKind::String).with_semantic(
+                    FieldType::Timestamp {
+                        format: crate::type_detector::TimestampFormat::Rfc3339Utc,
+                    },
+                )),
+                false,
+            )
+        };
+        let fields = vec![
+            stamp("created_at"),
+            stamp("updated_at"),
+            stamp("deleted_at"),
+        ];
+
+        for ordinal in 0..40 {
+            let record = generate_fields(&fields, "", ValueSeed::new(5, "Doc", ordinal));
+            let at = |name: &str| record.get(name).unwrap().as_str().unwrap().to_string();
+            assert!(
+                at("created_at") <= at("updated_at"),
+                "created {} after updated {}",
+                at("created_at"),
+                at("updated_at")
+            );
+            assert!(
+                at("updated_at") <= at("deleted_at"),
+                "updated {} after deleted {}",
+                at("updated_at"),
+                at("deleted_at")
+            );
+        }
+    }
+
+    #[test]
+    fn a_date_is_not_ordered_against_an_instant() {
+        let date = FieldDef::new(
+            "start_date",
+            ValueSpec::Scalar(
+                Scalar::new(ScalarKind::String).with_semantic(FieldType::IsoDate {
+                    format: crate::type_detector::DateFormat::Iso,
+                }),
+            ),
+            false,
+        );
+        let instant = FieldDef::new(
+            "updated_at",
+            ValueSpec::Scalar(Scalar::new(ScalarKind::String).with_semantic(
+                FieldType::Timestamp {
+                    format: crate::type_detector::TimestampFormat::Rfc3339Utc,
+                },
+            )),
+            false,
+        );
+        let record = generate_fields(&[date, instant], "", ValueSeed::new(5, "Doc", 0));
+        assert!(
+            !record
+                .get("start_date")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains('T')
+        );
+        assert!(
+            record
+                .get("updated_at")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains('T')
+        );
+    }
+
+    #[test]
+    fn ordering_does_not_disturb_a_lone_timestamp() {
+        let only = FieldDef::new(
+            "created_at",
+            ValueSpec::Scalar(Scalar::new(ScalarKind::String).with_semantic(
+                FieldType::Timestamp {
+                    format: crate::type_detector::TimestampFormat::Rfc3339Utc,
+                },
+            )),
+            false,
+        );
+        let with_pass = generate_fields(std::slice::from_ref(&only), "", ValueSeed::new(9, "D", 3));
+        let raw = generate(&only.value, "created_at", ValueSeed::new(9, "D", 3));
+        assert_eq!(with_pass.get("created_at"), Some(&raw));
+    }
+
+    #[test]
     fn semantic_types_beat_the_declared_kind() {
         let spec =
             ValueSpec::Scalar(Scalar::new(ScalarKind::String).with_semantic(FieldType::Email));
@@ -380,10 +781,10 @@ mod tests {
     fn keys_are_unique_and_stable_per_ordinal() {
         let key = Scalar::new(ScalarKind::Id);
         let first: Vec<_> = (0..50)
-            .map(|i| derive_key_value(11, "User", &key, i))
+            .map(|i| derive_key_value(11, "User", None, &key, i))
             .collect();
         let again: Vec<_> = (0..50)
-            .map(|i| derive_key_value(11, "User", &key, i))
+            .map(|i| derive_key_value(11, "User", None, &key, i))
             .collect();
         assert_eq!(first, again);
         let unique: std::collections::BTreeSet<_> = first.iter().collect();
@@ -393,8 +794,8 @@ mod tests {
     #[test]
     fn integer_keys_read_like_integers() {
         let key = Scalar::new(ScalarKind::Int);
-        assert_eq!(derive_key_value(11, "User", &key, 0).as_str(), "1");
-        assert_eq!(derive_key_value(11, "User", &key, 41).as_str(), "42");
+        assert_eq!(derive_key_value(11, "User", None, &key, 0).as_str(), "1");
+        assert_eq!(derive_key_value(11, "User", None, &key, 41).as_str(), "42");
     }
 }
 

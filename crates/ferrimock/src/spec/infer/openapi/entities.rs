@@ -215,7 +215,9 @@ fn entity_ref(
     if members.len() != node.one_of.len() {
         return None;
     }
-    members.first().map(|first| (first.clone(), members.clone()))
+    members
+        .first()
+        .map(|first| (first.clone(), members.clone()))
 }
 
 // ===== Discovery =====
@@ -289,7 +291,10 @@ type Decision = (
     Vec<Skipped>,
 );
 
-fn decide_entities(table: &OperationTable, sightings: &FxHashMap<LeanString, Sighting>) -> Decision {
+fn decide_entities(
+    table: &OperationTable,
+    sightings: &FxHashMap<LeanString, Sighting>,
+) -> Decision {
     let mut names = FxHashSet::default();
     let mut keys = FxHashMap::default();
     let mut skipped = Vec::new();
@@ -311,10 +316,7 @@ fn decide_entities(table: &OperationTable, sightings: &FxHashMap<LeanString, Sig
                 continue;
             };
             KeyChoice {
-                key: CompositeKey::parts([KeyPart {
-                    field,
-                    source: KeySource::PathParam(item.param.clone()),
-                }]),
+                key: composite_key(&node, item, field),
                 rule: Rule::CollectionItemPair,
                 detail: LeanString::from(match sighting.collections.first() {
                     Some(collection) => format!("{collection} and {}", item.path),
@@ -347,6 +349,47 @@ fn decide_entities(table: &OperationTable, sightings: &FxHashMap<LeanString, Sig
     }
 
     (names, keys, skipped)
+}
+
+/// How an item path addresses one instance.
+///
+/// Usually one parameter does it. `/repos/{owner}/{repo}` does not: two owners
+/// can each have a repo called `docs`, and keying on `repo` alone would make
+/// them the same record. Every parameter of the path that names a field of the
+/// schema is part of the key, and a path whose earlier parameters name nothing
+/// keeps the ordinary single key.
+fn composite_key(node: &SchemaNode, item: &ItemPath, last: LeanString) -> CompositeKey {
+    let mut parts: Vec<KeyPart> = Vec::new();
+
+    for segment in &item.segments {
+        let Segment::Param(param) = segment else {
+            continue;
+        };
+        if *param == item.param {
+            break;
+        }
+        // Only a parameter the schema itself holds a field for: a path
+        // parameter naming the *parent* of a nested resource is a link, which
+        // path nesting already reads, not part of this thing's identity.
+        let Some(field) = node
+            .properties
+            .iter()
+            .find(|property| property.name.eq_ignore_ascii_case(param.as_str()))
+            .map(|property| property.name.clone())
+        else {
+            continue;
+        };
+        parts.push(KeyPart {
+            field,
+            source: KeySource::PathParam(param.clone()),
+        });
+    }
+
+    parts.push(KeyPart {
+        field: last,
+        source: KeySource::PathParam(item.param.clone()),
+    });
+    CompositeKey::parts(parts)
 }
 
 /// The property a path parameter addresses.
@@ -413,6 +456,7 @@ fn apply_foreign_keys(
     key: &KeyChoice,
 ) {
     let key_field = key.key.iter().next().map(|part| part.field.clone());
+    let mut discovered: Vec<(LeanString, LeanString)> = Vec::new();
 
     for field in &mut entity.fields {
         if field.relation().is_some() || Some(&field.name) == key_field.as_ref() {
@@ -430,16 +474,35 @@ fn apply_foreign_keys(
             continue;
         }
         let _ = node;
+        discovered.push((field.name.clone(), target));
+    }
 
+    for (name, target) in discovered {
+        // A payload that carries `user_id` beside an embedded `customer` is
+        // describing one link twice, not two links. Naming the scalar as that
+        // link's carrier keeps the two spellings pointing at one instance —
+        // left as separate relations they derive independently, and the object
+        // and the key end up naming different users.
+        if let Some(existing) = entity.fields.iter_mut().find(|field| {
+            field
+                .relation()
+                .is_some_and(|relation| relation.target == target && !relation.is_carried())
+        }) {
+            if let Some(relation) = existing.value.relation_mut() {
+                relation.carrier = Carrier::ForeignKey(name.clone());
+            }
+            continue;
+        }
+
+        let Some(field) = entity.fields.iter_mut().find(|field| field.name == name) else {
+            continue;
+        };
         field.value = ValueSpec::Relation(Box::new(Relation::new(
             target,
             Cardinality::One,
-            Carrier::ForeignKey(field.name.clone()),
+            Carrier::ForeignKey(name.clone()),
             Confidence::HEURISTIC,
-            Provenance::new(
-                Rule::ForeignKeyName,
-                format!("{}.{}", entity.name, field.name),
-            ),
+            Provenance::new(Rule::ForeignKeyName, format!("{}.{name}", entity.name)),
         )));
     }
 }
@@ -500,7 +563,13 @@ fn singular_of(name: &str) -> String {
     if let Some(stem) = name.strip_suffix("ies") {
         return format!("{stem}y");
     }
-    for (suffix, kept) in [("ses", "s"), ("xes", "x"), ("zes", "z"), ("ches", "ch"), ("shes", "sh")] {
+    for (suffix, kept) in [
+        ("ses", "s"),
+        ("xes", "x"),
+        ("zes", "z"),
+        ("ches", "ch"),
+        ("shes", "sh"),
+    ] {
         if let Some(stem) = name.strip_suffix(suffix) {
             return format!("{stem}{kept}");
         }
@@ -590,7 +659,9 @@ fn apply_path_nesting(
         } else {
             ValueSpec::Relation(Box::new(relation))
         };
-        owner.fields.push(FieldDef::new(field_name.clone(), value, true));
+        owner
+            .fields
+            .push(FieldDef::new(field_name.clone(), value, true));
     }
 }
 
@@ -824,8 +895,17 @@ pub fn subresource_parent<'a>(
     };
 
     graph.entities().find_map(|entity| {
-        let relation = entity.field(field.as_str())?.relation()?;
-        if relation.carrier != Carrier::Subresource(param.clone()) {
+        let held = entity.field(field.as_str())?;
+        let relation = held.relation()?;
+        // Either inference put the link there because of this path, or the
+        // schema declared the same collection inline. Both mean the sub-path
+        // serves *that* link — a document that declares `files` on `Folder`
+        // and also offers `/folders/{id}/files` is describing one relation
+        // twice, and answering the path with every file in the world is the
+        // one reading that is certainly wrong.
+        let carried_here = relation.carrier == Carrier::Subresource(param.clone());
+        let declared_here = relation.cardinality == Cardinality::Many && held.name == *field;
+        if !carried_here && !declared_here {
             return None;
         }
         if child.is_some_and(|child| relation.target != *child) {
@@ -851,6 +931,131 @@ pub fn schema_arc(book: &SchemaBook, name: &str) -> Option<Arc<SchemaNode>> {
 mod tests {
     use super::*;
     use crate::spec::infer::openapi::document::parse_openapi;
+
+    const FORGE: &str = r"
+openapi: 3.0.3
+info: { title: Forge }
+paths:
+  /repos:
+    get:
+      operationId: listRepos
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Repo' }
+  /repos/{owner}/{repo}:
+    parameters:
+      - { name: owner, in: path, required: true, schema: { type: string } }
+      - { name: repo, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getRepo
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Repo' }
+components:
+  schemas:
+    Repo:
+      type: object
+      required: [owner, repo]
+      properties:
+        owner: { type: string }
+        repo: { type: string }
+";
+
+    const ORDERS: &str = r"
+openapi: 3.0.3
+info: { title: Shop }
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Order' }
+  /orders/{order_id}:
+    parameters:
+      - { name: order_id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getOrder
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /users/{user_id}:
+    parameters:
+      - { name: user_id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getUser
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+components:
+  schemas:
+    Order:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        customer: { $ref: '#/components/schemas/User' }
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+";
+
+    #[test]
+    fn a_foreign_key_beside_an_embedded_object_is_one_link_not_two() {
+        let table = parse_openapi(ORDERS).unwrap().0;
+        let graph = to_entity_graph(&table);
+        let order = graph.get("Order").expect("Order is an entity");
+
+        let links: Vec<&str> = order
+            .relations()
+            .map(|(field, _)| field.name.as_str())
+            .collect();
+        assert_eq!(
+            links,
+            ["customer"],
+            "`user_id` carries the link the `$ref` declared; it is not a second one"
+        );
+
+        let (_, relation) = order.relations().next().unwrap();
+        assert_eq!(
+            relation.carrier,
+            Carrier::ForeignKey(LeanString::from("user_id")),
+            "and the scalar is named as its carrier"
+        );
+        assert!(
+            order.field("user_id").is_some(),
+            "the declared scalar stays a field of the payload"
+        );
+    }
+
+    #[test]
+    fn a_path_addressing_one_thing_by_two_parameters_keys_on_both() {
+        let table = parse_openapi(FORGE).unwrap().0;
+        let graph = to_entity_graph(&table);
+        let repo = graph.get("Repo").expect("Repo is an entity");
+        let parts: Vec<&str> = repo.key.iter().map(|part| part.field.as_str()).collect();
+        assert_eq!(
+            parts,
+            ["owner", "repo"],
+            "two owners can each have a repo called `docs`"
+        );
+    }
 
     const FILESTORE: &str = r#"
 openapi: 3.0.3
@@ -1150,8 +1355,18 @@ components:
 
     #[test]
     fn compiling_is_order_independent() {
-        let a: Vec<String> = filestore().1.graph.entities().map(|e| e.name.to_string()).collect();
-        let b: Vec<String> = filestore().1.graph.entities().map(|e| e.name.to_string()).collect();
+        let a: Vec<String> = filestore()
+            .1
+            .graph
+            .entities()
+            .map(|e| e.name.to_string())
+            .collect();
+        let b: Vec<String> = filestore()
+            .1
+            .graph
+            .entities()
+            .map(|e| e.name.to_string())
+            .collect();
         assert_eq!(a, b);
     }
 
@@ -1182,7 +1397,12 @@ components:
         .0;
         let graph = to_entity_graph(&table);
         assert_eq!(
-            graph.get("User").unwrap().key.as_single().map(LeanString::as_str),
+            graph
+                .get("User")
+                .unwrap()
+                .key
+                .as_single()
+                .map(LeanString::as_str),
             Some("login")
         );
     }
@@ -1217,7 +1437,13 @@ components:
 
         let plain = to_entity_graph(&table);
         assert!(
-            plain.get("File").unwrap().field("uploader").unwrap().relation().is_none(),
+            plain
+                .get("File")
+                .unwrap()
+                .field("uploader")
+                .unwrap()
+                .relation()
+                .is_none(),
             "the engine must not read an extension it was never taught"
         );
 
@@ -1230,7 +1456,10 @@ components:
 
     #[test]
     fn plurals_and_case_conventions_both_find_the_entity() {
-        let names: FxHashSet<LeanString> = ["User", "Folder"].into_iter().map(LeanString::from).collect();
+        let names: FxHashSet<LeanString> = ["User", "Folder"]
+            .into_iter()
+            .map(LeanString::from)
+            .collect();
         assert_eq!(
             matching_entity(&names, "user").map(|n| n.to_string()),
             Some("User".to_string())

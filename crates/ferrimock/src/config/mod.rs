@@ -33,7 +33,10 @@ pub use har::{DomainFilter, HarLoadOptions, HarLoader, HeaderFilter, parse_har};
 pub use matcher::{
     BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig,
 };
-pub use parser::{DEFAULT_PRIORITY, MockCollectionConfig, MockConfig, ServeConfig, WorldConfig};
+pub use parser::{
+    DEFAULT_PRIORITY, FieldOverride, MockCollectionConfig, MockConfig, NumberRange, ServeConfig,
+    ShapedOverride, WorldConfig,
+};
 pub use patches::{HeaderPatchesConfig, JsonPatchConfig, RegexReplaceConfig};
 pub use patterns::{convert_express_to_regex, is_valid_http_method, parse_url_pattern};
 pub use request_transform::{BodyPatchesConfig, QueryPatchesConfig, RequestTransformConfig};

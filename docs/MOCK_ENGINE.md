@@ -854,16 +854,86 @@ world:
   count: 12                  # instances per entity when the entity does not say
   counts: { User: 25, Folder: 200 }
   lenient: false             # repair malformed descriptions rather than refusing
+  cascade_delete: true       # a delete takes dependent records with it
 ```
 
 Both front ends compile into the *same* graph, so a `User` a GraphQL schema
 declares and a `User` an OpenAPI document describes are one `User` with one set
-of instances.
+of instances. Their *fields* are merged, not replaced: the REST document knows
+about `email`, the GraphQL schema knows about `karma`, and the instances carry
+both — otherwise whichever schema loaded second would leave the other serving
+payloads its own schema rejects. The first declaration wins a conflict, except
+where the later one says strictly more (a link beats the scalar key carrying
+it). Entity names declared by more than one schema are reported by
+`ferrimock world explain`.
 
 There is one world per process, so several collections may add schemas to it but
 only one may set the seed — a second, different value is refused by file name.
-Entity names declared by more than one schema are merged, and reported by
-`ferrimock world explain`.
+The *same* file setting a different value is an edit, not a disagreement, so a
+hot reload applies it.
+
+`cascade_delete: false` refuses a delete that would orphan children instead of
+removing them, which is what an API enforcing referential integrity does; the
+refusal is a 409, and the children are still there.
+
+### Saying what a field should hold
+
+A schema types a field as `String` and stops there. Which string it is stays a
+product decision, so `world:` takes it:
+
+```yaml
+world:
+  schemas: [api.yaml]
+
+  scalars:                    # by a kind of value
+    Money:    { float: { min: 1, max: 999.99 } }
+    date-time: timestamp
+
+  fields:                     # by a place
+    User.email:   email
+    Folder.name:  headline
+    Order.status: { one_of: [pending, shipped, cancelled] }
+    Order.total:  { float: { min: 5, max: 500 } }
+    User.badge:   "{{ fake_word() | upper }}"
+    "*.slug":     slug
+```
+
+`Entity.field` beats `*.field` beats `scalars:`, because the more precisely a
+rule names its target the likelier it is to be the one that was meant.
+
+`scalars:` matches a **GraphQL custom scalar** by name and an **OpenAPI
+`format`** by name — both say "this is a Money" without naming a field, so both
+front ends are covered by one entry.
+
+A value is either a generator name or, when it looks like one, a Tera template.
+The named form resolves at load and costs nothing per request; the template is
+the escape hatch, rendered inside that field's own seeded stream so it stays as
+reproducible as everything around it, and only the fields that ask for it pay
+for it. Named generators: `uuid`, `email`, `username`, `person_name`,
+`headline`, `paragraph`, `url`, `image_url`, `ip`, `phone`, `filename`,
+`mime_type`, `token`, `etag`, `numeric_id`, `api_endpoint`, `timestamp`, `date`,
+`boolean`, `word`, `slug`. Shapes: `{ int: {min,max} }`, `{ float: {min,max} }`,
+`{ one_of: [...] }`, `{ constant: ... }`, `{ pattern: "..." }`.
+
+Rules are resolved **into the entity graph** rather than consulted per read,
+which is what makes them compatible with the rest of the world: values still
+derive from `(seed, entity, ordinal, field path)`, a record still builds without
+its neighbours, and a record a client *created* goes through the same generator
+as a seeded one — so an override applies to both without knowing either exists.
+
+Two things a rule may not touch, because the store owns their values: a **key
+field**, and a field **carrying a relation**. Overriding either gives a world
+whose keys do not address it or whose links resolve to nothing, so both are
+refused by name. A rule that matches nothing is reported the same way — a typo
+or a renamed field should surface at load, not from a payload that looks almost
+right. Both show up in `ferrimock world explain` and as a warning when the
+collection loads.
+
+`--watch` watches the schemas alongside the collections, so editing a `.graphql`
+or a document rebuilds the world and re-mounts the mocks serving it. A field
+removed from a schema is removed from the world: each source's declaration is
+kept apart, so a reload replaces that source's contribution rather than adding to
+whatever was there before.
 
 A bare `.yaml` or `.json` is never auto-detected as a document: those are mock
 collections, and sniffing a file's contents to tell them apart breaks silently.
@@ -883,11 +953,11 @@ produced it and how much to trust it, and `ferrimock world explain` prints both:
 
 | rule | what it reads |
 | --- | --- |
-| `collection-item-pair` | `/folders` returning `[Folder]` beside `/folders/{folder_id}` returning `Folder` — so `Folder` has identity, keyed by the field that parameter addresses |
+| `collection-item-pair` | `/folders` returning `[Folder]` beside `/folders/{folder_id}` returning `Folder` — so `Folder` has identity, keyed by the field that parameter addresses. A path addressing one thing by several parameters that each name a field — `/repos/{owner}/{repo}` — is keyed by all of them, because two owners can each have a repo called `docs` |
 | `schema-ref` | a `$ref` from one entity's schema into another |
 | `path-nesting` | `/folders/{folder_id}/items` — the child carries the parent key |
 | `spec-link` | a `links` object, which states the relation and the carrying field outright |
-| `foreign-key-name` | `user_id` where `User` is an entity. A guess, reported as one |
+| `foreign-key-name` | `user_id` where `User` is an entity. A guess, reported as one. When the schema already links to that entity — a `$ref`'d `customer` beside `user_id` — the scalar becomes that link's *carrier* rather than a second link, so the key and the object it is written beside always name one instance |
 | `vendor-extension` | whatever a `ConsolidationProfile` reads out of `x-` keys |
 
 Name matching matches *names*, never meanings: `owner_id` finds an entity called
@@ -940,7 +1010,7 @@ Each operation is classified once, at mount time:
 | --- | --- |
 | `GET /folders/{id}` | read one by key; a key nobody stored is a 404, not an invented record |
 | `GET /folders` | read a page, in whatever envelope the response declared |
-| `GET /folders/{id}/items` | read the parent's children through the inferred relation |
+| `GET /folders/{id}/items` | read the parent's children through the relation — whether inference put it there or the schema declared `items` on `Folder` inline |
 | `POST /folders` | create, answering with the status the document declared |
 | `PUT` / `PATCH` `/folders/{id}` | replace / merge |
 | `DELETE /folders/{id}` | remove |
@@ -962,6 +1032,65 @@ filter; a document that declares none leaves every field open.
 path creates, or a sub-collection the graph already knows about
 (`POST /folders/{id}/items`); an action on one item drops to the bottom rung
 rather than inserting a record nobody asked for.
+
+### What a generated value looks like
+
+A field is answered by the strictest thing the schema said about it, in this
+order:
+
+1. a declared `pattern` — `^[A-Z]{3}-[0-9]{4}$` answers `SWY-4324`. A realistic
+   value that already satisfies the pattern is kept, so a permissive `^.+$` does
+   not replace an email with noise. Length bounds are honoured alongside it: the
+   walk is retried with a wider repetition budget until it satisfies both;
+2. a declared `format`, then the field's name, then its type — `created_at` is a
+   timestamp, `email` is an email, `slug` is a slug rather than a sentence;
+3. `minimum` / `maximum` / `minLength` / `maxLength`, which are respected rather
+   than approximated.
+
+Text is composed rather than lorem. A `title`, `name` or `description` is read
+by a person, and `perferendis non adipisci asperiores` is what makes a mocked
+screen look mocked; the generator builds short noun phrases and real sentences
+from a generic product vocabulary instead. A profile that knows the domain can
+answer ahead of it.
+
+What *owns* a field settles the ambiguous names: `name` on a `User` is a
+person's, on a `File` it is a filename, and on a `Folder` it is a folder's.
+Explicit spellings — `first_name`, `display_name` — are a person's wherever they
+appear.
+
+Timestamps within one record happen in the order their names say. Every field is
+still drawn independently, which is what keeps a record derivable without its
+neighbours; the values a record already has are simply dealt back out in
+lifecycle order, so `created_at <= updated_at <= archived_at` holds without any
+field depending on another. Only values that compare are reordered — a date is
+never sorted against an instant.
+
+A key is rendered as the kind the schema declared it. `id: { type: integer }` is
+keyed `1, 2, 3` and answers `{"id": 1}` — not a uuid, and not `"1"` — so
+`GET /users/1` is the request a client would actually make. The same holds for a
+foreign key: it carries the target's key in the target's declared kind.
+
+Writes are part of the world, not layered beside it. A created record carries
+the same links a seeded one does, and it joins the collections it points at — a
+post written against a user appears among that user's posts. The link may be
+named however the caller's schema names it: `{"author": "<id>"}`,
+`{"author": {"id": "<id>"}}`, `{"authorId": "<id>"}` and the carrier field
+itself all mean the same link.
+
+### How children are shared out
+
+Not evenly. Each parent draws a weight and the children are cut in proportion,
+so one folder holds four hundred files and several hold none — which is the
+shape real data has, and the shape a client's pagination and empty states have
+to survive.
+
+Because the answer is a *range* rather than a hash per child, two things follow.
+Reading one parent's children touches only that parent's children instead of
+filtering every child in the world. And counting them is arithmetic: a field
+named `item_count` beside an `items` link is answered with the number the list
+endpoint would return, adjusted for whatever has been written since. A
+`*_count` whose stem names no relation — `word_count` — is left as an ordinary
+number.
 
 ### Overriding part of it
 
@@ -1037,7 +1166,8 @@ GET    /__mock/world                    # entities, seed, pending writes
 GET    /__mock/world/User?limit=25&sort=-name&status=active
 GET    /__mock/world/User/{key}
 POST   /__mock/world/User               # create
-DELETE /__mock/world/User/{key}
+PATCH  /__mock/world/User/{key}         # merge fields into one instance
+DELETE /__mock/world/User/{key}         # 409 when `cascade_delete: false` refuses it
 DELETE /__mock/world                    # reset to the seeded world
 ```
 

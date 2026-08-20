@@ -190,8 +190,13 @@ pub async fn update_entity(
     Json(values): Json<JsonValue>,
 ) -> impl IntoResponse {
     let world = app_state.mock.mock_registry.world();
+    let existed = world.get(&entity, &key).is_some();
     match world.update(&entity, &key, values) {
         Ok(record) => Json(record).into_response(),
+        // A record that is there and still would not take the write failed on
+        // the values, not on the address; answering 404 sends the caller
+        // looking for a record they are holding.
+        Err(e) if existed => failure(StatusCode::BAD_REQUEST, e).into_response(),
         Err(e) => failure(StatusCode::NOT_FOUND, e).into_response(),
     }
 }
@@ -202,8 +207,12 @@ pub async fn delete_entity(
     Path((entity, key)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let world = app_state.mock.mock_registry.world();
+    let existed = world.get(&entity, &key).is_some();
     match world.delete(&entity, &key) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        // With cascade off, a delete that would orphan children is refused —
+        // which is a conflict with the world's state, not a missing record.
+        Err(e) if existed => failure(StatusCode::CONFLICT, e).into_response(),
         Err(e) => failure(StatusCode::NOT_FOUND, e).into_response(),
     }
 }

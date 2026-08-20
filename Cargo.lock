@@ -2053,6 +2053,7 @@ dependencies = [
  "proptest",
  "rand 0.10.2",
  "regex",
+ "regex-syntax",
  "reqwest",
  "rolldown",
  "rolldown_common",

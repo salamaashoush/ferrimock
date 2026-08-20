@@ -212,6 +212,15 @@ impl<'a> Call<'a> {
         }
     }
 
+    fn post(path: &'a str, body: &'a str) -> Self {
+        Self {
+            method: Method::POST,
+            path,
+            query: None,
+            body: Some(body),
+        }
+    }
+
     fn with_query(mut self, query: &'a str) -> Self {
         self.query = Some(query);
         self
@@ -475,7 +484,9 @@ async fn a_nested_path_serves_the_parents_children() {
     assert_eq!(id, "filestore-rest#listFolderItems");
     assert_eq!(status, StatusCode::OK);
 
-    let items = body.as_array().expect("a bare array, as the document declared");
+    let items = body
+        .as_array()
+        .expect("a bare array, as the document declared");
     let expected = registry
         .world()
         .related(
@@ -571,7 +582,10 @@ async fn a_document_with_no_mock_serving_it_registers_no_routes() {
     let registry = MockRegistry::with_world(Arc::new(World::new()));
     let loaded = registry.load_from_directory(dir.path()).await.unwrap();
 
-    assert_eq!(loaded, 0, "a document declares entities, not where they live");
+    assert_eq!(
+        loaded, 0,
+        "a document declares entities, not where they live"
+    );
     assert!(!registry.world().is_empty());
     assert!(registry.world().count("Folder") > 0);
 }
@@ -601,8 +615,7 @@ async fn a_method_on_the_mount_is_refused_because_operations_carry_their_own() {
 
 #[tokio::test]
 async fn a_graphql_schema_and_a_document_serve_the_same_entities() {
-    const SDL: &str =
-        "type User { id: ID!, login: String! } type Query { users: [User!]! } schema { query: Query }";
+    const SDL: &str = "type User { id: ID!, login: String! } type Query { users: [User!]! } schema { query: Query }";
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("filestore.openapi.yaml"), DOCUMENT).unwrap();
@@ -631,12 +644,487 @@ async fn a_graphql_schema_and_a_document_serve_the_same_entities() {
         .unwrap()
         .to_string();
 
-    let (_, status, from_rest) =
-        request(&registry, Call::get(&format!("/2.0/users/{key}"))).await;
+    let (_, status, from_rest) = request(&registry, Call::get(&format!("/2.0/users/{key}"))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         from_rest["id"],
         JsonValue::String(key),
         "one `User`, whichever front end asked for it"
     );
+}
+
+// ===== Regressions =====
+
+/// A document keyed by integers, which is most of them.
+const NUMBERED: &str = r#"
+openapi: 3.0.3
+info: { title: Shop, version: "1.0" }
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Order' }
+    post:
+      operationId: createOrder
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Order' }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /orders/{order_id}:
+    parameters:
+      - { name: order_id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getOrder
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /users/{user_id}:
+    parameters:
+      - { name: user_id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getUser
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+components:
+  schemas:
+    Order:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        total: { type: number }
+        customer: { $ref: '#/components/schemas/User' }
+    User:
+      type: object
+      required: [id, slug]
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        sku: { type: string, pattern: "^[A-Z]{3}-[0-9]{4}$" }
+"#;
+
+const NUMBERED_COLLECTION: &str = r"
+name: Shop
+world:
+  schemas:
+    - shop.openapi.yaml
+  seed: 7
+  counts:
+    User: 4
+    Order: 4
+
+mocks:
+  - id: shop
+    match:
+      url: https://api.example.com
+    serve: rest
+";
+
+async fn load_numbered() -> (tempfile::TempDir, Arc<MockRegistry>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("shop.openapi.yaml"), NUMBERED).unwrap();
+    std::fs::write(dir.path().join("mocks.yaml"), NUMBERED_COLLECTION).unwrap();
+
+    let registry = Arc::new(MockRegistry::with_world(Arc::new(World::new())));
+    registry.load_from_directory(dir.path()).await.unwrap();
+    (dir, registry)
+}
+
+#[tokio::test]
+async fn a_document_keyed_by_integers_answers_with_integers() {
+    let (_dir, registry) = load_numbered().await;
+
+    let (_, status, body) = request(&registry, Call::get("/orders")).await;
+    assert_eq!(status, StatusCode::OK);
+    for order in body.as_array().unwrap() {
+        assert!(
+            order["id"].is_i64(),
+            "`id: {{ type: integer }}` has to answer with an integer, got {}",
+            order["id"]
+        );
+        assert!(order["user_id"].is_i64(), "so does a foreign key");
+    }
+
+    // And the ids a client would actually try are the ones that resolve.
+    let (_, status, one) = request(&registry, Call::get("/orders/1")).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "`GET /orders/1` on an integer-keyed document must not be a 404"
+    );
+    assert_eq!(one["id"], JsonValue::from(1));
+}
+
+#[tokio::test]
+async fn a_foreign_key_and_the_object_it_carries_name_one_user() {
+    let (_dir, registry) = load_numbered().await;
+
+    let (_, _, body) = request(&registry, Call::get("/orders")).await;
+    for order in body.as_array().unwrap() {
+        assert_eq!(
+            order["user_id"], order["customer"]["id"],
+            "a client filtering by the key and rendering the object sees one user"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_created_record_carries_the_same_links_a_seeded_one_does() {
+    let (_dir, registry) = load_numbered().await;
+
+    let (_, status, created) = request(
+        &registry,
+        Call::post("/orders", r#"{"user_id": 3, "total": 11}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["user_id"], JsonValue::from(3));
+    assert_eq!(
+        created["customer"]["id"],
+        JsonValue::from(3),
+        "the link a creation stated has to resolve, not answer null"
+    );
+
+    // Read back through the document, not just the creation's own response.
+    let id = created["id"].as_i64().unwrap();
+    let (_, status, fetched) = request(&registry, Call::get(&format!("/orders/{id}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fetched["customer"]["id"], JsonValue::from(3));
+}
+
+#[tokio::test]
+async fn a_page_number_past_what_an_offset_holds_is_answered_not_panicked() {
+    let (_dir, registry) = load_numbered().await;
+
+    let (_, status, body) = request(
+        &registry,
+        Call::get("/orders").with_query("page=18446744073709551615&limit=100"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_array().unwrap().len(), 0, "past the end is empty");
+}
+
+#[tokio::test]
+async fn declared_string_shapes_are_honoured() {
+    let (_dir, registry) = load_numbered().await;
+
+    let (_, _, user) = request(&registry, Call::get("/users/1")).await;
+    let slug = user["slug"].as_str().unwrap();
+    assert!(
+        !slug.contains(' '),
+        "a `slug` field holds a slug, not a sentence: {slug}"
+    );
+
+    let sku = user["sku"].as_str().unwrap();
+    let pattern = regex::Regex::new("^[A-Z]{3}-[0-9]{4}$").unwrap();
+    assert!(
+        pattern.is_match(sku),
+        "a declared pattern is a promise: {sku}"
+    );
+}
+
+/// A document that both declares a collection inline and offers a sub-path for
+/// it, which is what most real ones do.
+const NESTED: &str = r"
+openapi: 3.0.3
+info: { title: Workspace, version: '1.0' }
+paths:
+  /folders:
+    get:
+      operationId: listFolders
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Folder' }
+  /folders/{folder_id}:
+    parameters:
+      - { name: folder_id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getFolder
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Folder' }
+  /folders/{folder_id}/files:
+    parameters:
+      - { name: folder_id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: listFolderFiles
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/File' }
+components:
+  schemas:
+    Folder:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        file_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/File' }
+    File:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        folder: { $ref: '#/components/schemas/Folder' }
+";
+
+const NESTED_COLLECTION: &str = r"
+name: Workspace
+world:
+  schemas:
+    - workspace.openapi.yaml
+  seed: 5
+  counts:
+    Folder: 6
+    File: 40
+
+mocks:
+  - id: ws
+    match:
+      url: https://api.example.com
+    serve: rest
+";
+
+async fn load_nested() -> (tempfile::TempDir, Arc<MockRegistry>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("workspace.openapi.yaml"), NESTED).unwrap();
+    std::fs::write(dir.path().join("mocks.yaml"), NESTED_COLLECTION).unwrap();
+
+    let registry = Arc::new(MockRegistry::with_world(Arc::new(World::new())));
+    registry.load_from_directory(dir.path()).await.unwrap();
+    (dir, registry)
+}
+
+#[tokio::test]
+async fn a_sub_path_serves_the_collection_the_schema_declared() {
+    let (_dir, registry) = load_nested().await;
+
+    for id in 1..=6 {
+        let (_, _, folder) = request(&registry, Call::get(&format!("/folders/{id}"))).await;
+        let (_, _, files) = request(&registry, Call::get(&format!("/folders/{id}/files"))).await;
+        let served = files.as_array().unwrap();
+
+        assert_eq!(
+            usize::try_from(folder["file_count"].as_u64().unwrap()).unwrap(),
+            served.len(),
+            "`file_count` has to agree with what the sub-path serves"
+        );
+        for file in served {
+            assert_eq!(
+                file["folder"]["id"], folder["id"],
+                "a sub-path must serve that parent's children, not every child"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn children_are_shared_out_unevenly_across_parents() {
+    let (_dir, registry) = load_nested().await;
+
+    let mut sizes = Vec::new();
+    for id in 1..=6 {
+        let (_, _, folder) = request(&registry, Call::get(&format!("/folders/{id}"))).await;
+        sizes.push(folder["file_count"].as_u64().unwrap());
+    }
+
+    assert_eq!(sizes.iter().sum::<u64>(), 40, "every file is in one folder");
+    let busiest = sizes.iter().copied().max().unwrap();
+    assert!(
+        busiest >= 40 / 6 * 2,
+        "real data is lopsided, and this is {sizes:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_record_reads_like_something_a_product_wrote() {
+    let (_dir, registry) = load_nested().await;
+
+    let (_, _, folder) = request(&registry, Call::get("/folders/1")).await;
+
+    let name = folder["name"].as_str().unwrap();
+    assert!(
+        !name.contains(' ') || name.split(' ').count() <= 4,
+        "a folder name is a short phrase, not prose: {name}"
+    );
+
+    let created = folder["created_at"].as_str().unwrap();
+    let updated = folder["updated_at"].as_str().unwrap();
+    assert!(
+        created <= updated,
+        "a folder cannot be updated before it was created: {created} then {updated}"
+    );
+}
+
+// ===== Field overrides =====
+
+const OVERRIDDEN: &str = r"
+openapi: 3.0.3
+info: { title: Workspace, version: '1.0' }
+paths:
+  /folders:
+    get:
+      operationId: listFolders
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Folder' }
+    post:
+      operationId: createFolder
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Folder' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Folder' }
+  /folders/{folder_id}:
+    parameters:
+      - { name: folder_id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getFolder
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Folder' }
+components:
+  schemas:
+    Folder:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        status: { type: string }
+        budget: { type: number, format: money }
+        badge: { type: string }
+";
+
+const OVERRIDDEN_COLLECTION: &str = r#"
+name: Workspace
+world:
+  schemas:
+    - workspace.openapi.yaml
+  seed: 5
+  counts:
+    Folder: 6
+  scalars:
+    money: { float: { min: 100, max: 999 } }
+  fields:
+    Folder.status: { one_of: [active, archived, pending] }
+    Folder.badge: "{{ fake_word() | upper }}"
+    "*.name": headline
+
+mocks:
+  - id: ws
+    match:
+      url: https://api.example.com
+    serve: rest
+"#;
+
+async fn load_overridden() -> (tempfile::TempDir, Arc<MockRegistry>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("workspace.openapi.yaml"), OVERRIDDEN).unwrap();
+    std::fs::write(dir.path().join("mocks.yaml"), OVERRIDDEN_COLLECTION).unwrap();
+
+    let registry = Arc::new(MockRegistry::with_world(Arc::new(World::new())));
+    registry.load_from_directory(dir.path()).await.unwrap();
+    (dir, registry)
+}
+
+#[tokio::test]
+async fn an_override_decides_what_a_field_of_an_openapi_document_holds() {
+    let (_dir, registry) = load_overridden().await;
+
+    let (_, _, folders) = request(&registry, Call::get("/folders")).await;
+    for folder in folders.as_array().unwrap() {
+        let status = folder["status"].as_str().unwrap();
+        assert!(
+            ["active", "archived", "pending"].contains(&status),
+            "`one_of` decides the set: {status}"
+        );
+
+        // Keyed on the OpenAPI `format`, not on a field name.
+        let budget = folder["budget"].as_f64().unwrap();
+        assert!((100.0..=999.0).contains(&budget), "budget {budget}");
+
+        let badge = folder["badge"].as_str().unwrap();
+        assert_eq!(badge, badge.to_uppercase(), "the template ran: {badge}");
+        assert!(!badge.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn an_override_applies_to_a_record_the_client_created() {
+    let (_dir, registry) = load_overridden().await;
+
+    let (_, status, created) =
+        request(&registry, Call::post("/folders", r#"{"name":"Mine"}"#)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    assert_eq!(
+        created["name"],
+        JsonValue::String("Mine".into()),
+        "what was written stands"
+    );
+    let state = created["status"].as_str().unwrap();
+    assert!(
+        ["active", "archived", "pending"].contains(&state),
+        "a created record obeys the same rules as a seeded one: {state}"
+    );
+    let budget = created["budget"].as_f64().unwrap();
+    assert!((100.0..=999.0).contains(&budget), "budget {budget}");
+    let badge = created["badge"].as_str().unwrap();
+    assert_eq!(badge, badge.to_uppercase());
+}
+
+#[tokio::test]
+async fn an_override_does_not_disturb_determinism() {
+    let (_dir, first) = load_overridden().await;
+    let (_, _, once) = request(&first, Call::get("/folders")).await;
+
+    let (_dir2, second) = load_overridden().await;
+    let (_, _, twice) = request(&second, Call::get("/folders")).await;
+
+    assert_eq!(once, twice, "the same seed still rebuilds the same world");
 }

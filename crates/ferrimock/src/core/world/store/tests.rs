@@ -347,15 +347,22 @@ fn a_removed_record_is_gone_from_reads_and_lists() {
 #[test]
 fn removing_a_parent_cascades_to_its_children() {
     let store = blog_store(9, 2, 8);
-    let user_key = store.keys("User")[0].clone();
-    let owned: Vec<_> = store
-        .related("User", &user_key, "posts", &Selection::new())
-        .unwrap()
-        .records
-        .iter()
-        .map(|r| r.key.clone())
-        .collect();
-    assert!(!owned.is_empty(), "the fixture needs an owning user");
+    // Whichever user has children: they are not spread evenly, so the first
+    // one may well have none.
+    let (user_key, owned) = store
+        .keys("User")
+        .into_iter()
+        .find_map(|user_key| {
+            let owned: Vec<_> = store
+                .related("User", &user_key, "posts", &Selection::new())
+                .unwrap()
+                .records
+                .iter()
+                .map(|r| r.key.clone())
+                .collect();
+            (!owned.is_empty()).then_some((user_key, owned))
+        })
+        .expect("the fixture needs an owning user");
 
     store
         .apply("User", Mutation::Remove { key: user_key })
@@ -701,4 +708,588 @@ fn the_census_fast_path_sees_writes() {
     assert_eq!(page.total, 5, "one created, one removed, five to start");
     assert!(keys.contains(&created), "a creation has to appear");
     assert!(!keys.contains(&removed), "a tombstone has to disappear");
+}
+
+// ===== Regressions =====
+
+/// An entity keyed by a declared integer, the shape most REST documents use.
+fn numbered_store(seed: u64, count: usize) -> EntityStore {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        EntityType::new(
+            "User",
+            crate::core::world::model::CompositeKey::single("id"),
+            Provenance::new(Rule::CollectionItemPair, "User"),
+        )
+        // Named `id`, so the detector reads it as a uuid; the declared kind has
+        // to win or every integer-keyed document is keyed by uuids.
+        .with_field(FieldDef::new(
+            "id",
+            ValueSpec::Scalar(
+                Scalar::new(ScalarKind::Int).with_semantic(crate::type_detector::FieldType::Uuid),
+            ),
+            false,
+        ))
+        .with_field(scalar_field("name", ScalarKind::String)),
+    );
+    EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(seed).with_count("User", count),
+    )
+}
+
+#[test]
+fn a_declared_integer_key_is_an_integer_on_the_wire() {
+    let store = numbered_store(3, 4);
+    let keys = store.keys("User");
+    assert_eq!(
+        keys.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        ["1", "2", "3", "4"],
+        "an integer key counts"
+    );
+
+    let record = store.get("User", &EntityKey::single("1")).unwrap();
+    assert_eq!(
+        record.fields.get("id"),
+        Some(&JsonValue::from(1)),
+        "the payload carries the kind the schema declared, not a string"
+    );
+}
+
+#[test]
+fn a_written_integer_key_stays_an_integer() {
+    let store = numbered_store(3, 2);
+    let written = store
+        .apply(
+            "User",
+            Mutation::Insert {
+                values: serde_json::json!({ "id": 42, "name": "Grace" }),
+            },
+        )
+        .unwrap();
+    let Written::Created(record) = written else {
+        panic!("expected a creation")
+    };
+    assert_eq!(record.fields.get("id"), Some(&JsonValue::from(42)));
+}
+
+#[test]
+fn a_page_past_the_end_does_not_overflow() {
+    let store = blog_store(5, 6, 6);
+    // Sorting forces the materialising path, where an unbounded `take` used to
+    // be added to a non-zero offset and wrap.
+    let selection = Selection::new()
+        .sorted_by(SortKey::asc("name"))
+        .paged(Page::Offset {
+            skip: 1,
+            take: usize::MAX,
+        });
+    let page = store.list("User", &selection).unwrap();
+    assert_eq!(page.total, 6);
+    assert_eq!(page.records.len(), 5, "everything after the first");
+
+    let cursor = Cursor::new(store.keys("User")[0].to_string());
+    let after = Selection::new()
+        .sorted_by(SortKey::asc("name"))
+        .paged(Page::After {
+            cursor: Some(cursor),
+            first: usize::MAX,
+        });
+    assert!(store.list("User", &after).is_ok());
+}
+
+#[test]
+fn a_created_record_carries_the_links_a_seeded_one_does() {
+    let store = blog_store(11, 4, 4);
+    let Written::Created(post) = store
+        .apply(
+            "Post",
+            Mutation::Insert {
+                values: serde_json::json!({ "title": "Hello" }),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("expected a creation")
+    };
+
+    let author = post.fields.get("author").and_then(JsonValue::as_str);
+    assert!(
+        author.is_some(),
+        "a created record with no link is a record a client cannot render"
+    );
+
+    let relation = store
+        .graph()
+        .get("Post")
+        .unwrap()
+        .field("author")
+        .unwrap()
+        .relation()
+        .unwrap()
+        .clone();
+    let resolved = store.relation_target("Post", &post.key, "author", &relation);
+    assert!(resolved.is_some(), "and the link has to resolve");
+}
+
+#[test]
+fn a_created_record_joins_the_collection_it_points_at() {
+    let store = blog_store(11, 4, 4);
+    let owner = store.keys("User")[2].clone();
+    let owner_id = owner.to_string();
+
+    let Written::Created(post) = store
+        .apply(
+            "Post",
+            Mutation::Insert {
+                values: serde_json::json!({ "title": "Written", "author": owner_id }),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("expected a creation")
+    };
+
+    let page = store
+        .related("User", &owner, "posts", &Selection::new())
+        .unwrap();
+    assert!(
+        page.records.iter().any(|record| record.key == post.key),
+        "a post written against a user has to appear among that user's posts"
+    );
+
+    for other in store.keys("User").iter().filter(|key| **key != owner) {
+        let page = store
+            .related("User", other, "posts", &Selection::new())
+            .unwrap();
+        assert!(
+            !page.records.iter().any(|record| record.key == post.key),
+            "and among nobody else's"
+        );
+    }
+}
+
+#[test]
+fn a_write_names_a_link_however_the_caller_spells_it() {
+    let store = blog_store(11, 4, 4);
+    let owner = store.keys("User")[1].to_string();
+
+    for values in [
+        serde_json::json!({ "title": "a", "author": owner }),
+        serde_json::json!({ "title": "b", "author": { "id": owner } }),
+        serde_json::json!({ "title": "c", "authorId": owner }),
+        serde_json::json!({ "title": "d", "author_id": owner }),
+    ] {
+        let Written::Created(post) = store.apply("Post", Mutation::Insert { values }).unwrap()
+        else {
+            panic!("expected a creation")
+        };
+        assert_eq!(
+            post.fields.get("author").and_then(JsonValue::as_str),
+            Some(owner.as_str()),
+            "every spelling of the link means the same link"
+        );
+        assert!(
+            !post.fields.contains_key("authorId") && !post.fields.contains_key("author_id"),
+            "an input alias is consumed, not left on the record"
+        );
+    }
+}
+
+#[test]
+fn a_grown_count_does_not_hand_out_a_created_key_twice() {
+    let graph = {
+        let mut graph = EntityGraph::new();
+        graph.insert(entity("User").with_field(scalar_field("name", ScalarKind::String)));
+        Arc::new(graph)
+    };
+
+    let store = EntityStore::new(
+        Arc::clone(&graph),
+        StoreConfig::seeded(7).with_count("User", 5),
+    );
+    let Written::Created(created) = store
+        .apply(
+            "User",
+            Mutation::Insert {
+                values: serde_json::json!({ "name": "Ada" }),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("expected a creation")
+    };
+
+    // The rebuild a hot reload performs, with the entity grown past the ordinal
+    // the created record was minted at.
+    let snapshot = store.export_delta();
+    let grown = EntityStore::new_reserving(
+        graph,
+        StoreConfig::seeded(7).with_count("User", 8),
+        snapshot.reserved_keys(),
+    );
+    grown.import_delta(snapshot);
+
+    let keys = grown.keys("User");
+    let unique: std::collections::BTreeSet<_> = keys.iter().collect();
+    assert_eq!(unique.len(), keys.len(), "no key is served twice");
+    assert_eq!(keys.len(), 9, "eight derived and the one that was created");
+    assert!(
+        keys.contains(&created.key),
+        "the created record keeps the key a client already saw"
+    );
+    assert_eq!(grown.count("User"), 9);
+}
+
+#[test]
+fn a_removed_record_is_counted_once() {
+    let store = blog_store(2, 4, 4);
+    let key = store.keys("Post")[0].clone();
+    store
+        .apply("Post", Mutation::Remove { key: key.clone() })
+        .unwrap();
+    assert_eq!(store.count("Post"), 3);
+    // Removing it again fails rather than counting a second time.
+    assert!(store.apply("Post", Mutation::Remove { key }).is_err());
+    assert_eq!(store.count("Post"), 3);
+}
+
+#[test]
+fn a_key_carried_by_a_sibling_field_is_the_same_link() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("User").with_field(scalar_field("name", ScalarKind::String)));
+
+    // What a document declaring both `user_id` and an embedded `customer`
+    // compiles to: one link, carried by the scalar.
+    let customer = FieldDef::new(
+        "customer",
+        ValueSpec::Relation(Box::new(Relation::new(
+            "User",
+            Cardinality::One,
+            Carrier::ForeignKey(LeanString::from("user_id")),
+            Confidence::STRUCTURAL,
+            Provenance::new(Rule::SchemaRef, "Order.customer"),
+        ))),
+        true,
+    );
+    graph.insert(
+        entity("Order")
+            .with_field(scalar_field("user_id", ScalarKind::Id))
+            .with_field(customer),
+    );
+
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(4)
+            .with_count("User", 5)
+            .with_count("Order", 5),
+    );
+
+    let relation = store
+        .graph()
+        .get("Order")
+        .unwrap()
+        .field("customer")
+        .unwrap()
+        .relation()
+        .unwrap()
+        .clone();
+
+    for key in store.keys("Order") {
+        let record = store.get("Order", &key).unwrap();
+        let stated = record
+            .fields
+            .get("user_id")
+            .and_then(JsonValue::as_str)
+            .unwrap();
+        let target = store
+            .relation_target("Order", &key, "customer", &relation)
+            .expect("the link resolves");
+        assert_eq!(
+            target.key.to_string(),
+            stated,
+            "the object and the key it is carried by name one user"
+        );
+        assert!(
+            !record.fields.contains_key("customer"),
+            "the carrier holds the key; the object is written by whoever expands it"
+        );
+    }
+}
+
+#[test]
+fn a_long_chain_of_entities_does_not_overflow_the_stack() {
+    const DEPTH: usize = 40_000;
+    let mut graph = EntityGraph::new();
+    for level in 0..DEPTH {
+        let name = format!("Level{level}");
+        let mut entity = entity(&name);
+        if level + 1 < DEPTH {
+            entity = entity.with_field(relation_field(
+                "next",
+                &format!("Level{}", level + 1),
+                Cardinality::One,
+            ));
+        }
+        graph.insert(entity);
+    }
+
+    let order = graph.seed_order();
+    assert_eq!(order.order.len(), DEPTH);
+    assert_eq!(
+        order.order.first().map(LeanString::as_str),
+        Some(format!("Level{}", DEPTH - 1).as_str()),
+        "the end of the chain is seeded first"
+    );
+}
+
+// ===== Distribution, counts and coherence =====
+
+#[test]
+fn children_are_not_spread_evenly_across_parents() {
+    let store = blog_store(21, 20, 400);
+    let sizes: Vec<usize> = store
+        .keys("User")
+        .into_iter()
+        .map(|user| {
+            store
+                .related("User", &user, "posts", &Selection::new())
+                .unwrap()
+                .total
+        })
+        .collect();
+
+    let total: usize = sizes.iter().sum();
+    assert_eq!(total, 400, "every post still belongs to exactly one user");
+
+    let busiest = sizes.iter().copied().max().unwrap_or(0);
+    let even = 400 / 20;
+    assert!(
+        busiest >= even * 2,
+        "real data is lopsided; the busiest user has {busiest} of 400 across 20 users: {sizes:?}"
+    );
+    assert!(
+        sizes.iter().filter(|size| **size < even / 2).count() >= 3,
+        "and most have far fewer than their share: {sizes:?}"
+    );
+}
+
+#[test]
+fn a_lopsided_relation_still_agrees_in_both_directions() {
+    let store = blog_store(13, 12, 60);
+    for user in store.keys("User") {
+        let posts = store
+            .related("User", &user, "posts", &Selection::new())
+            .unwrap();
+        for post in posts.records {
+            let relation = store
+                .graph()
+                .get("Post")
+                .unwrap()
+                .field("author")
+                .unwrap()
+                .relation()
+                .unwrap()
+                .clone();
+            let author = store
+                .relation_target("Post", &post.key, "author", &relation)
+                .expect("every post has an author");
+            assert_eq!(
+                author.key, user,
+                "a post in a user's collection has to name that user back"
+            );
+        }
+    }
+}
+
+/// A folder with an `item_count` beside its `items`, which is what real
+/// payloads carry.
+fn counted_store(seed: u64, folders: usize, files: usize) -> EntityStore {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Folder")
+            .with_field(scalar_field("item_count", ScalarKind::Int))
+            .with_field(relation_field("items", "File", Cardinality::Many)),
+    );
+    graph.insert(entity("File").with_field(relation_field("folder", "Folder", Cardinality::One)));
+    EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(seed)
+            .with_count("Folder", folders)
+            .with_count("File", files),
+    )
+}
+
+#[test]
+fn a_count_field_reports_what_the_collection_actually_holds() {
+    let store = counted_store(4, 8, 50);
+    for folder in store.keys("Folder") {
+        let record = store.get("Folder", &folder).unwrap();
+        let stated = record.get("item_count").unwrap().as_u64().unwrap();
+        let held = store
+            .related("Folder", &folder, "items", &Selection::new())
+            .unwrap()
+            .total;
+        assert_eq!(
+            usize::try_from(stated).unwrap(),
+            held,
+            "`item_count` disagreeing with the list endpoint is worse than no field"
+        );
+    }
+}
+
+#[test]
+fn a_count_field_follows_a_write() {
+    let store = counted_store(4, 8, 50);
+    let folder = store
+        .keys("Folder")
+        .into_iter()
+        .find(|folder| {
+            store
+                .related("Folder", folder, "items", &Selection::new())
+                .unwrap()
+                .total
+                > 0
+        })
+        .expect("some folder holds files");
+
+    let before = store
+        .get("Folder", &folder)
+        .unwrap()
+        .get("item_count")
+        .unwrap()
+        .as_u64()
+        .unwrap();
+
+    store
+        .apply(
+            "File",
+            Mutation::Insert {
+                values: serde_json::json!({ "folder": folder.to_string() }),
+            },
+        )
+        .unwrap();
+
+    let after = store
+        .get("Folder", &folder)
+        .unwrap()
+        .get("item_count")
+        .unwrap()
+        .as_u64()
+        .unwrap();
+    assert_eq!(after, before + 1, "a file added to a folder counts");
+
+    let held = store
+        .related("Folder", &folder, "items", &Selection::new())
+        .unwrap()
+        .total;
+    assert_eq!(
+        usize::try_from(after).unwrap(),
+        held,
+        "and the two still agree"
+    );
+}
+
+#[test]
+fn a_count_field_that_names_nothing_stays_an_ordinary_number() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("Post").with_field(scalar_field("word_count", ScalarKind::Int)));
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(2).with_count("Post", 4),
+    );
+
+    let counts: Vec<u64> = store
+        .keys("Post")
+        .into_iter()
+        .filter_map(|key| store.get("Post", &key)?.get("word_count")?.as_u64())
+        .collect();
+    assert!(
+        counts.iter().any(|count| *count > 1),
+        "`word_count` counts no relation, so it is just a number: {counts:?}"
+    );
+}
+
+#[test]
+fn a_link_to_a_composite_keyed_entity_resolves() {
+    use crate::core::world::model::{CompositeKey, KeyPart, KeySource};
+
+    let repo = EntityType::new(
+        "Repo",
+        CompositeKey::parts([
+            KeyPart {
+                field: LeanString::from("owner"),
+                source: KeySource::PathParam(LeanString::from("owner")),
+            },
+            KeyPart {
+                field: LeanString::from("repo"),
+                source: KeySource::PathParam(LeanString::from("repo")),
+            },
+        ]),
+        Provenance::new(Rule::CollectionItemPair, "Repo"),
+    )
+    .with_field(scalar_field("owner", ScalarKind::String))
+    .with_field(scalar_field("repo", ScalarKind::String));
+
+    let mut graph = EntityGraph::new();
+    graph.insert(repo);
+    graph.insert(entity("Issue").with_field(relation_field(
+        "repository",
+        "Repo",
+        Cardinality::One,
+    )));
+
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(6)
+            .with_count("Repo", 4)
+            .with_count("Issue", 12),
+    );
+
+    let relation = store
+        .graph()
+        .get("Issue")
+        .unwrap()
+        .field("repository")
+        .unwrap()
+        .relation()
+        .unwrap()
+        .clone();
+
+    for key in store.keys("Issue") {
+        let record = store.get("Issue", &key).unwrap();
+        let carried = record.get("repository").unwrap().as_str().unwrap();
+        assert!(
+            carried.contains('/'),
+            "a key of two parts is carried as both of them: {carried}"
+        );
+        let target = store
+            .relation_target("Issue", &key, "repository", &relation)
+            .expect("a link to a composite-keyed entity has to resolve");
+        assert_eq!(target.key.to_string(), carried);
+        assert_eq!(
+            target.get("owner").unwrap().as_str().unwrap(),
+            carried.split('/').next().unwrap(),
+            "and the parts are the fields they were derived from"
+        );
+    }
+}
+
+#[test]
+fn a_field_name_outside_ascii_does_not_break_the_count_check() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Thing")
+            .with_field(scalar_field("名前", ScalarKind::String))
+            .with_field(scalar_field("cnt", ScalarKind::Int)),
+    );
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(1).with_count("Thing", 3),
+    );
+
+    for key in store.keys("Thing") {
+        let record = store.get("Thing", &key).expect("a record still reads");
+        assert!(record.get("名前").is_some());
+    }
 }

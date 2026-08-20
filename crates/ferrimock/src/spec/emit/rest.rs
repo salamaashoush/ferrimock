@@ -120,9 +120,9 @@ fn mount(
 mod tests {
     use super::*;
     use crate::core::{World, WorldSettings};
+    use crate::engine::ResponseGeneratorExt;
     use crate::spec::infer::openapi::parse_openapi;
     use crate::spec::source::load_schema;
-    use crate::engine::ResponseGeneratorExt;
     use crate::types::RequestMatcher;
     use lean_string::LeanString;
     use serde_json::Value as JsonValue;
@@ -359,7 +359,10 @@ components:
     }
 
     fn first_folder_key(world: &Arc<World>) -> String {
-        world.list("Folder", &crate::core::EntityQuery::default()).unwrap().records[0]["id"]
+        world
+            .list("Folder", &crate::core::EntityQuery::default())
+            .unwrap()
+            .records[0]["id"]
             .as_str()
             .unwrap()
             .to_string()
@@ -501,7 +504,9 @@ components:
     #[tokio::test]
     async fn a_query_parameter_naming_a_field_filters_by_it() {
         let (world, mocks) = mounted();
-        let all = world.list("Folder", &crate::core::EntityQuery::default()).unwrap();
+        let all = world
+            .list("Folder", &crate::core::EntityQuery::default())
+            .unwrap();
         let name = all.records[2]["name"].as_str().unwrap().to_string();
 
         let (_, body) = answer(
@@ -539,7 +544,12 @@ components:
         // Which files belong to which folder is derived, so the assertion is
         // that the two directions agree rather than a fixed count.
         let expected = world
-            .related("Folder", &key, "items", &crate::core::EntityQuery::default())
+            .related(
+                "Folder",
+                &key,
+                "items",
+                &crate::core::EntityQuery::default(),
+            )
             .unwrap();
         assert_eq!(items.len(), expected.records.len().min(25));
     }
@@ -670,9 +680,14 @@ components:
     #[tokio::test]
     async fn a_filter_value_is_decoded_before_it_is_compared() {
         let (world, mocks) = mounted();
-        let all = world.list("Folder", &crate::core::EntityQuery::default()).unwrap();
+        let all = world
+            .list("Folder", &crate::core::EntityQuery::default())
+            .unwrap();
         let name = all.records[1]["name"].as_str().unwrap().to_string();
-        assert!(name.contains(' '), "the fixture needs a name worth encoding");
+        assert!(
+            name.contains(' '),
+            "the fixture needs a name worth encoding"
+        );
 
         // Both spellings of a space in a query string. `%20` is what a browser
         // emits and `+` is what `curl --data-urlencode` and most client

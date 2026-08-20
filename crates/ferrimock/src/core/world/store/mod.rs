@@ -15,6 +15,7 @@
 //! seed, and the state is deterministic given the seed plus the sequence of
 //! writes.
 
+pub mod pattern;
 pub mod values;
 
 use dashmap::DashMap;
@@ -27,7 +28,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::algebra::{Cursor, Mutation, Page, Predicate, PredicateOp, Selection, SortKey};
 use super::model::{
-    Cardinality, EntityGraph, EntityKey, EntityType, Relation, Scalar, ScalarKind, ValueSpec,
+    Cardinality, Carrier, EntityGraph, EntityKey, EntityType, FieldDef, Relation, Scalar,
+    ScalarKind, ValueSpec,
 };
 use crate::fake_data::rng;
 use values::ValueSeed;
@@ -118,6 +120,14 @@ pub struct DeltaSnapshot {
 }
 
 impl DeltaSnapshot {
+    /// The keys created records hold, which a rebuilt census must not hand out
+    /// again. Without this a grown count re-derives a key a live record already
+    /// owns, and the entity ends up with two records under one key.
+    #[must_use]
+    pub fn reserved_keys(&self) -> &FxHashMap<LeanString, Vec<EntityKey>> {
+        &self.created
+    }
+
     /// How many writes it carries. Zero means the world is exactly its seed.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -147,12 +157,184 @@ impl std::fmt::Display for DeltaConflict {
     }
 }
 
+/// Keys created at runtime.
+///
+/// Creation order is what gives a created record its ordinal, so the order is
+/// kept — but every question asked of it (does this key exist, what ordinal is
+/// it) is asked per read and per write, so the position is indexed rather than
+/// scanned for. Walking the list instead made creating the *n*th record cost
+/// `O(n)`.
+#[derive(Debug, Clone, Default)]
+struct CreatedKeys {
+    order: FxHashMap<LeanString, Vec<EntityKey>>,
+    position: FxHashMap<(LeanString, EntityKey), u64>,
+}
+
+impl CreatedKeys {
+    fn keys_of(&self, entity: &str) -> Option<&Vec<EntityKey>> {
+        self.order.get(entity)
+    }
+
+    fn count(&self, entity: &str) -> usize {
+        self.order.get(entity).map_or(0, Vec::len)
+    }
+
+    fn position_of(&self, entity: &str, key: &EntityKey) -> Option<u64> {
+        self.position.get(&(entity.into(), key.clone())).copied()
+    }
+
+    fn contains(&self, entity: &str, key: &EntityKey) -> bool {
+        self.position.contains_key(&(entity.into(), key.clone()))
+    }
+
+    /// Append a key, returning the ordinal it takes.
+    fn push(&mut self, entity: &LeanString, key: EntityKey) -> u64 {
+        let slot = self.order.entry(entity.clone()).or_default();
+        let position = slot.len() as u64;
+        slot.push(key.clone());
+        self.position.insert((entity.clone(), key), position);
+        position
+    }
+
+    fn clear(&mut self) {
+        self.order.clear();
+        self.position.clear();
+    }
+
+    fn replace(&mut self, order: FxHashMap<LeanString, Vec<EntityKey>>) {
+        self.position = order
+            .iter()
+            .flat_map(|(entity, keys)| {
+                keys.iter()
+                    .enumerate()
+                    .map(move |(at, key)| ((entity.clone(), key.clone()), at as u64))
+            })
+            .collect();
+        self.order = order;
+    }
+}
+
 /// The keys of one entity, without any of their fields.
 #[derive(Debug, Clone, Default)]
 struct Census {
-    /// Derived keys, indexed by ordinal.
+    /// Derived keys, in position order.
     derived: Vec<EntityKey>,
-    ordinal_of: FxHashMap<EntityKey, u64>,
+    slots: FxHashMap<EntityKey, Slot>,
+}
+
+/// Where one derived instance sits.
+///
+/// The two are usually the same number and are not the same thing: `ordinal` is
+/// what its values derive from, `index` is where it sits among its siblings.
+/// They diverge when the census had to step over a key a created record owns,
+/// and everything that pairs two instances works in `index` — the partition
+/// that decides who owns whom is over positions, not over draws.
+#[derive(Debug, Clone, Copy)]
+struct Slot {
+    ordinal: u64,
+    index: u32,
+}
+
+/// Which parent owns which children, as boundaries over the child positions.
+///
+/// Hashing each child to a parent independently spreads them evenly, and real
+/// data is never even: one folder holds four hundred files and forty hold none.
+/// Drawing a weight per parent and cutting the child range in proportion gives
+/// that shape — and because the answer is a *range*, reading one parent's
+/// children stops being a scan of every child, and counting them stops being a
+/// scan at all.
+#[derive(Debug)]
+struct Partition {
+    /// `parents + 1` rising offsets into the child positions.
+    boundaries: Vec<u32>,
+}
+
+/// How lopsided a relation is. Weights are `u^EXPONENT` over a uniform draw, so
+/// most parents get few children and a few get many.
+const SKEW_EXPONENT: f64 = 2.5;
+
+/// Where a running share of the weight falls in the child range.
+///
+/// The clamps are the whole reason this is a function: the value is a
+/// proportion of a count, so it is neither negative nor past the end, and
+/// saying that once is better than convincing the lint of it at every call.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn scaled_edge(carried: f64, total: f64, children: u32) -> u32 {
+    if total <= 0.0 {
+        return 0;
+    }
+    let scaled = (carried / total * f64::from(children)).round();
+    if scaled <= 0.0 {
+        return 0;
+    }
+    if scaled >= f64::from(children) {
+        return children;
+    }
+    scaled as u32
+}
+
+impl Partition {
+    fn of(seed: u64, child: &str, parent: &str, role: &str, children: u32, parents: u32) -> Self {
+        if parents == 0 {
+            return Self {
+                boundaries: vec![0],
+            };
+        }
+
+        let stream = format!("{child}->{parent}#{role}");
+        let mut weights = Vec::with_capacity(parents as usize);
+        let mut total = 0.0_f64;
+        for parent_index in 0..parents {
+            let drawn = rng::derive_seed(seed, &stream, u64::from(parent_index));
+            // Uniform in [0, 1), then bent toward zero so the weights are
+            // lopsided rather than flat.
+            #[allow(clippy::cast_precision_loss)]
+            let uniform = (drawn >> 11) as f64 / (1_u64 << 53) as f64;
+            // Never exactly zero: a parent with no weight at all would be
+            // unreachable, and "some parents have none" should come out of the
+            // rounding rather than being baked in.
+            let weight = uniform.powf(SKEW_EXPONENT) + f64::EPSILON;
+            total += weight;
+            weights.push(weight);
+        }
+
+        let mut boundaries = Vec::with_capacity(parents as usize + 1);
+        boundaries.push(0);
+        let mut carried = 0.0_f64;
+        for weight in &weights {
+            carried += weight;
+            // Monotone and never past the end, whatever the arithmetic did.
+            let previous = boundaries.last().copied().unwrap_or(0);
+            boundaries.push(scaled_edge(carried, total, children).clamp(previous, children));
+        }
+        // The last edge is the end of the range by definition, not by rounding.
+        if let Some(last) = boundaries.last_mut() {
+            *last = children;
+        }
+
+        Self { boundaries }
+    }
+
+    /// Which parent a child position belongs to.
+    fn owner_of(&self, child_index: u32) -> Option<u32> {
+        let at = self.boundaries.partition_point(|edge| *edge <= child_index);
+        // `partition_point` counts edges at or before the child, and the first
+        // edge is the start of the first parent's range.
+        let parent = u32::try_from(at.checked_sub(1)?).ok()?;
+        (usize::try_from(parent).ok()? + 1 < self.boundaries.len()).then_some(parent)
+    }
+
+    /// The child positions one parent owns.
+    fn range_of(&self, parent_index: u32) -> std::ops::Range<u32> {
+        let at = parent_index as usize;
+        let start = self.boundaries.get(at).copied().unwrap_or(0);
+        let end = self.boundaries.get(at + 1).copied().unwrap_or(start);
+        start..end
+    }
 }
 
 /// A change laid over the base world.
@@ -171,8 +353,17 @@ pub struct EntityStore {
     /// Keys created at runtime, in creation order, per entity. Their namespace
     /// is disjoint from the derived one so a creation can never collide with a
     /// key the base layer would hand out.
-    created: RwLock<FxHashMap<LeanString, Vec<EntityKey>>>,
+    created: RwLock<CreatedKeys>,
     next_created: AtomicU64,
+    /// How many records of each entity are tombstoned. Counted as they are
+    /// written rather than scanned for: `count` is on the request path of every
+    /// paginated list, and walking the whole delta to answer it made the cost
+    /// of a read grow with the number of writes that had ever happened.
+    tombstones: RwLock<FxHashMap<LeanString, usize>>,
+    /// One partition per relation, built on first use. It depends only on the
+    /// seed and the two census sizes, all of which are fixed for the life of a
+    /// store, so it is computed once and never invalidated.
+    partitions: RwLock<FxHashMap<(LeanString, LeanString, LeanString), Arc<Partition>>>,
 }
 
 impl std::fmt::Debug for EntityStore {
@@ -188,6 +379,17 @@ impl EntityStore {
     /// Build the census for every entity. Records stay unbuilt until read.
     #[must_use]
     pub fn new(graph: Arc<EntityGraph>, config: StoreConfig) -> Self {
+        Self::new_reserving(graph, config, &FxHashMap::default())
+    }
+
+    /// [`Self::new`], leaving the given keys for records that already hold
+    /// them — the ones a previous store's creations own.
+    #[must_use]
+    pub fn new_reserving(
+        graph: Arc<EntityGraph>,
+        config: StoreConfig,
+        reserved: &FxHashMap<LeanString, Vec<EntityKey>>,
+    ) -> Self {
         let mut census = FxHashMap::default();
         for name in &graph.seed_order().order {
             let Some(entity) = graph.get(name) else {
@@ -199,7 +401,10 @@ impl EntityStore {
                 .copied()
                 .or(entity.seed_count)
                 .unwrap_or(config.default_count);
-            census.insert(name.clone(), build_census(config.seed, entity, count));
+            census.insert(
+                name.clone(),
+                build_census(config.seed, entity, count, reserved.get(name)),
+            );
         }
 
         Self {
@@ -207,8 +412,10 @@ impl EntityStore {
             config,
             census,
             delta: DashMap::new(),
-            created: RwLock::new(FxHashMap::default()),
+            created: RwLock::new(CreatedKeys::default()),
             next_created: AtomicU64::new(0),
+            tombstones: RwLock::new(FxHashMap::default()),
+            partitions: RwLock::new(FxHashMap::default()),
         }
     }
 
@@ -227,12 +434,8 @@ impl EntityStore {
     #[must_use]
     pub fn count(&self, entity: &str) -> usize {
         let derived = self.census.get(entity).map_or(0, |c| c.derived.len());
-        let created = self.created.read().get(entity).map_or(0, Vec::len);
-        let tombstoned = self
-            .delta
-            .iter()
-            .filter(|e| e.key().0 == entity && matches!(e.value(), Delta::Tombstone))
-            .count();
+        let created = self.created.read().count(entity);
+        let tombstoned = self.tombstones.read().get(entity).copied().unwrap_or(0);
         (derived + created).saturating_sub(tombstoned)
     }
 
@@ -245,7 +448,7 @@ impl EntityStore {
             .get(entity)
             .map(|c| c.derived.clone())
             .unwrap_or_default();
-        if let Some(created) = self.created.read().get(entity) {
+        if let Some(created) = self.created.read().keys_of(entity) {
             keys.extend(created.iter().cloned());
         }
         keys.retain(|key| !self.is_tombstoned(entity, key));
@@ -436,14 +639,42 @@ impl EntityStore {
         field: &str,
         relation: &Relation,
     ) -> Option<Record> {
+        let (target, target_key) = self.link_key(entity, key, field, relation)?;
+        self.get(target.as_str(), &target_key)
+    }
+
+    /// Which instance a to-one link points at, as an entity and a key.
+    ///
+    /// Answering with the key rather than the record is what lets a delete
+    /// check every referencing record without building one: the derived case
+    /// is pure arithmetic over the census, and only a record that has actually
+    /// been written has to be read.
+    fn link_key(
+        &self,
+        entity: &str,
+        key: &EntityKey,
+        field: &str,
+        relation: &Relation,
+    ) -> Option<(LeanString, EntityKey)> {
         // A write can retarget a relation, and an explicit foreign key wins
-        // over the derived one.
-        if let Some(record) = self.get(entity, key)
-            && let Some(JsonValue::String(target_key)) = record.fields.get(field)
-        {
-            let candidate = EntityKey::single(target_key.as_str());
-            if let Some(found) = self.get(relation.target.as_str(), &candidate) {
-                return Some(found);
+        // over the derived one. The key may be carried by a sibling field, so
+        // it is the carrier that is read rather than the link's own field.
+        if self.is_written(entity, key) {
+            let carrier = relation.carrier.key_field(&LeanString::from(field)).clone();
+            if let Some(record) = self.get(entity, key)
+                && let Some(stated) = record
+                    .fields
+                    .get(carrier.as_str())
+                    .and_then(values::key_text)
+            {
+                let candidate = self.entity_key_of(relation.target.as_str(), &stated);
+                if let Some(found) = relation
+                    .concrete_targets()
+                    .iter()
+                    .find(|target| self.get(target.as_str(), &candidate).is_some())
+                {
+                    return Some((found.clone(), candidate));
+                }
             }
         }
 
@@ -451,17 +682,25 @@ impl EntityStore {
         // An abstract target resolves to one of its members, chosen per
         // instance so a polymorphic field is stable but not uniform.
         let target = self.chosen_member(entity, ordinal, field, relation)?;
-        let target_keys = self.census.get(target.as_str())?;
-        let owner = owner_ordinal(
-            self.config.seed,
-            entity,
-            ordinal,
-            target.as_str(),
-            field,
-            target_keys.derived.len(),
-        )?;
-        let target_key = target_keys.derived.get(usize::try_from(owner).ok()?)?;
-        self.get(target.as_str(), target_key)
+        let target_key =
+            self.owner_key(entity, self.index_of(entity, key)?, field, target.as_str())?;
+        Some((target, target_key))
+    }
+
+    /// The key an entity is filed under, read from one string.
+    ///
+    /// A composite key is written the way it prints: its parts separated by
+    /// `/`, which is what a path addressing it looks like anyway.
+    #[must_use]
+    pub fn entity_key_of(&self, entity: &str, key: &str) -> EntityKey {
+        let parts = self
+            .graph
+            .get(entity)
+            .map_or(1, |entity| entity.key.len().max(1));
+        if parts <= 1 {
+            return EntityKey::single(key);
+        }
+        EntityKey::from_parts(key.splitn(parts, '/').map(LeanString::from))
     }
 
     /// Every instance of the target whose owning link resolves back to `key`.
@@ -470,13 +709,6 @@ impl EntityStore {
     /// always agree: `user.posts` contains exactly the posts whose `author`
     /// resolves to that user.
     fn relation_children(&self, entity: &str, key: &EntityKey, relation: &Relation) -> Vec<Record> {
-        let Some(parent_ordinal) = self.ordinal_of(entity, key) else {
-            return Vec::new();
-        };
-        let Some(parent_count) = self.census.get(entity).map(|c| c.derived.len()) else {
-            return Vec::new();
-        };
-
         // An abstract collection draws from every concrete member, so a
         // polymorphic list contains a mixture the way the real one does.
         let mut children = Vec::new();
@@ -494,39 +726,71 @@ impl EntityStore {
                     self.keys(member.as_str())
                         .into_iter()
                         .filter_map(|child_key| {
-                            let child_ordinal = self.ordinal_of(member.as_str(), &child_key)?;
-                            self.shares_membership(
-                                entity,
-                                parent_ordinal,
-                                member.as_str(),
-                                child_ordinal,
-                                parent_count,
-                            )
-                            .then(|| self.get(member.as_str(), &child_key))?
+                            self.shares_membership(entity, key, member.as_str(), &child_key)
+                                .then(|| self.get(member.as_str(), &child_key))?
                         }),
                 );
                 continue;
             }
 
-            let role = reciprocal_field(target, entity).unwrap_or_default();
-            children.extend(
-                self.keys(member.as_str())
-                    .into_iter()
-                    .filter_map(|child_key| {
-                        let child_ordinal = self.ordinal_of(member.as_str(), &child_key)?;
-                        let owner = owner_ordinal(
-                            self.config.seed,
-                            member.as_str(),
-                            child_ordinal,
-                            entity,
-                            &role,
-                            parent_count,
-                        )?;
-                        (owner == parent_ordinal).then(|| self.get(member.as_str(), &child_key))?
-                    }),
-            );
+            let back = reciprocal_link(target, entity);
+            let role = back.map_or_else(String::new, |(field, _)| field.name.to_string());
+            let carrier =
+                back.map(|(field, relation)| relation.carrier.key_field(&field.name).clone());
+
+            // The derived children are a contiguous run of the member's
+            // positions, so this reads only that run rather than filtering
+            // every child of every parent.
+            if let Some(parent_index) = self.index_of(entity, key) {
+                let partition = self.partition(member.as_str(), entity, &role);
+                let range = partition.range_of(parent_index);
+                children.extend(range.filter_map(|position| {
+                    let child_key = self
+                        .census
+                        .get(member.as_str())?
+                        .derived
+                        .get(usize::try_from(position).ok()?)?
+                        .clone();
+                    // A child that has been written answers from its own
+                    // fields, and may have been pointed somewhere else since.
+                    if self.is_written(member.as_str(), &child_key) {
+                        return None;
+                    }
+                    self.get(member.as_str(), &child_key)
+                }));
+            }
+
+            // Everything written: records created here, and derived records
+            // whose link was changed. Bounded by the number of writes rather
+            // than by the size of the world.
+            let Some(carrier) = &carrier else {
+                continue;
+            };
+            children.extend(self.written_keys(member.as_str()).into_iter().filter_map(
+                |child_key| {
+                    let record = self.get(member.as_str(), &child_key)?;
+                    let stated = record
+                        .fields
+                        .get(carrier.as_str())
+                        .and_then(values::key_text)?;
+                    (self.entity_key_of(entity, &stated) == *key).then_some(record)
+                },
+            ));
         }
         children
+    }
+
+    /// Every key of an entity that carries a write.
+    ///
+    /// Its size is the number of writes, not the size of the world, which is
+    /// what lets a collection reconcile writes without walking every record.
+    fn written_keys(&self, entity: &str) -> Vec<EntityKey> {
+        self.delta
+            .iter()
+            .filter(|entry| entry.key().0 == entity)
+            .filter(|entry| !matches!(entry.value(), Delta::Tombstone))
+            .map(|entry| entry.key().1.clone())
+            .collect()
     }
 
     /// Whether two instances are on opposite ends of the same many-to-many
@@ -537,31 +801,33 @@ impl EntityStore {
     fn shares_membership(
         &self,
         left: &str,
-        left_ordinal: u64,
+        left_key: &EntityKey,
         right: &str,
-        right_ordinal: u64,
-        left_count: usize,
+        right_key: &EntityKey,
     ) -> bool {
-        let (anchor, anchor_count, member, member_ordinal) = if left < right {
-            (left, left_count, right, right_ordinal)
+        let ((anchor, anchor_key), (member, member_key)) = if left < right {
+            ((left, left_key), (right, right_key))
         } else {
-            let right_count = self.census.get(right).map_or(0, |c| c.derived.len());
-            (right, right_count, left, left_ordinal)
+            ((right, right_key), (left, left_key))
         };
 
-        let wanted = if left < right {
-            left_ordinal
-        } else {
-            right_ordinal
+        let Some(anchor_census) = self.census.get(anchor) else {
+            return false;
         };
+        let Some(member_ordinal) = self.ordinal_of(member, member_key) else {
+            return false;
+        };
+
         membership_of(
             self.config.seed,
             anchor,
-            anchor_count,
+            anchor_census.derived.len(),
             member,
             member_ordinal,
         )
-        .contains(&wanted)
+        .into_iter()
+        .filter_map(|index| anchor_census.derived.get(usize::try_from(index).ok()?))
+        .any(|derived| derived == anchor_key)
     }
 
     /// Which concrete entity an abstract link resolves to for one instance.
@@ -607,13 +873,16 @@ impl EntityStore {
                 entity.name
             ));
         };
+        let provided = self.read_links(entity, provided);
 
-        let ordinal = self.next_created.fetch_add(1, Ordering::Relaxed);
+        let sequence = self.next_created.fetch_add(1, Ordering::Relaxed);
         let key = match key_from_values(entity, &provided) {
             Some(key) => key,
-            None => self.created_key(entity, ordinal),
+            None => self.created_key(entity, sequence),
         };
 
+        // Read before locking: `get` reaches the created list itself, so
+        // holding the write lock across it deadlocks.
         if self.get(entity.name.as_str(), &key).is_some() {
             return Err(crate::mp_err!(
                 "`{}` with key `{key}` already exists",
@@ -621,13 +890,44 @@ impl EntityStore {
             ));
         }
 
+        // The ordinal a created record derives from sits past the census, so
+        // every ordinal-keyed derivation — its values, its links, which
+        // collections it belongs to — works for it exactly as for a seeded one.
+        // Claimed under the same lock that publishes the record, so two
+        // concurrent creations cannot both take the slot and leave one of them
+        // deriving from an ordinal another record already owns.
+        let mut created = self.created.write();
+        if created.contains(entity.name.as_str(), &key) {
+            return Err(crate::mp_err!(
+                "`{}` with key `{key}` already exists",
+                entity.name
+            ));
+        }
+        let base = self
+            .census
+            .get(entity.name.as_str())
+            .map_or(0, |census| census.derived.len() as u64);
+        let ordinal = base.saturating_add(created.push(&entity.name, key.clone()));
+        drop(created);
+
         // Fields the caller left out still have to exist: the response is
         // validated against the same schema a real one would be.
         let mut fields = values::generate_fields(
             &entity.fields,
             "",
-            ValueSeed::new(self.config.seed, entity.name.as_str(), u64::MAX - ordinal),
+            ValueSeed::new(self.config.seed, entity.name.as_str(), ordinal),
         );
+        // A created record is not part of the derived partition, so its links
+        // are drawn from the child position its ordinal would have had — enough
+        // to give it a plausible owner, with anything the caller stated
+        // overriding it below.
+        let children = self
+            .census
+            .get(entity.name.as_str())
+            .map_or(0, |census| census.derived.len());
+        let index = (children > 0).then(|| u32::try_from(ordinal % children as u64).unwrap_or(0));
+        self.write_links(entity, ordinal, index, &mut fields);
+        self.write_counts(entity, &key, &mut fields);
         for (name, value) in provided {
             fields.insert(name, value);
         }
@@ -637,11 +937,6 @@ impl EntityStore {
             (entity.name.clone(), key.clone()),
             Delta::Created(fields.clone()),
         );
-        self.created
-            .write()
-            .entry(entity.name.clone())
-            .or_default()
-            .push(key.clone());
 
         Ok(Written::Created(Record {
             entity: entity.name.clone(),
@@ -663,6 +958,7 @@ impl EntityStore {
                 entity.name
             ));
         };
+        let provided = self.read_links(entity, provided);
         let existing = self
             .get(entity.name.as_str(), key)
             .ok_or_else(|| crate::mp_err!("`{}` with key `{key}` not found", entity.name))?;
@@ -713,14 +1009,22 @@ impl EntityStore {
                 ));
             }
             for (child_entity, child_key) in dependents {
-                self.delta
-                    .insert((child_entity, child_key), Delta::Tombstone);
+                self.tombstone(child_entity, child_key);
             }
         }
 
-        self.delta
-            .insert((entity.name.clone(), key.clone()), Delta::Tombstone);
+        self.tombstone(entity.name.clone(), key.clone());
         Ok(Written::Removed(key.clone()))
+    }
+
+    /// Mark a record removed, keeping the per-entity tally `count` reads.
+    fn tombstone(&self, entity: LeanString, key: EntityKey) {
+        let replaced = self.delta.insert((entity.clone(), key), Delta::Tombstone);
+        // Removing something already removed must not count twice.
+        if matches!(replaced, Some(Delta::Tombstone)) {
+            return;
+        }
+        *self.tombstones.write().entry(entity).or_default() += 1;
     }
 
     /// Records that point at `key` through a to-one relation.
@@ -738,8 +1042,8 @@ impl EntityStore {
                 }
                 for child_key in self.keys(candidate.name.as_str()) {
                     let points_at = self
-                        .relation_target(candidate.name.as_str(), &child_key, &field.name, relation)
-                        .is_some_and(|target| &target.key == key);
+                        .link_key(candidate.name.as_str(), &child_key, &field.name, relation)
+                        .is_some_and(|(target, target_key)| target == entity && &target_key == key);
                     if points_at {
                         found.push((candidate.name.clone(), child_key));
                     }
@@ -755,17 +1059,26 @@ impl EntityStore {
     /// past the end of the census — so it looks like every other key of that
     /// entity (a uuid stays a uuid, an integer keeps counting) while being
     /// unable to collide with one the base layer would hand out.
-    fn created_key(&self, entity: &EntityType, ordinal: u64) -> EntityKey {
-        let base = self
-            .census
-            .get(entity.name.as_str())
-            .map_or(0, |census| census.derived.len() as u64);
-        EntityKey::single(values::derive_key_value(
-            self.config.seed,
-            entity.name.as_str(),
-            &key_scalar(entity),
-            base.saturating_add(ordinal),
-        ))
+    fn created_key(&self, entity: &EntityType, sequence: u64) -> EntityKey {
+        let census = self.census.get(entity.name.as_str());
+        let base = census.map_or(0, |census| census.derived.len() as u64);
+        let scalars = key_scalars(entity);
+        let created = self.created.read();
+
+        // Probing rather than trusting the arithmetic: `base + sequence` is
+        // free the moment it is computed, but a rebuild that grew the entity
+        // can have handed the same ordinal to the census since, and two records
+        // under one key is worse than a gap in the numbering.
+        let mut ordinal = base.saturating_add(sequence);
+        loop {
+            let key = derive_key(self.config.seed, entity.name.as_str(), &scalars, ordinal);
+            let clashes = census.is_some_and(|census| census.slots.contains_key(&key))
+                || created.contains(entity.name.as_str(), &key);
+            if !clashes {
+                return key;
+            }
+            ordinal = ordinal.saturating_add(1);
+        }
     }
 
     /// Lift every write off the store.
@@ -788,7 +1101,7 @@ impl EntityStore {
 
         DeltaSnapshot {
             entries,
-            created: self.created.read().clone(),
+            created: self.created.read().order.clone(),
             next_created: self.next_created.load(Ordering::Relaxed),
         }
     }
@@ -813,10 +1126,14 @@ impl EntityStore {
                 });
                 continue;
             }
+            if matches!(delta, Delta::Tombstone) {
+                self.tombstone(entity, key);
+                continue;
+            }
             self.delta.insert((entity, key), delta);
         }
 
-        *self.created.write() = snapshot.created;
+        self.created.write().replace(snapshot.created);
         self.next_created
             .store(snapshot.next_created, Ordering::Relaxed);
 
@@ -827,6 +1144,7 @@ impl EntityStore {
     pub fn reset(&self) {
         self.delta.clear();
         self.created.write().clear();
+        self.tombstones.write().clear();
         self.next_created.store(0, Ordering::Relaxed);
     }
 
@@ -837,8 +1155,59 @@ impl EntityStore {
         )
     }
 
+    /// The ordinal an instance derives from: its census ordinal, or — for a
+    /// record created at runtime — its position past the end of the census.
     fn ordinal_of(&self, entity: &str, key: &EntityKey) -> Option<u64> {
-        self.census.get(entity)?.ordinal_of.get(key).copied()
+        if let Some(slot) = self
+            .census
+            .get(entity)
+            .and_then(|census| census.slots.get(key))
+        {
+            return Some(slot.ordinal);
+        }
+        let base = self
+            .census
+            .get(entity)
+            .map_or(0, |census| census.derived.len() as u64);
+        let position = self.created.read().position_of(entity, key)?;
+        Some(base.saturating_add(position))
+    }
+
+    /// Where a derived instance sits among its siblings. `None` for a record
+    /// created at runtime: those are not part of the derived partition, and
+    /// their links are read from what they were written with.
+    fn index_of(&self, entity: &str, key: &EntityKey) -> Option<u32> {
+        Some(self.census.get(entity)?.slots.get(key)?.index)
+    }
+
+    /// The partition deciding who owns whom for one relation.
+    fn partition(&self, child: &str, parent: &str, role: &str) -> Arc<Partition> {
+        let slot = (
+            LeanString::from(child),
+            LeanString::from(parent),
+            LeanString::from(role),
+        );
+        if let Some(held) = self.partitions.read().get(&slot) {
+            return Arc::clone(held);
+        }
+        let children = self.census.get(child).map_or(0, |c| c.derived.len());
+        let parents = self.census.get(parent).map_or(0, |c| c.derived.len());
+        let built = Arc::new(Partition::of(
+            self.config.seed,
+            child,
+            parent,
+            role,
+            u32::try_from(children).unwrap_or(u32::MAX),
+            u32::try_from(parents).unwrap_or(u32::MAX),
+        ));
+        self.partitions.write().insert(slot, Arc::clone(&built));
+        built
+    }
+
+    /// Whether a record has been written to, so its own fields are the answer
+    /// rather than what its ordinal derives.
+    fn is_written(&self, entity: &str, key: &EntityKey) -> bool {
+        self.delta.contains_key(&(entity.into(), key.clone()))
     }
 
     /// The base layer: derived values plus derived relation keys. Pure, so it
@@ -851,66 +1220,383 @@ impl EntityStore {
         let ordinal = self.ordinal_of(entity.name.as_str(), key)?;
         let seed = ValueSeed::new(self.config.seed, entity.name.as_str(), ordinal);
         let mut fields = values::generate_fields(&entity.fields, "", seed);
+        let index = self.index_of(entity.name.as_str(), key);
+        self.write_links(entity, ordinal, index, &mut fields);
+        self.write_counts(entity, key, &mut fields);
+        write_key_fields(entity, key, &mut fields);
+        Some(fields)
+    }
+
+    /// Write every to-one link an instance carries, into the field the schema
+    /// said carries it.
+    ///
+    /// Shared by the base layer and by creation, because a record a client made
+    /// has to carry the same links a seeded one does — a `POST` that answered
+    /// with a null where every other instance has an object is the difference
+    /// between a mock a client can develop against and one it cannot.
+    fn write_links(
+        &self,
+        entity: &EntityType,
+        ordinal: u64,
+        index: Option<u32>,
+        fields: &mut JsonMap<String, JsonValue>,
+    ) {
+        for (field, relation) in entity.relations() {
+            if relation.cardinality != Cardinality::One {
+                continue;
+            }
+            let carrier = relation.carrier.key_field(&field.name);
+            match self.derived_link(entity.name.as_str(), ordinal, index, &field.name, relation) {
+                Some(value) => {
+                    fields.insert(carrier.to_string(), value);
+                }
+                // Nothing to point at. A link with a field of its own says so;
+                // a link carried by a declared scalar leaves that scalar the
+                // value its own type generated, rather than nulling a field the
+                // schema may have marked required.
+                None if relation.carrier.is_inline_key(&field.name)
+                    || matches!(relation.carrier, Carrier::Embedded | Carrier::Connection(_)) =>
+                {
+                    fields.insert(carrier.to_string(), JsonValue::Null);
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// Read the links a write states, wherever the caller put them.
+    ///
+    /// A client names a link the way its own schema does — `{"author": "<id>"}`,
+    /// `{"author": {"id": "<id>"}}`, `{"authorId": "<id>"}` or the carrier field
+    /// outright — and all four mean the same thing. Landing them all in the
+    /// carrier is what makes a write actually retarget the relation instead of
+    /// being kept as a field nothing reads.
+    fn read_links(
+        &self,
+        entity: &EntityType,
+        mut provided: JsonMap<String, JsonValue>,
+    ) -> JsonMap<String, JsonValue> {
+        // Nothing was stated, so there is nothing to read. Worth the check:
+        // a bare create is the common one, and walking the relations to build
+        // the names a caller *might* have used is pure waste when it sent none.
+        if provided.is_empty() {
+            return provided;
+        }
 
         for (field, relation) in entity.relations() {
             if relation.cardinality != Cardinality::One {
                 continue;
             }
-            let Some(target) =
-                self.chosen_member(entity.name.as_str(), ordinal, &field.name, relation)
-            else {
+            let carrier = relation.carrier.key_field(&field.name).clone();
+            // Already a usable key. An *object* sitting there is not one: a
+            // caller who sent `{"author": {"id": …}}` named the link, and
+            // keeping the object would store a field nothing resolves.
+            if provided
+                .get(carrier.as_str())
+                .is_some_and(|value| values::key_text(value).is_some())
+            {
                 continue;
-            };
-            let Some(target_census) = self.census.get(target.as_str()) else {
-                continue;
-            };
-            let value = owner_ordinal(
-                self.config.seed,
-                entity.name.as_str(),
-                ordinal,
-                target.as_str(),
-                &field.name,
-                target_census.derived.len(),
-            )
-            .and_then(|owner| target_census.derived.get(usize::try_from(owner).ok()?))
-            .map_or(JsonValue::Null, |k| JsonValue::String(k.to_string()));
-            fields.insert(field.name.to_string(), value);
-        }
+            }
 
-        write_key_fields(entity, key, &mut fields);
-        Some(fields)
+            let Some(target) = self.graph.get(relation.target.as_str()) else {
+                continue;
+            };
+            let target_key = target
+                .key
+                .as_single()
+                .cloned()
+                .unwrap_or_else(|| LeanString::from("id"));
+
+            // The link's own field, then the spellings an input object uses
+            // for it. The aliases are only spelled out when the caller did not
+            // use the field's own name, so the common write allocates nothing.
+            let mut stated = provided
+                .get(field.name.as_str())
+                .and_then(|value| link_key_in(value, target_key.as_str()))
+                .map(|key| (field.name.to_string(), key));
+
+            if stated.is_none() {
+                for alias in [format!("{}Id", field.name), format!("{}_id", field.name)] {
+                    // An alias is only consumed when the entity has no field of
+                    // that name, so a declared `user_id` is never mistaken for
+                    // one.
+                    if entity.field(&alias).is_some() {
+                        continue;
+                    }
+                    if let Some(key) = provided
+                        .get(&alias)
+                        .and_then(|value| link_key_in(value, target_key.as_str()))
+                    {
+                        stated = Some((alias, key));
+                        break;
+                    }
+                }
+            }
+
+            let Some((source, key)) = stated else {
+                continue;
+            };
+            if source != carrier {
+                provided.remove(&source);
+            }
+            provided.insert(carrier.to_string(), key_value_json(target, &key));
+        }
+        provided
+    }
+
+    /// The key a to-one link derives to for one instance, as the target's
+    /// declared key kind.
+    fn derived_link(
+        &self,
+        entity: &str,
+        ordinal: u64,
+        index: Option<u32>,
+        field: &LeanString,
+        relation: &Relation,
+    ) -> Option<JsonValue> {
+        let target = self.chosen_member(entity, ordinal, field.as_str(), relation)?;
+        let target_type = self.graph.get(target.as_str())?;
+        let key = self.owner_key(entity, index?, field.as_str(), target.as_str())?;
+        Some(key_value_json(target_type, &key.to_string()))
+    }
+
+    /// How many children a parent has, without building any of them.
+    ///
+    /// The derived answer is the width of the partition's range. Writes move
+    /// the edges: a child pointed somewhere else leaves, one pointed here
+    /// arrives, and a removed one is gone — all read straight off the delta,
+    /// so a count never materialises a record and can never recurse back into
+    /// the record it is being written into.
+    fn child_count(
+        &self,
+        entity: &str,
+        key: &EntityKey,
+        field: &FieldDef,
+        relation: &Relation,
+    ) -> usize {
+        let Some(parent_index) = self.index_of(entity, key) else {
+            return 0;
+        };
+        let mut total: i64 = 0;
+
+        for member in relation.concrete_targets() {
+            let Some(target) = self.graph.get(member.as_str()) else {
+                continue;
+            };
+            let Some((back_field, back_relation)) = reciprocal_link(target, entity) else {
+                continue;
+            };
+            let role = back_field.name.to_string();
+            let carrier = back_relation.carrier.key_field(&back_field.name).clone();
+
+            let partition = self.partition(member.as_str(), entity, &role);
+            let range = partition.range_of(parent_index);
+            total += i64::from(range.end - range.start);
+
+            for (child_key, stated) in self.stated_owners(member.as_str(), &carrier) {
+                let derived_here = self
+                    .census
+                    .get(member.as_str())
+                    .and_then(|census| census.slots.get(&child_key))
+                    .is_some_and(|slot| range.contains(&slot.index));
+                let stated_here = stated
+                    .as_ref()
+                    .is_some_and(|stated| self.entity_key_of(entity, stated) == *key);
+                match (derived_here, stated_here) {
+                    (true, false) => total -= 1,
+                    (false, true) => total += 1,
+                    _ => {}
+                }
+            }
+            let _ = field;
+        }
+        usize::try_from(total.max(0)).unwrap_or(0)
+    }
+
+    /// What every written record of an entity says its owner is.
+    ///
+    /// Read from the delta rather than through `get`, so nothing is
+    /// materialised. A tombstone reports no owner, which is what removes it
+    /// from whichever collection it was in.
+    fn stated_owners(
+        &self,
+        entity: &str,
+        carrier: &LeanString,
+    ) -> Vec<(EntityKey, Option<String>)> {
+        self.delta
+            .iter()
+            .filter(|entry| entry.key().0 == entity)
+            .map(|entry| {
+                let stated = match entry.value() {
+                    Delta::Created(fields) | Delta::Patched(fields) => {
+                        fields.get(carrier.as_str()).and_then(values::key_text)
+                    }
+                    Delta::Tombstone => None,
+                };
+                (entry.key().1.clone(), stated)
+            })
+            .collect()
+    }
+
+    /// Write the fields that count a relation rather than holding one.
+    ///
+    /// `item_count` beside an `items` link is a thing real payloads carry and
+    /// clients assert on, and a generated number that disagrees with the list
+    /// endpoint is worse than no field at all.
+    fn write_counts(
+        &self,
+        entity: &EntityType,
+        key: &EntityKey,
+        fields: &mut JsonMap<String, JsonValue>,
+    ) {
+        for field in &entity.fields {
+            if field.relation().is_some() {
+                continue;
+            }
+            let Some((counted, relation)) = counted_relation(entity, field.name.as_str()) else {
+                continue;
+            };
+            let total = self.child_count(entity.name.as_str(), key, counted, relation);
+            fields.insert(field.name.to_string(), JsonValue::from(total));
+        }
+    }
+
+    /// The parent a child position belongs to, as that parent's key.
+    ///
+    /// The same partition both directions read, which is what makes them agree:
+    /// `user.posts` is the range this function maps back into.
+    fn owner_key(
+        &self,
+        child: &str,
+        child_index: u32,
+        role: &str,
+        parent: &str,
+    ) -> Option<EntityKey> {
+        let partition = self.partition(child, parent, role);
+        let owner = partition.owner_of(child_index)?;
+        self.census
+            .get(parent)?
+            .derived
+            .get(usize::try_from(owner).ok()?)
+            .cloned()
     }
 }
 
-fn build_census(seed: u64, entity: &EntityType, count: usize) -> Census {
-    let key_scalar = key_scalar(entity);
+/// Derive `count` keys for an entity, stepping over any a created record
+/// already owns.
+///
+/// Skipping shifts the ordinal a slot derives from, which is why an instance's
+/// ordinal is recorded rather than assumed to equal its position — everything
+/// that pairs two instances compares keys, so a gap in the ordinals costs
+/// nothing.
+fn build_census(
+    seed: u64,
+    entity: &EntityType,
+    count: usize,
+    reserved: Option<&Vec<EntityKey>>,
+) -> Census {
+    let scalars = key_scalars(entity);
     let mut derived = Vec::with_capacity(count);
-    let mut ordinal_of = FxHashMap::default();
+    let mut slots: FxHashMap<EntityKey, Slot> = FxHashMap::default();
 
-    for ordinal in 0..count as u64 {
-        let key = EntityKey::single(values::derive_key_value(
-            seed,
-            entity.name.as_str(),
-            &key_scalar,
-            ordinal,
-        ));
-        ordinal_of.insert(key.clone(), ordinal);
-        derived.push(key);
+    // With nothing reserved there is nothing to step over, and distinct
+    // ordinals derive distinct keys — so the ordinary case pays none of the
+    // probing, which is a hash of every key at load.
+    let Some(reserved) = reserved else {
+        // A key of one part is what almost every entity has, and this loop runs
+        // once per instance of every entity in the world: the part is resolved
+        // before it rather than per key.
+        if let [(field, scalar)] = scalars.as_slice() {
+            let field = field.as_deref();
+            for ordinal in 0..count as u64 {
+                let key = EntityKey::single(values::derive_key_value(
+                    seed,
+                    entity.name.as_str(),
+                    field,
+                    scalar,
+                    ordinal,
+                ));
+                slots.insert(key.clone(), slot_at(ordinal, derived.len()));
+                derived.push(key);
+            }
+        } else {
+            for ordinal in 0..count as u64 {
+                let key = derive_key(seed, entity.name.as_str(), &scalars, ordinal);
+                slots.insert(key.clone(), slot_at(ordinal, derived.len()));
+                derived.push(key);
+            }
+        }
+        return Census { derived, slots };
+    };
+
+    let mut ordinal = 0_u64;
+    while derived.len() < count {
+        let key = derive_key(seed, entity.name.as_str(), &scalars, ordinal);
+        if !reserved.contains(&key) {
+            slots.insert(key.clone(), slot_at(ordinal, derived.len()));
+            derived.push(key);
+        }
+        let Some(next) = ordinal.checked_add(1) else {
+            break;
+        };
+        ordinal = next;
     }
 
-    Census {
-        derived,
-        ordinal_of,
+    Census { derived, slots }
+}
+
+fn slot_at(ordinal: u64, index: usize) -> Slot {
+    Slot {
+        ordinal,
+        index: u32::try_from(index).unwrap_or(u32::MAX),
     }
 }
 
 /// The scalar describing an entity's key field, so keys look like what the
 /// spec said they are (a uuid, an integer, an opaque string).
 fn key_scalar(entity: &EntityType) -> Scalar {
+    entity.key.as_single().map_or_else(
+        || Scalar::new(ScalarKind::Id),
+        |name| field_scalar(entity, name),
+    )
+}
+
+/// One scalar per part of an entity's key, each with the field naming it.
+///
+/// A single-part key carries no field name: it is derived from the entity, the
+/// way it always has been, and naming it would change every key in every world
+/// that already exists.
+fn key_scalars(entity: &EntityType) -> Vec<(Option<LeanString>, Scalar)> {
+    if entity.key.is_empty() {
+        return vec![(None, Scalar::new(ScalarKind::Id))];
+    }
+    let composite = entity.key.len() > 1;
     entity
         .key
-        .as_single()
-        .and_then(|name| entity.field(name))
+        .iter()
+        .map(|part| {
+            let field = composite.then(|| part.field.clone());
+            (field, field_scalar(entity, part.field.as_str()))
+        })
+        .collect()
+}
+
+/// A whole key for one instance: every part, each derived as its own field.
+fn derive_key(
+    seed: u64,
+    entity: &str,
+    scalars: &[(Option<LeanString>, Scalar)],
+    ordinal: u64,
+) -> EntityKey {
+    EntityKey::from_parts(scalars.iter().map(|(field, scalar)| {
+        values::derive_key_value(seed, entity, field.as_deref(), scalar, ordinal)
+    }))
+}
+
+/// The scalar describing one named field, defaulting to an opaque identifier.
+fn field_scalar(entity: &EntityType, field: &str) -> Scalar {
+    entity
+        .field(field)
         .and_then(|field| match &field.value {
             ValueSpec::Scalar(scalar) => Some(scalar.clone()),
             _ => None,
@@ -918,25 +1604,15 @@ fn key_scalar(entity: &EntityType) -> Scalar {
         .unwrap_or_else(|| Scalar::new(ScalarKind::Id))
 }
 
-/// Which instance of `parent` the `ordinal`th instance of `child` belongs to.
+/// An entity's key, rendered as the kind its schema declared.
 ///
-/// A pure function into the parent's census range, which is what makes
-/// referential integrity structural: a derived foreign key cannot point
-/// outside the set of parents that exist.
-fn owner_ordinal(
-    seed: u64,
-    child: &str,
-    child_ordinal: u64,
-    parent: &str,
-    role: &str,
-    parent_count: usize,
-) -> Option<u64> {
-    if parent_count == 0 {
-        return None;
+/// Only meaningful for a single-part key: a link to a composite-keyed entity
+/// has no one field to write, so the text is kept as it stands.
+fn key_value_json(entity: &EntityType, value: &str) -> JsonValue {
+    if entity.key.len() > 1 {
+        return JsonValue::String(value.to_string());
     }
-    let stream = format!("{child}->{parent}#{role}");
-    let derived = rng::derive_seed(seed, &stream, child_ordinal);
-    Some(derived % parent_count as u64)
+    values::key_json(&key_scalar(entity).kind, value)
 }
 
 /// The anchor instances one member belongs to.
@@ -977,13 +1653,54 @@ fn points_back_many(entity: &EntityType, other: &str) -> bool {
     })
 }
 
+/// The to-many relation a `*_count` field is counting, if it is counting one.
+///
+/// Matched on the name with the suffix removed: `item_count` counts `items`,
+/// `commentCount` counts `comments`. A field whose stem names nothing is an
+/// ordinary number.
+fn counted_relation<'a>(
+    entity: &'a EntityType,
+    field: &str,
+) -> Option<(&'a FieldDef, &'a Relation)> {
+    // Cheap first: this is asked of every field of every record that is read,
+    // and almost none of them are counting anything. Only a name that actually
+    // ends in `count` is worth normalising.
+    let tail = field.len().checked_sub(5).filter(|at| *at > 0);
+    if !tail
+        .and_then(|at| field.get(at..))
+        .is_some_and(|tail| tail.eq_ignore_ascii_case("count"))
+    {
+        return None;
+    }
+    let lowered = field.to_ascii_lowercase().replace(['_', '-'], "");
+    let stem = lowered.strip_suffix("count")?;
+    if stem.is_empty() {
+        return None;
+    }
+    entity.relations().find(|(candidate, relation)| {
+        if relation.cardinality != Cardinality::Many {
+            return false;
+        }
+        let name = candidate.name.to_ascii_lowercase().replace(['_', '-'], "");
+        name == stem || singular(&name) == singular(stem)
+    })
+}
+
+/// A crude singular, only ever compared against another crude singular.
+fn singular(name: &str) -> String {
+    name.strip_suffix('s').unwrap_or(name).to_string()
+}
+
 /// The field on `entity` that links back to `target`, naming the relation so
-/// both directions derive the same pairing.
-fn reciprocal_field(entity: &EntityType, target: &str) -> Option<String> {
+/// both directions derive the same pairing, and carrying it so the field
+/// actually holding the key can be read.
+fn reciprocal_link<'a>(
+    entity: &'a EntityType,
+    target: &str,
+) -> Option<(&'a FieldDef, &'a Relation)> {
     entity
         .relations()
         .find(|(_, relation)| relation.target == target && relation.cardinality == Cardinality::One)
-        .map(|(field, _)| field.name.to_string())
 }
 
 fn key_from_values(entity: &EntityType, values: &JsonMap<String, JsonValue>) -> Option<EntityKey> {
@@ -996,10 +1713,15 @@ fn key_from_values(entity: &EntityType, values: &JsonMap<String, JsonValue>) -> 
 }
 
 fn json_to_key_part(value: &JsonValue) -> Option<String> {
+    values::key_text(value)
+}
+
+/// The key a written value states, whether it is the key itself or an object
+/// carrying it.
+fn link_key_in(value: &JsonValue, key_field: &str) -> Option<String> {
     match value {
-        JsonValue::String(s) => Some(s.clone()),
-        JsonValue::Number(n) => Some(n.to_string()),
-        _ => None,
+        JsonValue::Object(object) => object.get(key_field).and_then(values::key_text),
+        other => values::key_text(other),
     }
 }
 
@@ -1008,7 +1730,17 @@ fn json_to_key_part(value: &JsonValue) -> Option<String> {
 /// fastest way to lose a client's trust.
 fn write_key_fields(entity: &EntityType, key: &EntityKey, fields: &mut JsonMap<String, JsonValue>) {
     for (part, value) in entity.key.iter().zip(key.parts()) {
-        fields.insert(part.field.to_string(), JsonValue::String(value.to_string()));
+        let kind = entity
+            .field(part.field.as_str())
+            .and_then(|field| match &field.value {
+                ValueSpec::Scalar(scalar) => Some(&scalar.kind),
+                _ => None,
+            })
+            .unwrap_or(&ScalarKind::Id);
+        fields.insert(
+            part.field.to_string(),
+            values::key_json(kind, value.as_str()),
+        );
     }
 }
 
@@ -1101,7 +1833,7 @@ fn paginate(records: &[Record], page: &Page) -> PageResult {
         Page::All => (0, total),
         Page::Offset { skip, take } => {
             let start = (*skip).min(total);
-            (start, (start + take).min(total))
+            (start, start.saturating_add(*take).min(total))
         }
         Page::After { cursor, first } => {
             let start = cursor
@@ -1109,7 +1841,7 @@ fn paginate(records: &[Record], page: &Page) -> PageResult {
                 .and_then(|c| position_of(records, c).map(|i| i + 1))
                 .unwrap_or(0)
                 .min(total);
-            (start, (start + first).min(total))
+            (start, start.saturating_add(*first).min(total))
         }
         Page::Before { cursor, last } => {
             let end = cursor

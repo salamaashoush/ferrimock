@@ -84,6 +84,7 @@ fn counts_are_honoured_per_entity() {
                 seed: Some(1),
                 default_count: Some(4),
                 counts: std::iter::once((LeanString::from("Post"), 9)).collect(),
+                ..WorldSettings::default()
             },
             Path::new("test.yaml"),
         )
@@ -319,4 +320,99 @@ fn nearest_entity_catches_a_typo() {
         Some("Folder".to_string())
     );
     assert!(nearest_entity(&graph, "CompletelyDifferent").is_none());
+}
+
+// ===== Regressions =====
+
+#[test]
+fn one_collection_can_change_its_own_seed_and_count() {
+    let world = World::new();
+    let source = Path::new("mocks.yaml");
+
+    world
+        .configure(
+            &WorldSettings {
+                seed: Some(1),
+                default_count: Some(4),
+                ..WorldSettings::default()
+            },
+            source,
+        )
+        .unwrap();
+    world.add_entities(&graph_of(&["User"])).unwrap();
+    assert_eq!(world.count("User"), 4);
+
+    // The same file, edited and reloaded. Refusing this made `seed:` and
+    // `count:` changeable only by restarting the server.
+    world
+        .configure(
+            &WorldSettings {
+                seed: Some(2),
+                default_count: Some(9),
+                ..WorldSettings::default()
+            },
+            source,
+        )
+        .expect("a file may change what it itself asked for");
+    assert_eq!(world.count("User"), 9);
+    assert_eq!(world.seed(), 2);
+}
+
+#[test]
+fn two_collections_still_cannot_disagree_about_the_count() {
+    let world = World::new();
+    world
+        .configure(
+            &WorldSettings {
+                default_count: Some(4),
+                ..WorldSettings::default()
+            },
+            Path::new("one.yaml"),
+        )
+        .unwrap();
+    let clash = world.configure(
+        &WorldSettings {
+            default_count: Some(9),
+            ..WorldSettings::default()
+        },
+        Path::new("two.yaml"),
+    );
+    assert!(clash.is_err(), "two files disagreeing is still a mistake");
+}
+
+#[test]
+fn two_schemas_describing_one_entity_keep_both_their_fields() {
+    let declared = |name: &str, fields: &[&str]| {
+        let mut graph = EntityGraph::new();
+        let mut entity = EntityType::new(
+            name,
+            CompositeKey::single("id"),
+            Provenance::new(Rule::GraphQLSchema, name),
+        );
+        for field in fields {
+            entity = entity.with_field(FieldDef::new(
+                *field,
+                ValueSpec::Scalar(Scalar::new(ScalarKind::String)),
+                true,
+            ));
+        }
+        graph.insert(entity);
+        graph
+    };
+
+    let world = World::new();
+    world
+        .add_entities(&declared("User", &["id", "email"]))
+        .unwrap();
+    world
+        .add_entities(&declared("User", &["id", "karma"]))
+        .unwrap();
+
+    let graph = world.graph();
+    let user = graph.get("User").expect("one User");
+    let fields: Vec<&str> = user.fields.iter().map(|f| f.name.as_str()).collect();
+    assert!(
+        fields.contains(&"email") && fields.contains(&"karma"),
+        "a surface that loses its own fields serves payloads its schema rejects, got {fields:?}"
+    );
 }

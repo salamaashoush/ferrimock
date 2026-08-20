@@ -210,6 +210,10 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         .route("/__mock/world/{entity}/{key}", get(get_entity_handler))
         .route(
             "/__mock/world/{entity}/{key}",
+            axum::routing::patch(update_entity_handler),
+        )
+        .route(
+            "/__mock/world/{entity}/{key}",
             delete(delete_entity_handler),
         );
 
@@ -660,13 +664,41 @@ async fn create_entity_handler(
     }
 }
 
+/// PATCH /__mock/world/{entity}/{key}
+async fn update_entity_handler(
+    State(state): State<Arc<MockServerState>>,
+    axum::extract::Path((entity, key)): axum::extract::Path<(String, String)>,
+    body: String,
+) -> Response {
+    let values = match serde_json::from_str(&body) {
+        Ok(values) => values,
+        Err(e) => return error_response(StatusCode::BAD_REQUEST, &format!("invalid JSON: {e}")),
+    };
+
+    let world = state.registry.world();
+    let existed = world.get(&entity, &key).is_some();
+    match world.update(&entity, &key, values) {
+        Ok(record) => json_response(&record),
+        // A record that is there and still would not take the write failed on
+        // the values, not on the address.
+        Err(e) if existed => error_response(StatusCode::BAD_REQUEST, &e.to_string()),
+        Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
+    }
+}
+
 /// DELETE /__mock/world/{entity}/{key}
 async fn delete_entity_handler(
     State(state): State<Arc<MockServerState>>,
     axum::extract::Path((entity, key)): axum::extract::Path<(String, String)>,
 ) -> Response {
-    match state.registry.world().delete(&entity, &key) {
+    let world = state.registry.world();
+    let existed = world.get(&entity, &key).is_some();
+    match world.delete(&entity, &key) {
         Ok(()) => json_response(&serde_json::json!({ "deleted": true })),
+        // With `world.cascade_delete: false`, a delete that would orphan
+        // children is refused — a conflict with the world's state, not a
+        // record that is not there.
+        Err(e) if existed => error_response(StatusCode::CONFLICT, &e.to_string()),
         Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
     }
 }

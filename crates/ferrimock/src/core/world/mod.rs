@@ -15,6 +15,7 @@
 
 pub mod algebra;
 pub mod model;
+pub mod overrides;
 pub mod store;
 
 use lean_string::LeanString;
@@ -26,6 +27,7 @@ use std::sync::{Arc, OnceLock};
 
 use algebra::{Mutation, Page, Predicate, PredicateOp, Selection, SortKey};
 use model::{EntityGraph, EntityKey, EntityType};
+use overrides::{FieldRules, RejectedRule};
 use store::{DeltaConflict, EntityStore, Record, StoreConfig};
 
 /// Seed, sizes, and who asked for them.
@@ -39,6 +41,8 @@ struct Settings {
     default_count: Option<usize>,
     default_count_source: Option<PathBuf>,
     counts: FxHashMap<LeanString, usize>,
+    cascade_delete: Option<bool>,
+    overrides: FieldRules,
 }
 
 impl Settings {
@@ -51,9 +55,28 @@ impl Settings {
         if let Some(count) = self.default_count {
             config.default_count = count;
         }
+        if let Some(cascade) = self.cascade_delete {
+            config.cascade_delete = cascade;
+        }
         config.counts.clone_from(&self.counts);
         config
     }
+}
+
+/// The file that already set a single-valued setting to something else.
+///
+/// `None` when nothing is contested: no previous value, the same value, or the
+/// same file setting it again — that last one is an edit being reloaded, not
+/// two collections disagreeing.
+fn contested<'a, T: PartialEq + Copy>(
+    current: Option<T>,
+    current_source: Option<&'a Path>,
+    wanted: &T,
+    source: &Path,
+) -> Option<&'a Path> {
+    let existing = current?;
+    let existing_source = current_source?;
+    (existing != *wanted && existing_source != source).then_some(existing_source)
 }
 
 /// What a collection's `world:` block asks for.
@@ -62,6 +85,14 @@ pub struct WorldSettings {
     pub seed: Option<u64>,
     pub default_count: Option<usize>,
     pub counts: FxHashMap<LeanString, usize>,
+    /// Whether removing a record also removes what points at it. `None` keeps
+    /// whatever the world already had.
+    pub cascade_delete: Option<bool>,
+    /// What a field should hold, where the schema does not say. Collections
+    /// accumulate these rather than contesting them: two files naming the same
+    /// field is the last one loaded winning, which is the same rule `counts`
+    /// already follows.
+    pub overrides: FieldRules,
 }
 
 /// How a loaded schema is served, kept per schema because the entity graph
@@ -230,6 +261,11 @@ pub struct World {
     schemas: RwLock<Vec<LoadedSchema>>,
     /// Which schema each entity name came from, for collision reporting.
     origins: RwLock<FxHashMap<LeanString, Vec<PathBuf>>>,
+    /// What each source declares, kept apart so a reload can replace one
+    /// source's contribution without guessing which fields were its.
+    contributions: RwLock<Vec<(PathBuf, EntityGraph)>>,
+    /// Overrides that matched nothing, or named something the store owns.
+    rejected: RwLock<Vec<RejectedRule>>,
 }
 
 impl Default for World {
@@ -263,6 +299,8 @@ impl World {
             #[cfg(feature = "graphql")]
             schemas: RwLock::new(Vec::new()),
             origins: RwLock::new(FxHashMap::default()),
+            contributions: RwLock::new(Vec::new()),
+            rejected: RwLock::new(Vec::new()),
         }
     }
 
@@ -291,48 +329,60 @@ impl World {
     /// Apply a collection's `world:` block.
     ///
     /// There is one world, so there is one seed. A second collection asking
-    /// for a different one is a mistake worth failing on, named by file.
+    /// for a different one is a mistake worth failing on, named by file — but
+    /// the *same* file asking for a different one is an edit, and a hot reload
+    /// has to be able to apply it or the setting is only changeable by restart.
     pub fn configure(&self, settings: &WorldSettings, source: &Path) -> crate::Result<()> {
         {
             let mut current = self.settings.write();
 
             if let Some(seed) = settings.seed {
-                match (current.seed, &current.seed_source) {
-                    (Some(existing), Some(existing_source)) if existing != seed => {
-                        return Err(crate::mp_err!(
-                            "the world has one seed: {} sets {existing}, {} sets {seed}",
-                            existing_source.display(),
-                            source.display()
-                        ));
-                    }
-                    _ => {
-                        current.seed = Some(seed);
-                        current.seed_source = Some(source.to_path_buf());
-                    }
+                if let Some(existing_source) =
+                    contested(current.seed, current.seed_source.as_deref(), &seed, source)
+                {
+                    return Err(crate::mp_err!(
+                        "the world has one seed: {} sets {}, {} sets {seed}",
+                        existing_source.display(),
+                        current.seed.unwrap_or_default(),
+                        source.display()
+                    ));
                 }
+                current.seed = Some(seed);
+                current.seed_source = Some(source.to_path_buf());
             }
 
             if let Some(count) = settings.default_count {
-                match (current.default_count, &current.default_count_source) {
-                    (Some(existing), Some(existing_source)) if existing != count => {
-                        return Err(crate::mp_err!(
-                            "the world has one default count: {} sets {existing}, {} sets {count}",
-                            existing_source.display(),
-                            source.display()
-                        ));
-                    }
-                    _ => {
-                        current.default_count = Some(count);
-                        current.default_count_source = Some(source.to_path_buf());
-                    }
+                if let Some(existing_source) = contested(
+                    current.default_count,
+                    current.default_count_source.as_deref(),
+                    &count,
+                    source,
+                ) {
+                    return Err(crate::mp_err!(
+                        "the world has one default count: {} sets {}, {} sets {count}",
+                        existing_source.display(),
+                        current.default_count.unwrap_or_default(),
+                        source.display()
+                    ));
                 }
+                current.default_count = Some(count);
+                current.default_count_source = Some(source.to_path_buf());
             }
 
             for (entity, count) in &settings.counts {
                 current.counts.insert(entity.clone(), *count);
             }
+            current.overrides.extend(&settings.overrides);
+
+            if let Some(cascade) = settings.cascade_delete {
+                current.cascade_delete = Some(cascade);
+            }
         }
 
+        // Rules may arrive after the schemas they describe — a second
+        // collection adding overrides to a world the first one populated — so
+        // the graph is recomposed rather than left as it was built.
+        self.recompose();
         self.rebuild().map(|_| ())
     }
 
@@ -376,28 +426,62 @@ impl World {
             }
         }
 
-        self.merge(contribution);
+        self.merge(path, contribution);
         self.rebuild()
     }
 
     /// Merge entities in without registering a way to serve them. For an
     /// embedder building a world by hand.
     pub fn add_entities(&self, contribution: &EntityGraph) -> crate::Result<Vec<DeltaConflict>> {
-        self.merge(contribution);
+        self.merge(Path::new(EMBEDDED_SOURCE), contribution);
         self.rebuild()
     }
 
-    fn merge(&self, contribution: &EntityGraph) {
+    /// Record what one source declares, and rebuild the merged graph from every
+    /// source.
+    ///
+    /// Recomposing rather than folding into the existing graph is what makes a
+    /// reload correct: a schema that dropped a field has to *lose* it, and
+    /// there is no way to tell a dropped field from a field another schema
+    /// contributed unless each source's declaration is kept apart.
+    fn merge(&self, source: &Path, contribution: &EntityGraph) {
         // One lock across the read-modify-write. Cloning out from under a read
         // guard and writing back afterwards let two schemas loading at once
         // lose one of them, which showed up as an entity that had definitely
         // been loaded reading as unknown.
         let mut graph = self.graph.write();
-        let mut updated = (**graph).clone();
-        for entity in contribution.entities() {
-            updated.insert(entity.clone());
+        let mut contributions = self.contributions.write();
+
+        let entry = (source.to_path_buf(), contribution.clone());
+        match contributions.iter_mut().find(|(held, _)| held == source) {
+            // An embedder has no file to key on, so its additions accumulate
+            // rather than replacing each other.
+            Some((_, held)) if source == Path::new(EMBEDDED_SOURCE) => {
+                for entity in contribution.entities() {
+                    absorb_into(held, entity);
+                }
+            }
+            Some(held) => *held = entry,
+            None => contributions.push(entry),
         }
-        *graph = Arc::new(updated);
+
+        let rules = self.settings.read().overrides.clone();
+        *graph = Arc::new(compose(&contributions, &rules, &self.rejected));
+    }
+
+    /// Rebuild the merged graph from what every source declared, applying the
+    /// current rules to it.
+    fn recompose(&self) {
+        let mut graph = self.graph.write();
+        let contributions = self.contributions.read();
+        let rules = self.settings.read().overrides.clone();
+        *graph = Arc::new(compose(&contributions, &rules, &self.rejected));
+    }
+
+    /// Rules that named something the world does not have, or may not change.
+    #[must_use]
+    pub fn rejected_overrides(&self) -> Vec<RejectedRule> {
+        self.rejected.read().clone()
     }
 
     /// Rebuild the store from the current graph and settings, carrying every
@@ -419,7 +503,7 @@ impl World {
         let config = self.settings.read().to_store_config();
 
         let snapshot = self.store.read().export_delta();
-        let rebuilt = EntityStore::new(graph, config);
+        let rebuilt = EntityStore::new_reserving(graph, config, snapshot.reserved_keys());
         let conflicts = rebuilt.import_delta(snapshot);
 
         *self.store.write() = Arc::new(rebuilt);
@@ -517,11 +601,20 @@ impl World {
         self.graph().entities().map(|e| e.name.clone()).collect()
     }
 
+    /// The key an entity is addressed by, read from one string.
+    ///
+    /// A composite key is written the way it prints: its parts separated by
+    /// `/`, which is what a path addressing it looks like anyway.
+    #[must_use]
+    pub fn entity_key(&self, entity: &str, key: &str) -> EntityKey {
+        self.store().entity_key_of(entity, key)
+    }
+
     /// Read one instance by key.
     #[must_use]
     pub fn get(&self, entity: &str, key: &str) -> Option<JsonValue> {
         self.store()
-            .get(entity, &EntityKey::single(key))
+            .get(entity, &self.entity_key(entity, key))
             .map(record_json)
     }
 
@@ -546,7 +639,7 @@ impl World {
     ) -> crate::Result<EntityPage> {
         let page = self.store().related(
             entity,
-            &EntityKey::single(key),
+            &self.entity_key(entity, key),
             field,
             &query.to_selection(),
         )?;
@@ -570,7 +663,7 @@ impl World {
     /// Merge fields into an existing instance.
     pub fn update(&self, entity: &str, key: &str, values: JsonValue) -> crate::Result<JsonValue> {
         let mutation = Mutation::Patch {
-            key: EntityKey::single(key),
+            key: self.entity_key(entity, key),
             values,
         };
         match self.store().apply(entity, mutation)? {
@@ -582,7 +675,7 @@ impl World {
     /// Replace an instance wholesale, keeping its key.
     pub fn replace(&self, entity: &str, key: &str, values: JsonValue) -> crate::Result<JsonValue> {
         let mutation = Mutation::Replace {
-            key: EntityKey::single(key),
+            key: self.entity_key(entity, key),
             values,
         };
         match self.store().apply(entity, mutation)? {
@@ -594,7 +687,7 @@ impl World {
     /// Remove an instance.
     pub fn delete(&self, entity: &str, key: &str) -> crate::Result<()> {
         let mutation = Mutation::Remove {
-            key: EntityKey::single(key),
+            key: self.entity_key(entity, key),
         };
         self.store().apply(entity, mutation).map(|_| ())
     }
@@ -604,6 +697,37 @@ impl World {
     #[must_use]
     pub fn pending_writes(&self) -> usize {
         self.store().export_delta().len()
+    }
+}
+
+/// The source name entities added by an embedder are filed under.
+const EMBEDDED_SOURCE: &str = "<embedded>";
+
+/// Merge every source's declaration, then apply the rules to the result.
+///
+/// Rules are applied to the *merged* graph rather than to each contribution:
+/// a rule about `User.email` should not care which of two schemas declared
+/// `email`, and applying it per contribution would run it twice.
+fn compose(
+    contributions: &[(PathBuf, EntityGraph)],
+    rules: &FieldRules,
+    rejected: &RwLock<Vec<RejectedRule>>,
+) -> EntityGraph {
+    let mut merged = EntityGraph::new();
+    for (_, declared) in contributions {
+        for entity in declared.entities() {
+            absorb_into(&mut merged, entity);
+        }
+    }
+    *rejected.write() = overrides::apply(&mut merged, rules);
+    merged
+}
+
+/// Insert an entity, folding it into any declaration already held.
+fn absorb_into(graph: &mut EntityGraph, entity: &EntityType) {
+    match graph.get_mut(entity.name.as_str()) {
+        Some(held) => held.absorb(entity),
+        None => graph.insert(entity.clone()),
     }
 }
 

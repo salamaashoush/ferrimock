@@ -119,7 +119,13 @@ pub fn load_schema(
     world: &Arc<World>,
     lenient: bool,
 ) -> crate::Result<SchemaLoad> {
-    load_schema_with(source, path, world, lenient, &crate::profile::DefaultProfile)
+    load_schema_with(
+        source,
+        path,
+        world,
+        lenient,
+        &crate::profile::DefaultProfile,
+    )
 }
 
 /// [`load_schema`] with a profile consulted ahead of the built-in rules.
@@ -172,17 +178,13 @@ fn load_openapi(
     world: &Arc<World>,
     profile: &dyn crate::profile::ConsolidationProfile,
 ) -> crate::Result<SchemaLoad> {
-    let (table, defects) = openapi::parse_openapi(source)
-        .map_err(|e| crate::mp_err!("{}: {e}", path.display()))?;
+    let (table, defects) =
+        openapi::parse_openapi(source).map_err(|e| crate::mp_err!("{}: {e}", path.display()))?;
 
     let inference = openapi::to_entity_graph_with(&table, profile);
     let entities = inference.graph.len();
 
-    let conflicts = world.add_schema(
-        path,
-        Binding::OpenApi(Arc::new(table)),
-        &inference.graph,
-    )?;
+    let conflicts = world.add_schema(path, Binding::OpenApi(Arc::new(table)), &inference.graph)?;
 
     Ok(SchemaLoad {
         entities,
@@ -302,7 +304,10 @@ components:
             format_of(Path::new("openapi/filestore.yaml")).unwrap(),
             SchemaFormat::OpenApi
         );
-        assert_eq!(format_of(Path::new("s.json")).unwrap(), SchemaFormat::OpenApi);
+        assert_eq!(
+            format_of(Path::new("s.json")).unwrap(),
+            SchemaFormat::OpenApi
+        );
 
         let error = format_of(Path::new("s.har")).unwrap_err().to_string();
         assert!(error.contains(".har"), "unexpected: {error}");
@@ -352,8 +357,7 @@ components:
             .unwrap();
         let key = created["id"].as_str().unwrap().to_string();
 
-        let loaded =
-            load_schema(OPENAPI, Path::new("b.openapi.yaml"), &world, false).unwrap();
+        let loaded = load_schema(OPENAPI, Path::new("b.openapi.yaml"), &world, false).unwrap();
 
         assert!(loaded.conflicts.is_empty());
         assert_eq!(

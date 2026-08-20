@@ -35,7 +35,7 @@ pub mod types;
 
 // Re-export public types
 pub use features::TypeFeatures;
-pub use semantic::{detect_from_field_name_only, detect_from_semantic_context};
+pub use semantic::detect_from_semantic_context;
 pub use types::{
     ArrayPattern, BooleanSpelling, DateFormat, FieldType, ObjectAnalysis, PaginationDirection,
     PaginationScheme, PaginationUrlPattern, TimestampFormat,

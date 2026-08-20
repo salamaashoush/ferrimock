@@ -101,8 +101,16 @@ fn report(world: &Arc<World>, dir: &std::path::Path, mocks: usize) {
     for collision in world.collisions() {
         crate::say!(
             "{}",
-            ui::warning(&format!("{collision} — they are merged into one entity"))
+            ui::warning(&format!(
+                "{collision} — their fields are merged into one entity"
+            ))
         );
+    }
+
+    // A rule that did not apply is nearly always a typo or a renamed field, and
+    // the payload it silently fails to change looks almost right.
+    for rejected in world.rejected_overrides() {
+        crate::say!("{}", ui::warning(&format!("{rejected}")));
     }
 
     let pending = world.pending_writes();
@@ -144,7 +152,10 @@ fn report_coverage(world: &Arc<World>, schema: &ferrimock::core::world::LoadedSc
         crate::say!("{}", ui::dim(&format!("      {id}")));
     }
     if unclassified > 5 {
-        crate::say!("{}", ui::dim(&format!("      … and {} more", unclassified - 5)));
+        crate::say!(
+            "{}",
+            ui::dim(&format!("      … and {} more", unclassified - 5))
+        );
     }
 }
 

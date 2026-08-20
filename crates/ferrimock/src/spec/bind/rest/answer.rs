@@ -14,11 +14,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::world::algebra::{Page, Selection};
 use crate::core::world::model::{
-    Cardinality, Carrier, EntityKey, EntityType, ScalarKind, ValueSpec,
+    Cardinality, Carrier, EntityKey, EntityType, KeySource, ScalarKind, ValueSpec,
 };
 use crate::core::world::store::EntityStore;
-use crate::core::world::store::values::{ValueSeed, generate};
 use crate::core::world::store::Record;
+use crate::core::world::store::values::{self, ValueSeed, generate};
 use crate::core::{EntityQuery, World};
 use crate::spec::bind::plan::RootPlan;
 use crate::types::{DynamicResponse, RequestContext};
@@ -193,12 +193,13 @@ impl BoundOperation {
             RootPlan::Update {
                 entity, key_arg, ..
             } => {
-                let Some(key) = ctx.captures.get(key_arg.as_str()) else {
+                let Some(key) = self.addressed_text(entity, key_arg, ctx) else {
                     return Self::failed(
                         StatusCode::BAD_REQUEST,
                         &format!("`{key_arg}` is missing from the path"),
                     );
                 };
+                let key = &key;
                 let values = self.input_values(ctx);
                 // PUT replaces, PATCH merges. The two are the same call with a
                 // different mutation, which is the whole difference.
@@ -216,12 +217,13 @@ impl BoundOperation {
             RootPlan::Delete {
                 entity, key_arg, ..
             } => {
-                let Some(key) = ctx.captures.get(key_arg.as_str()) else {
+                let Some(key) = self.addressed_text(entity, key_arg, ctx) else {
                     return Self::failed(
                         StatusCode::BAD_REQUEST,
                         &format!("`{key_arg}` is missing from the path"),
                     );
                 };
+                let key = &key;
                 // The removed record is the useful answer, so read it before it
                 // stops being readable.
                 let removed = world.get(entity.as_str(), key);
@@ -235,9 +237,8 @@ impl BoundOperation {
                         ..DynamicResponse::default()
                     },
                     Ok(()) => {
-                        let expanded = removed.map_or(JsonValue::Null, |record| {
-                            self.expand(entity, record, 0)
-                        });
+                        let expanded = removed
+                            .map_or(JsonValue::Null, |record| self.expand(entity, record, 0));
                         self.ok(&self.wrap_payload(expanded))
                     }
                     Err(error) => Self::failed(StatusCode::CONFLICT, &error.to_string()),
@@ -269,13 +270,16 @@ impl BoundOperation {
                     .and_then(|key| store.get(target.as_str(), key))
             })
         } else {
-            let Some(key) = ctx.captures.get(key_arg.as_str()) else {
+            if !ctx.captures.contains_key(key_arg.as_str()) {
                 return Self::failed(
                     StatusCode::BAD_REQUEST,
                     &format!("`{key_arg}` is missing from the path"),
                 );
-            };
-            store.get_any(&targets, &EntityKey::single(key.as_str()))
+            }
+            targets.iter().find_map(|target| {
+                let key = Self::addressed_key(&store, target.as_str(), key_arg, ctx)?;
+                store.get(target.as_str(), &key)
+            })
         };
 
         match record {
@@ -286,9 +290,9 @@ impl BoundOperation {
             }
             None => Self::not_found(
                 entity,
-                ctx.captures
-                    .get(key_arg.as_str())
-                    .map_or("", String::as_str),
+                &self
+                    .addressed_text(entity, key_arg, ctx)
+                    .unwrap_or_default(),
             ),
         }
     }
@@ -330,10 +334,9 @@ impl BoundOperation {
         let mut records = Some(records);
         for (name, slot) in &self.envelope {
             let value = match slot {
-                EnvelopeSlot::Records => records.take().map_or_else(
-                    || JsonValue::Array(Vec::new()),
-                    JsonValue::Array,
-                ),
+                EnvelopeSlot::Records => records
+                    .take()
+                    .map_or_else(|| JsonValue::Array(Vec::new()), JsonValue::Array),
                 EnvelopeSlot::Total => JsonValue::from(page.total),
                 EnvelopeSlot::Limit => JsonValue::from(query.limit.unwrap_or(DEFAULT_PAGE_SIZE)),
                 EnvelopeSlot::Offset => JsonValue::from(query.skip),
@@ -346,6 +349,58 @@ impl BoundOperation {
             wrapper.insert(name.to_string(), value);
         }
         self.ok(&JsonValue::Object(wrapper))
+    }
+
+    /// The key a request addresses, assembled from every path parameter the
+    /// entity's key is made of.
+    ///
+    /// A key of one part is the ordinary case and reads straight off its
+    /// capture. A key of several — `/repos/{owner}/{repo}` — is only fully
+    /// addressed by all of them, and taking the last one alone would answer
+    /// with whichever repo happened to be first.
+    fn addressed_key(
+        store: &Arc<EntityStore>,
+        entity: &str,
+        key_arg: &LeanString,
+        ctx: &RequestContext,
+    ) -> Option<EntityKey> {
+        let graph = store.graph();
+        let Some(definition) = graph.get(entity) else {
+            return ctx
+                .captures
+                .get(key_arg.as_str())
+                .map(|key| EntityKey::single(key.as_str()));
+        };
+        if definition.key.len() <= 1 {
+            return ctx
+                .captures
+                .get(key_arg.as_str())
+                .map(|key| EntityKey::single(key.as_str()));
+        }
+
+        let mut parts = Vec::with_capacity(definition.key.len());
+        for part in definition.key.iter() {
+            let capture = match &part.source {
+                KeySource::PathParam(name) => ctx.captures.get(name.as_str()),
+                KeySource::Field(name) => ctx
+                    .captures
+                    .get(name.as_str())
+                    .or_else(|| ctx.captures.get(key_arg.as_str())),
+            }?;
+            parts.push(LeanString::from(capture.as_str()));
+        }
+        Some(EntityKey::from_parts(parts))
+    }
+
+    /// The key a write addresses, in the text form the world reads.
+    fn addressed_text(
+        &self,
+        entity: &LeanString,
+        key_arg: &LeanString,
+        ctx: &RequestContext,
+    ) -> Option<String> {
+        let store = self.world.store();
+        Self::addressed_key(&store, entity.as_str(), key_arg, ctx).map(|key| key.to_string())
     }
 
     /// What a request body says to write.
@@ -391,11 +446,20 @@ impl BoundOperation {
         } else if let Some(page) = Pagination::value_of(&self.pagination.page, &ctx.query)
             && let Ok(page) = page.parse::<usize>()
         {
-            // Pages are 1-based wherever they are offered.
-            query.skip = page.saturating_sub(1) * query.limit.unwrap_or(DEFAULT_PAGE_SIZE);
+            // Pages are 1-based wherever they are offered. A page number past
+            // what the offset can hold saturates rather than wrapping: the
+            // request is nonsense either way, and a client must not be able to
+            // decide whether a worker panics.
+            query.skip = page
+                .saturating_sub(1)
+                .saturating_mul(query.limit.unwrap_or(DEFAULT_PAGE_SIZE));
         }
         if let Some(sort) = Pagination::value_of(&self.pagination.sort, &ctx.query) {
-            query.sort = decoded(sort).split(',').map(str::trim).map(sort_key).collect();
+            query.sort = decoded(sort)
+                .split(',')
+                .map(str::trim)
+                .map(sort_key)
+                .collect();
         }
 
         for (name, value) in &ctx.query {
@@ -464,14 +528,16 @@ impl BoundOperation {
         for (field, relation) in definition.relations() {
             match &relation.carrier {
                 // The field already holds the target's key, which is what the
-                // schema said it holds.
-                Carrier::ForeignKey(_) => continue,
+                // schema said it holds. A carrier naming a *different* field is
+                // the other case: the key lives on the sibling, and this field
+                // is the object the document declared.
+                Carrier::ForeignKey(_) if relation.carrier.is_inline_key(&field.name) => continue,
                 // The sub-path serves these; they were never in the payload.
                 Carrier::Subresource(_) => {
                     fields.remove(field.name.as_str());
                     continue;
                 }
-                Carrier::Embedded | Carrier::Connection(_) => {}
+                Carrier::ForeignKey(_) | Carrier::Embedded | Carrier::Connection(_) => {}
             }
 
             if depth >= MAX_EXPAND_DEPTH {
@@ -480,10 +546,11 @@ impl BoundOperation {
                 // way real APIs return a mini representation. Leaving the raw
                 // key here would make the field a string at one depth and an
                 // object at another, which is worse than either.
+                let carrier = relation.carrier.key_field(&field.name);
                 let value = fields
-                    .get(field.name.as_str())
-                    .and_then(JsonValue::as_str)
-                    .map(|key| mini_representation(graph, relation, key));
+                    .get(carrier.as_str())
+                    .and_then(key_text)
+                    .map(|key| mini_representation(graph, relation, &key));
                 match (value, relation.cardinality) {
                     (Some(value), Cardinality::One) => {
                         fields.insert(field.name.to_string(), value);
@@ -604,14 +671,29 @@ fn mini_representation(
     relation: &crate::core::world::model::Relation,
     key: &str,
 ) -> JsonValue {
-    let field = graph
-        .get(relation.target.as_str())
+    let target = graph.get(relation.target.as_str());
+    let field = target
         .and_then(|entity| entity.key.as_single().cloned())
         .unwrap_or_else(|| LeanString::from("id"));
+    let kind = target.and_then(key_kind_of).unwrap_or(ScalarKind::String);
 
     let mut object = JsonMap::new();
-    object.insert(field.to_string(), JsonValue::String(key.to_string()));
+    object.insert(field.to_string(), values::key_json(&kind, key));
     JsonValue::Object(object)
+}
+
+/// The kind an entity's key field was declared as.
+fn key_kind_of(entity: &EntityType) -> Option<ScalarKind> {
+    let field = entity.key.as_single()?;
+    match &entity.field(field.as_str())?.value {
+        ValueSpec::Scalar(scalar) => Some(scalar.kind.clone()),
+        _ => None,
+    }
+}
+
+/// A key as text, however the payload wrote it.
+fn key_text(value: &JsonValue) -> Option<String> {
+    values::key_text(value)
 }
 
 fn concrete_or(entity: &LeanString, members: &[LeanString]) -> Vec<LeanString> {
@@ -650,10 +732,7 @@ fn typed_value(value: &str, kind: &ScalarKind) -> JsonValue {
             .parse::<f64>()
             .ok()
             .and_then(serde_json::Number::from_f64)
-            .map_or_else(
-                || JsonValue::String(value.to_string()),
-                JsonValue::Number,
-            ),
+            .map_or_else(|| JsonValue::String(value.to_string()), JsonValue::Number),
         ScalarKind::Boolean => match value {
             "true" | "1" => JsonValue::Bool(true),
             "false" | "0" => JsonValue::Bool(false),
@@ -675,18 +754,36 @@ fn path_ordinal(path: &str) -> u64 {
 }
 
 /// Whether an entity's field is worth offering as a filter.
+///
+/// A foreign key is compared against a stored key, so it is read as the kind
+/// the *target's* key was declared as — filtering `?user_id=5` against a world
+/// holding `5` and one holding `"5"` are different questions, and only the
+/// schema knows which was asked.
 #[must_use]
-pub fn filterable_fields(entity: &EntityType) -> Vec<(LeanString, ScalarKind)> {
+pub fn filterable_fields(
+    entity: &EntityType,
+    graph: &crate::core::world::model::EntityGraph,
+) -> Vec<(LeanString, ScalarKind)> {
     entity
         .fields
         .iter()
         .filter_map(|field| match &field.value {
             ValueSpec::Scalar(scalar) => Some((field.name.clone(), scalar.kind.clone())),
             ValueSpec::Enum(_) => Some((field.name.clone(), ScalarKind::String)),
-            ValueSpec::Relation(relation) => match &relation.carrier {
-                Carrier::ForeignKey(_) => Some((field.name.clone(), ScalarKind::String)),
-                _ => None,
-            },
+            ValueSpec::Relation(relation) => {
+                // A link whose key is carried by a sibling is filterable
+                // through that sibling, which is a scalar field in its own
+                // right; offering the object's name as well would invite a
+                // filter that can never match.
+                if !relation.carrier.is_inline_key(&field.name) {
+                    return None;
+                }
+                let kind = graph
+                    .get(relation.target.as_str())
+                    .and_then(key_kind_of)
+                    .unwrap_or(ScalarKind::String);
+                Some((field.name.clone(), kind))
+            }
             _ => None,
         })
         .collect()

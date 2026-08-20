@@ -66,7 +66,13 @@ pub fn value_spec_of(
     field_name: &str,
     owner: &str,
 ) -> ValueSpec {
-    value_spec(lens, reference, field_name, owner, &mut Expansion::default())
+    value_spec(
+        lens,
+        reference,
+        field_name,
+        owner,
+        &mut Expansion::default(),
+    )
 }
 
 /// The fields of an object schema, as an entity's or an embedded value's.
@@ -119,7 +125,11 @@ fn value_spec(
     // A polymorphic value whose members all have identity is a link that
     // resolves to one of them per instance, exactly like a GraphQL union.
     if !node.one_of.is_empty() {
-        let members: Vec<LeanString> = node.one_of.iter().filter_map(|m| lens.entity_of(m)).collect();
+        let members: Vec<LeanString> = node
+            .one_of
+            .iter()
+            .filter_map(|m| lens.entity_of(m))
+            .collect();
         if members.len() == node.one_of.len() {
             let Some(first) = members.first().cloned() else {
                 return ValueSpec::Scalar(Scalar::new(ScalarKind::Custom(LeanString::from("any"))));
@@ -174,7 +184,7 @@ fn value_spec(
             expansion.open.pop();
             ValueSpec::Embedded(fields)
         }
-        kind => scalar_spec(lens, &node, kind, field_name),
+        kind => scalar_spec(lens, &node, kind, field_name, owner),
     }
 }
 
@@ -183,6 +193,7 @@ fn scalar_spec(
     node: &SchemaNode,
     kind: SchemaKind,
     field_name: &str,
+    owner: &str,
 ) -> ValueSpec {
     if !node.enum_values.is_empty() {
         return ValueSpec::Enum(node.enum_values.clone());
@@ -210,14 +221,11 @@ fn scalar_spec(
     // Domain knowledge answers ahead of the built-in detector, which is the
     // whole point of a profile: `continuation` is a cursor at one company and
     // an ordinary string everywhere else.
-    let declared_type = node
-        .title
-        .as_deref()
-        .unwrap_or_else(|| kind_name(kind));
+    let declared_type = node.title.as_deref().unwrap_or_else(|| kind_name(kind));
     if let Some((field_type, _)) = lens.profile.classify_field(field_name, &[]) {
         scalar = scalar.with_semantic(field_type);
     } else if let Some(field_type) =
-        semantic_of(field_name, declared_type, node.format.as_deref())
+        semantic_of(field_name, declared_type, node.format.as_deref(), owner)
     {
         scalar = scalar.with_semantic(field_type);
     } else if let Some(DescriptionHint::Semantic(field_type)) = mined {
@@ -352,7 +360,10 @@ components:
     fn an_object_without_identity_is_inlined() {
         let table = table();
         let fields = folder_fields(&table, &entities());
-        assert!(matches!(field(&fields, "path").value, ValueSpec::Embedded(_)));
+        assert!(matches!(
+            field(&fields, "path").value,
+            ValueSpec::Embedded(_)
+        ));
     }
 
     #[test]

@@ -293,10 +293,10 @@ fn value_spec<'a>(
             .get(named)
             .and_then(|def| def.possible_types.first())
             .map_or_else(
-                || scalar_spec(named, field_name, description),
+                || scalar_spec(named, field_name, description, owner),
                 |member| embedded_spec(schema, member.name(), entities, connections, expansion),
             ),
-        _ => scalar_spec(named, field_name, description),
+        _ => scalar_spec(named, field_name, description, owner),
     };
 
     if type_ref.is_list() {
@@ -417,7 +417,12 @@ fn embedded_spec<'a>(
     ValueSpec::Embedded(fields)
 }
 
-fn scalar_spec(type_name: &str, field_name: &str, description: Option<&str>) -> ValueSpec {
+fn scalar_spec(
+    type_name: &str,
+    field_name: &str,
+    description: Option<&str>,
+    owner: &str,
+) -> ValueSpec {
     // The description is the only place a schema-only pipeline can learn a
     // domain vocabulary, so it is consulted before anything is guessed from
     // the name.
@@ -442,7 +447,7 @@ fn scalar_spec(type_name: &str, field_name: &str, description: Option<&str>) -> 
 
     // The field's own name and declared type beat prose about it. A field
     // named `id` on an `ID` is an identifier however its description rambles.
-    if let Some(field_type) = semantic_of(field_name, type_name, None) {
+    if let Some(field_type) = semantic_of(field_name, type_name, None, owner) {
         scalar = scalar.with_semantic(field_type);
     } else if let Some(DescriptionHint::Semantic(field_type)) = mined {
         scalar = scalar.with_semantic(field_type);

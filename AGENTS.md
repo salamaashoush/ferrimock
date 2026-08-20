@@ -45,9 +45,28 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
   and their keys, eager and tiny), *base* (field values derived from seed +
   entity + ordinal + field path — pure, never stored), *delta* (creations,
   patches, tombstones). So the world is deterministic given the seed, and the
-  state is deterministic given the seed plus the sequence of writes.
+  state is deterministic given the seed plus the sequence of writes. Two passes
+  run over a record after its fields are drawn, and neither makes a field depend
+  on another record: lifecycle timestamps are dealt back out in the order their
+  names say they happened, and `*_count` fields are answered from the relation
+  they name.
 - `consolidator` - Smart mock consolidation with pattern detection
-- `graphql` - GraphQL introspection parsing and mock generation
+- `type_detector` - What a field holds. One `FieldType` vocabulary and one
+  name-matching layer (`matches_field_name` and friends, which normalise
+  `createdAt`/`created_at`/`CREATED-AT`), shared by every lane including
+  `ferrimock-ml`. The *rules* are not shared, and deliberately:
+  `detect_from_semantic_context` confirms a guess about a name against the
+  values a recording actually carried, while `spec::infer::semantics` has no
+  values and instead has a declared type and a `format`. Neither is a subset of
+  the other, and where both answer they must agree — pinned by a test in
+  `spec::infer::semantics`. The one declared exception is a bare `name`: the
+  spec lane knows the owning entity, so `Folder.name` is a folder's name there
+  and a person's in the recording lane. A third, name-only rule set used to sit
+  beside these for the old GraphQL mock generator; both are gone.
+- `graphql` - Reading a GraphQL schema: introspection over the wire, the
+  response parsed into a `ParsedSchema`, and SDL written back out. Only reading —
+  what a schema *means* is `spec::infer::graphql` and what it *serves* is
+  `spec::bind::graphql`.
 - `server` - HTTP server utilities: hot reload, graceful shutdown
 - `api` - Mock management HTTP API (axum router)
 - `recorder` - HTTP request/response recording
@@ -305,6 +324,18 @@ a sibling of it, because the store already writes a to-one link's value as the
 target's key — so `folder.user_id` holds a key that resolves rather than a
 plausible-looking UUID that does not.
 
+The carrier may name a *different* field than the one holding the link, which is
+what a document declaring both `user_id` and a `$ref`'d `customer` compiles to:
+one link, written twice. Left as two relations they derive independently and the
+key names a different user than the object beside it. `Carrier::key_field` is
+the one place that answers "which field holds this link's key".
+
+A path addressing one instance by several parameters that each name a field of
+the schema — `/repos/{owner}/{repo}` — produces a `CompositeKey` over all of
+them. A key of one part keeps the derivation it has always had; the parts of a
+composite key are each derived from their own field, or every part of the key
+reads as the same value.
+
 Name matching matches names, never meanings: `owner_id` finds an entity called
 `Owner`, and nothing teaches the engine that an owner is a `User`. Domain
 knowledge belongs in a `ConsolidationProfile` (`spec_relation` for `x-`
@@ -329,19 +360,43 @@ loading a second schema does not discard state a handler already wrote. Entity
 names and ordinals that already existed keep their exact values, because the
 base layer derives from the seed. A patch whose record no longer exists (an
 entity's count shrank) is reported as a `DeltaConflict` rather than dropped.
+A rebuilt census steps over any key a created record already owns: growing a
+count would otherwise re-derive a key that is live, and serve two records under
+it. Skipping decouples an instance's ordinal from its position, which is why
+everything pairing two instances compares *keys* rather than ordinals.
+
+Each source's declaration is kept apart and the merged graph is recomposed from
+all of them, so a reload replaces that source's contribution — a field removed
+from a schema is removed from the world — while two schemas describing one
+entity union their fields rather than one silently replacing the other.
 Rebuilds are serialized; a write landing between the snapshot and the swap is
 lost, which is a startup and hot-reload window, not a request-path one.
+
+Who owns whom is a `Partition`: each parent draws a weight, the child positions
+are cut in proportion, and both directions read the same boundaries. Hashing each
+child independently spread them evenly, which no real dataset is. Three things
+fall out of the range being the answer — the distribution is lopsided, reading
+one parent's children costs that parent's children rather than a filter over
+every child, and a `*_count` field is arithmetic rather than a scan. Partitions
+depend only on the seed and the two census sizes, all fixed for a store's life,
+so they are built on first use and never invalidated.
+
+`Slot` is why the partition works after a census had to step over a reserved
+key: `ordinal` is what a record's values derive from, `index` is where it sits
+among its siblings, and everything pairing two instances works in `index`.
 
 `World::reset()` drops every write and leaves exactly what the seed derives —
 call it between tests, or state leaks from one into the next.
 `World::pending_writes()` is how you see that it did.
 
 `MockRegistry::with_world()` gives a registry its own world for isolation, which
-integration tests need because the process-global one is shared. Trade-off worth
-knowing: `entity_*` template functions read the *global* world (Tera's function
-registry is stateless, so there is nowhere to thread a handle through — the same
-constraint `PersistenceStore` already lives with), so a registry built that way
-is invisible to templates.
+integration tests need because the process-global one is shared. `entity_*`
+template functions read the *global* world (Tera's function registry is
+stateless, so there is nowhere to thread a handle through — the same constraint
+`PersistenceStore` already lives with), so `with_world` publishes its world there
+when nothing has claimed it yet. The first registry in a process therefore gets
+templates that read exactly what its routes serve; a second cannot displace it,
+and keeps its own world for matching while templates go on reading the first.
 
 ### JSON into a JS runtime
 
