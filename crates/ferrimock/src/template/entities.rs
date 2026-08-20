@@ -179,7 +179,8 @@ fn page_json(page: &EntityPage) -> JsonValue {
     })
 }
 
-#[cfg(test)]
+// The fixture is a schema, and only the `spec` feature can load one.
+#[cfg(all(test, feature = "spec"))]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use crate::core::global_world;
