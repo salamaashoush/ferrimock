@@ -447,7 +447,9 @@ fn scalar_spec(
 
     // The field's own name and declared type beat prose about it. A field
     // named `id` on an `ID` is an identifier however its description rambles.
-    if let Some(field_type) = semantic_of(field_name, type_name, None, owner) {
+    // A GraphQL schema has nowhere to write an example, so there is never
+    // one to read here.
+    if let Some(field_type) = semantic_of(field_name, type_name, None, owner, &[]) {
         scalar = scalar.with_semantic(field_type);
     } else if let Some(DescriptionHint::Semantic(field_type)) = mined {
         scalar = scalar.with_semantic(field_type);

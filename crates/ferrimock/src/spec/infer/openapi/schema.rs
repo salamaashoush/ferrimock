@@ -234,9 +234,13 @@ fn scalar_spec(
     let declared_type = node.title.as_deref().unwrap_or_else(|| kind_name(kind));
     if let Some((field_type, _)) = lens.profile.classify_field(field_name, &[]) {
         scalar = scalar.with_semantic(field_type);
-    } else if let Some(field_type) =
-        semantic_of(field_name, declared_type, node.format.as_deref(), owner)
-    {
+    } else if let Some(field_type) = semantic_of(
+        field_name,
+        declared_type,
+        node.format.as_deref(),
+        owner,
+        &node.examples,
+    ) {
         scalar = scalar.with_semantic(field_type);
     } else if let Some(DescriptionHint::Semantic(field_type)) = mined {
         scalar = scalar.with_semantic(field_type);
@@ -395,6 +399,46 @@ components:
             "optional is not the same as nullable, and null is a schema violation here"
         );
         assert!(name.may_be_missing());
+    }
+
+    /// A value the document wrote is the only evidence in a spec that is not
+    /// an inference: `example: "2024-03-17T09:41:22Z"` on a field called
+    /// `stamp` says what it holds, and nothing in the word `stamp` does.
+    #[test]
+    fn a_declared_example_answers_ahead_of_a_field_name() {
+        let node = crate::spec::infer::openapi::document::SchemaNode {
+            kind: Some(crate::spec::infer::openapi::document::SchemaKind::String),
+            examples: vec![serde_json::json!("2024-03-17T09:41:22Z")],
+            ..Default::default()
+        };
+        let detected = crate::spec::infer::semantics::semantic_of(
+            "stamp",
+            "String",
+            None,
+            "Thing",
+            &node.examples,
+        );
+        assert!(
+            matches!(
+                detected,
+                Some(crate::type_detector::FieldType::Timestamp { .. })
+            ),
+            "{detected:?}"
+        );
+    }
+
+    /// A declared `format` is the document stating the answer outright, so it
+    /// still wins over a value it happened to show.
+    #[test]
+    fn a_declared_format_still_beats_an_example() {
+        let detected = crate::spec::infer::semantics::semantic_of(
+            "reference",
+            "String",
+            Some("uuid"),
+            "Thing",
+            &[serde_json::json!("2024-03-17T09:41:22Z")],
+        );
+        assert_eq!(detected, Some(crate::type_detector::FieldType::Uuid));
     }
 
     #[test]

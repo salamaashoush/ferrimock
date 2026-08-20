@@ -26,11 +26,18 @@ pub fn semantic_of(
     type_name: &str,
     format: Option<&str>,
     owner: &str,
+    examples: &[serde_json::Value],
 ) -> Option<FieldType> {
     // A declared format is the spec stating the answer, so it wins.
     if let Some(format) = format
         && let Some(field_type) = from_format(format)
     {
+        return Some(field_type);
+    }
+    // Then a value the document itself wrote. It is the only evidence in a
+    // spec that is not an inference — `example: "usr_01H8XG..."` says what an
+    // id family is, and nothing in the word `id` could.
+    if let Some(field_type) = from_examples(field_name, examples) {
         return Some(field_type);
     }
     if let Some(field_type) = from_type_name(type_name) {
@@ -40,6 +47,26 @@ pub fn semantic_of(
         return Some(field_type);
     }
     from_field_name(field_name)
+}
+
+/// What the values a document wrote for a field say the field holds.
+///
+/// Read through the same detector the recording lane uses, so a spec and a
+/// recording agree about what `2024-03-17T09:41:22Z` is. A weak reading is
+/// discarded: an example that is just a word says nothing a field name does
+/// not already say better.
+fn from_examples(field_name: &str, examples: &[serde_json::Value]) -> Option<FieldType> {
+    const CONVINCING: f64 = 0.8;
+
+    if examples.is_empty() {
+        return None;
+    }
+    let values: Vec<&serde_json::Value> = examples.iter().collect();
+    let (field_type, confidence) =
+        crate::type_detector::TypeDetector::new().detect_type(field_name, &values);
+    (confidence >= CONVINCING
+        && !matches!(field_type, FieldType::RandomString | FieldType::Constant(_)))
+    .then_some(field_type)
 }
 
 /// What a bare `name` or `title` means, given what owns it.
@@ -279,9 +306,10 @@ mod tests {
             "etag",
             "slug",
         ] {
-            let (Some(spec), Some(recorded)) =
-                (semantic_of(name, "String", None, "Thing"), recording(name))
-            else {
+            let (Some(spec), Some(recorded)) = (
+                semantic_of(name, "String", None, "Thing", &[]),
+                recording(name),
+            ) else {
                 continue;
             };
             assert_eq!(
@@ -295,31 +323,31 @@ mod tests {
         // field and the recording lane does not, so `Folder.name` is a folder's
         // name here. Owned by a person, the two agree again.
         assert!(matches!(
-            semantic_of("name", "String", None, "User"),
+            semantic_of("name", "String", None, "User", &[]),
             Some(FieldType::Name)
         ));
         assert!(matches!(
-            semantic_of("name", "String", None, "Folder"),
+            semantic_of("name", "String", None, "Folder", &[]),
             Some(FieldType::Sentence)
         ));
     }
 
     #[test]
     fn a_declared_format_wins_over_everything() {
-        let detected = semantic_of("title", "String", Some("uuid"), "Thing").unwrap();
+        let detected = semantic_of("title", "String", Some("uuid"), "Thing", &[]).unwrap();
         assert!(matches!(detected, FieldType::Uuid));
     }
 
     #[test]
     fn a_custom_scalar_name_beats_the_field_name() {
-        let detected = semantic_of("cursor", "DateTime", None, "Thing").unwrap();
+        let detected = semantic_of("cursor", "DateTime", None, "Thing", &[]).unwrap();
         assert!(matches!(detected, FieldType::Timestamp { .. }));
     }
 
     #[test]
     fn field_names_are_matched_across_case_conventions() {
         for spelling in ["created_at", "createdAt", "CreatedAt", "CREATED_AT"] {
-            let detected = semantic_of(spelling, "String", None, "Thing");
+            let detected = semantic_of(spelling, "String", None, "Thing", &[]);
             assert!(
                 matches!(detected, Some(FieldType::Timestamp { .. })),
                 "`{spelling}` should read as a timestamp"
@@ -330,27 +358,27 @@ mod tests {
     #[test]
     fn common_conventions_are_recognised() {
         assert!(matches!(
-            semantic_of("email", "String", None, "Thing"),
+            semantic_of("email", "String", None, "Thing", &[]),
             Some(FieldType::Email)
         ));
         assert!(matches!(
-            semantic_of("contactEmail", "String", None, "Thing"),
+            semantic_of("contactEmail", "String", None, "Thing", &[]),
             Some(FieldType::Email)
         ));
         assert!(matches!(
-            semantic_of("avatarUrl", "String", None, "Thing"),
+            semantic_of("avatarUrl", "String", None, "Thing", &[]),
             Some(FieldType::ImageUrl)
         ));
         assert!(matches!(
-            semantic_of("homepageUrl", "String", None, "Thing"),
+            semantic_of("homepageUrl", "String", None, "Thing", &[]),
             Some(FieldType::Url)
         ));
         assert!(matches!(
-            semantic_of("id", "ID", None, "Thing"),
+            semantic_of("id", "ID", None, "Thing", &[]),
             Some(FieldType::Uuid)
         ));
         assert!(matches!(
-            semantic_of("description", "String", None, "Thing"),
+            semantic_of("description", "String", None, "Thing", &[]),
             Some(FieldType::Paragraph)
         ));
     }
@@ -381,7 +409,7 @@ mod tests {
     #[test]
     fn a_slug_is_left_to_its_shape_rather_than_typed_as_prose() {
         assert!(
-            semantic_of("slug", "String", None, "Thing").is_none(),
+            semantic_of("slug", "String", None, "Thing", &[]).is_none(),
             "claiming a semantic here wins over the shape and answers with a sentence"
         );
         assert_eq!(text_shape_of("slug"), TextShape::Slug);
@@ -391,21 +419,21 @@ mod tests {
     fn what_owns_a_bare_name_decides_what_it_holds() {
         assert!(
             matches!(
-                semantic_of("name", "String", None, "User"),
+                semantic_of("name", "String", None, "User", &[]),
                 Some(FieldType::Name)
             ),
             "a user's name is a person's"
         );
         assert!(
             matches!(
-                semantic_of("name", "String", None, "File"),
+                semantic_of("name", "String", None, "File", &[]),
                 Some(FieldType::FileName)
             ),
             "a file's name is a filename"
         );
         assert!(
             matches!(
-                semantic_of("name", "String", None, "Folder"),
+                semantic_of("name", "String", None, "Folder", &[]),
                 Some(FieldType::Sentence)
             ),
             "a folder is not called Cloyd Oberbrunner"
@@ -417,7 +445,7 @@ mod tests {
         for spelling in ["first_name", "lastName", "full_name", "displayName"] {
             assert!(
                 matches!(
-                    semantic_of(spelling, "String", None, "Folder"),
+                    semantic_of(spelling, "String", None, "Folder", &[]),
                     Some(FieldType::Name)
                 ),
                 "`{spelling}` names a person wherever it appears"
@@ -427,13 +455,13 @@ mod tests {
 
     #[test]
     fn an_unremarkable_field_stays_unremarkable() {
-        assert!(semantic_of("colour", "String", None, "Thing").is_none());
-        assert!(semantic_of("weight", "Float", None, "Thing").is_none());
+        assert!(semantic_of("colour", "String", None, "Thing", &[]).is_none());
+        assert!(semantic_of("weight", "Float", None, "Thing", &[]).is_none());
     }
 
     #[test]
     fn an_unknown_format_falls_through_rather_than_guessing() {
         // `binary` has no faithful scalar rendering, so the declared kind wins.
-        assert!(semantic_of("blob", "String", Some("binary"), "Thing").is_none());
+        assert!(semantic_of("blob", "String", Some("binary"), "Thing", &[]).is_none());
     }
 }

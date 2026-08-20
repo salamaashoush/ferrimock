@@ -311,6 +311,12 @@ pub struct SchemaNode {
     pub items: Option<SchemaRef>,
     pub enum_values: Vec<LeanString>,
     pub constraints: Constraints,
+    /// Values the document itself wrote for this schema.
+    ///
+    /// A declared example is better evidence than any inference from a field
+    /// name: `example: "usr_01H8XG..."` says what an id family is, and nothing
+    /// in the word `id` could. 3.0 spells it `example`, 3.1 `examples`.
+    pub examples: Vec<JsonValue>,
     /// Composition, kept unmerged so a `$ref` inside it stays visible.
     pub all_of: Vec<SchemaRef>,
     /// `oneOf`/`anyOf` together: both mean "one of these shapes" to a mock.
@@ -425,6 +431,9 @@ impl SchemaBook {
             merged.nullable |= part.nullable;
             if merged.enum_values.is_empty() {
                 merged.enum_values = part.enum_values;
+            }
+            if merged.examples.is_empty() {
+                merged.examples = part.examples;
             }
             for property in part.properties {
                 if merged.property(property.name.as_str()).is_none() {
@@ -689,8 +698,19 @@ fn read_schema(value: &JsonValue, location: &str, defects: &mut Vec<SpecDefect>)
     let mut one_of = read_composition(object, "oneOf", location, defects);
     one_of.extend(read_composition(object, "anyOf", location, defects));
 
+    let mut examples: Vec<JsonValue> = object
+        .get("examples")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(single) = object.get("example") {
+        examples.push(single.clone());
+    }
+    examples.retain(|value| !value.is_null());
+
     SchemaNode {
         kind,
+        examples,
         format: string_of(object, "format"),
         nullable,
         title: string_of(object, "title"),
