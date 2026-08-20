@@ -293,13 +293,10 @@ fn check_values(entity: &EntityType, records: &[Record], report: &mut Report) {
 }
 
 /// A field the schema said may be absent, that never is.
-///
-/// `nullable` is read by exactly one thing today — the unsatisfiable-cycle
-/// check — so nothing consults it when a value is generated.
 fn check_nullability(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut Report) {
     const ENOUGH: usize = 10;
 
-    if !field.nullable {
+    if !field.may_be_missing() {
         return;
     }
     if stats.seen() < ENOUGH {

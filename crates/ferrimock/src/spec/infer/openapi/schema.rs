@@ -91,12 +91,22 @@ fn object_fields(
         .iter()
         .map(|property| {
             let value = value_spec(lens, &property.schema, &property.name, owner, expansion);
-            let nullable = !property.required
-                || lens
-                    .book
-                    .resolve(&property.schema)
-                    .is_some_and(|node| node.nullable);
-            FieldDef::new(property.name.as_str(), value, nullable)
+            // Two facts, not one: `required` says the key is there, the
+            // schema's own `nullable` says the value may be null. A property
+            // left out of `required` is allowed to be absent — which is not
+            // the same as being present and null, and answering a
+            // `type: string` with null because it happened to be optional is
+            // a schema violation.
+            let nullable = lens
+                .book
+                .resolve(&property.schema)
+                .is_some_and(|node| node.nullable);
+            let field = FieldDef::new(property.name.as_str(), value, nullable);
+            if property.required {
+                field
+            } else {
+                field.optional()
+            }
         })
         .collect()
 }
@@ -366,12 +376,25 @@ components:
         ));
     }
 
+    /// `required` and `nullable` are separate facts. A property left out of
+    /// `required` may be absent; only a schema that says `nullable` may be
+    /// present and null.
     #[test]
-    fn required_decides_nullability() {
+    fn required_and_nullable_are_read_apart() {
         let table = table();
         let fields = folder_fields(&table, &entities());
-        assert!(!field(&fields, "id").nullable);
-        assert!(field(&fields, "name").nullable);
+
+        let id = field(&fields, "id");
+        assert!(id.required);
+        assert!(!id.nullable);
+
+        let name = field(&fields, "name");
+        assert!(!name.required);
+        assert!(
+            !name.nullable,
+            "optional is not the same as nullable, and null is a schema violation here"
+        );
+        assert!(name.may_be_missing());
     }
 
     #[test]

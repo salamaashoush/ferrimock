@@ -403,6 +403,17 @@ impossible.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+`required` and `nullable` are separate facts on a `FieldDef`, because a schema
+gives two separate answers: `required` says the key is in the payload,
+`nullable` says the value may be null. A GraphQL field that was selected is
+always present and may be null; an OpenAPI property left out of `required` may
+not be there at all, and answering it with `null` because it happened to be
+optional violates the `type: string` that declared it. So an optional field
+loses its key and a nullable one keeps it holding null -- each at a rate drawn
+per field rather than per record, the way a real column is null a twentieth of
+the time or half of it. A filter over an absent field matches nothing but `Ne`,
+which is what a real API does and what a test asserting on it has to expect.
+
 How many instances an entity gets is read off its place in the graph rather
 than from one constant. The child end of a to-one link is more numerous than
 the parent end -- a file store has more files than folders and more folders

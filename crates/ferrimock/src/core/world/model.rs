@@ -381,6 +381,16 @@ impl fmt::Display for EntityKey {
 pub struct FieldDef {
     pub name: LeanString,
     pub value: ValueSpec,
+    /// Whether the key is always in the payload.
+    ///
+    /// Separate from `nullable`, because they are separate facts and a schema
+    /// says both. A GraphQL field that was selected is always in the response
+    /// and may be null; an OpenAPI property left out of `required` may not be
+    /// in the object at all. Folding them together made every optional field
+    /// present, and emitting `null` for a merely-optional `type: string` is a
+    /// schema violation rather than a realistic value.
+    pub required: bool,
+    /// Whether the value may be null.
     pub nullable: bool,
 }
 
@@ -390,8 +400,22 @@ impl FieldDef {
         Self {
             name: name.into(),
             value,
+            required: true,
             nullable,
         }
+    }
+
+    /// The key may be missing from the payload entirely.
+    #[must_use]
+    pub fn optional(mut self) -> Self {
+        self.required = false;
+        self
+    }
+
+    /// Whether a payload is allowed not to carry a usable value here.
+    #[must_use]
+    pub const fn may_be_missing(&self) -> bool {
+        self.nullable || !self.required
     }
 
     /// The relation this field carries, looking through list wrappers.

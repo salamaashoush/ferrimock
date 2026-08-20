@@ -117,7 +117,6 @@ fn the_doctor_names_the_tells_the_generators_leave() {
     for check in [
         Check::NumberSupport,
         Check::ConstantListLength,
-        Check::NeverAbsent,
         Check::FairCoin,
         Check::UniformEnum,
         Check::SmallVocabulary,
@@ -132,12 +131,13 @@ fn the_doctor_names_the_tells_the_generators_leave() {
     }
 }
 
-/// The calendar tells are closed: dates run to the end of the month and the
-/// window follows the wall clock instead of a constant that went stale.
+/// Closed tells: dates run to the end of the month, the window follows the
+/// wall clock instead of a constant that went stale, and a field the schema
+/// said may be missing sometimes is.
 #[test]
 fn the_calendar_no_longer_gives_the_world_away() {
     let report = examine(&wide_world(3, 400));
-    for check in [Check::DayOfMonth, Check::StaleClock] {
+    for check in [Check::DayOfMonth, Check::StaleClock, Check::NeverAbsent] {
         assert!(
             failed(&report, check).is_empty(),
             "`{}` should not fire: {:?}",

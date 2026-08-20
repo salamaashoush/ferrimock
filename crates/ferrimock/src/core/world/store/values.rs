@@ -41,6 +41,85 @@ impl<'a> ValueSeed<'a> {
         let stream = format!("{}#{}", self.entity, path);
         rng::derive_seed(self.seed, &stream, self.ordinal)
     }
+
+    /// A stream beside the value's, for something else about the same field.
+    ///
+    /// Whether a field is present is not part of the value, and drawing it
+    /// from the value's own bytes would tie the two together — a record whose
+    /// `bio` happened to hash low would also be the record missing it.
+    fn per_record(&self, path: &str, aspect: &str) -> u64 {
+        let stream = format!("{}#{path}#{aspect}", self.entity);
+        rng::derive_seed(self.seed, &stream, self.ordinal)
+    }
+
+    /// A stream for a fact about the field rather than about one record, so
+    /// every instance reads the same answer.
+    fn per_field(&self, path: &str, aspect: &str) -> u64 {
+        let stream = format!("{}#{path}#{aspect}#field", self.entity);
+        rng::derive_seed(self.seed, &stream, 0)
+    }
+}
+
+/// Whether one field of one record carries a value at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Presence {
+    Value,
+    Null,
+    Absent,
+}
+
+/// How often a field the schema said may be missing actually is.
+///
+/// Drawn per field rather than per record, because that is how a real column
+/// behaves: one is null a twentieth of the time and another half the time, and
+/// neither is null never. The rate comes off the field's own stream, so it is
+/// a property of the schema and the seed rather than of the order records
+/// happened to be built in.
+const MISSING_FLOOR: f64 = 0.05;
+const MISSING_CEILING: f64 = 0.45;
+
+/// A derived word as a uniform draw on `[0, 1)`.
+fn unit(derived: u64) -> f64 {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "53 bits, which is exactly the f64 mantissa"
+    )]
+    let scaled = (derived >> 11) as f64 / (1_u64 << 53) as f64;
+    scaled
+}
+
+fn missing_rate(derived: u64) -> f64 {
+    MISSING_CEILING
+        .mul_add(unit(derived), MISSING_FLOOR)
+        .min(MISSING_CEILING)
+}
+
+/// Whether a field appears, appears as null, or does not appear.
+///
+/// The two are separate answers because the schema gave two separate facts.
+/// Omitting the key is what an optional property means; emitting `null` is
+/// what a nullable one means, and a `type: string` that is merely optional
+/// cannot be null without violating its own schema.
+fn presence_of(field: &FieldDef, path: &str, seed: ValueSeed<'_>) -> Presence {
+    if !field.may_be_missing() {
+        return Presence::Value;
+    }
+    let drawn = unit(seed.per_record(path, "presence"));
+    let mut below = 0.0;
+    if !field.required {
+        let rate = missing_rate(seed.per_field(path, "absent"));
+        if drawn < rate {
+            return Presence::Absent;
+        }
+        below = rate;
+    }
+    if field.nullable {
+        let rate = missing_rate(seed.per_field(path, "null"));
+        if drawn < below + rate {
+            return Presence::Null;
+        }
+    }
+    Presence::Value
 }
 
 /// Generate the value for one field.
@@ -66,7 +145,16 @@ pub fn generate_fields(
         } else {
             format!("{prefix}.{}", field.name)
         };
-        record.insert(field.name.to_string(), generate(&field.value, &path, seed));
+        match presence_of(field, &path, seed) {
+            // The key is simply not there, which is what optional means.
+            Presence::Absent => {}
+            Presence::Null => {
+                record.insert(field.name.to_string(), JsonValue::Null);
+            }
+            Presence::Value => {
+                record.insert(field.name.to_string(), generate(&field.value, &path, seed));
+            }
+        }
     }
     order_lifecycle(fields, &mut record);
     record
@@ -534,6 +622,64 @@ mod tests {
 
     fn scalar(kind: ScalarKind) -> ValueSpec {
         ValueSpec::Scalar(Scalar::new(kind))
+    }
+
+    /// `required` and `nullable` are separate answers, so an optional field
+    /// loses its key and a nullable one keeps it holding null. Emitting null
+    /// for a merely-optional `type: string` violates the schema that declared
+    /// it.
+    #[test]
+    fn an_optional_field_goes_missing_and_a_nullable_one_goes_null() {
+        let fields = vec![
+            FieldDef::new("id", scalar(ScalarKind::Id), false),
+            FieldDef::new("subtitle", scalar(ScalarKind::String), false).optional(),
+            FieldDef::new("bio", scalar(ScalarKind::String), true),
+        ];
+
+        let mut absent = 0;
+        let mut nulled = 0;
+        for ordinal in 0..400 {
+            let record = generate_fields(&fields, "", ValueSeed::new(4, "Doc", ordinal));
+            assert!(
+                record.contains_key("id"),
+                "a required field is always there"
+            );
+            assert!(
+                !record.get("subtitle").is_some_and(JsonValue::is_null),
+                "an optional field that is not nullable is absent, never null"
+            );
+            if !record.contains_key("subtitle") {
+                absent += 1;
+            }
+            assert!(record.contains_key("bio"), "a nullable field keeps its key");
+            if record["bio"].is_null() {
+                nulled += 1;
+            }
+        }
+        assert!((20..380).contains(&absent), "absent {absent} of 400");
+        assert!((20..380).contains(&nulled), "null {nulled} of 400");
+    }
+
+    /// The rate belongs to the field, not to the record: one column is null a
+    /// twentieth of the time and another half the time.
+    #[test]
+    fn two_optional_fields_go_missing_at_different_rates() {
+        let rates: Vec<usize> = ["alpha", "beta", "gamma", "delta"]
+            .into_iter()
+            .map(|name| {
+                let fields = vec![FieldDef::new(name, scalar(ScalarKind::String), true)];
+                (0..400)
+                    .filter(|ordinal| {
+                        generate_fields(&fields, "", ValueSeed::new(4, "Doc", *ordinal))[name]
+                            .is_null()
+                    })
+                    .count()
+            })
+            .collect();
+        let mut distinct = rates.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), rates.len(), "{rates:?}");
     }
 
     fn stamped(name: &str, format: crate::type_detector::TimestampFormat) -> FieldDef {
