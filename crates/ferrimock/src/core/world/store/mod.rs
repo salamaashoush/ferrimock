@@ -337,6 +337,63 @@ impl Partition {
     }
 }
 
+/// Which instances of two collections hold each other, as positions.
+///
+/// A relation whose both ends are collections has no owner to derive from, so
+/// membership is drawn per member and inverted once. Anchoring on the
+/// lexicographically smaller entity name is what makes the two directions read
+/// one table rather than two functions that have to be kept agreeing — and the
+/// inversion is what keeps the anchor's side off a scan of every member.
+#[derive(Debug)]
+struct Membership {
+    /// Anchor position -> the member positions holding it.
+    by_anchor: Vec<Vec<u32>>,
+    /// Member position -> the anchor positions it holds.
+    by_member: Vec<Vec<u32>>,
+}
+
+impl Membership {
+    fn of(seed: u64, anchor: &str, anchors: usize, member: &str, ordinals: &[u64]) -> Self {
+        let mut by_anchor = vec![Vec::new(); anchors];
+        let mut by_member = Vec::with_capacity(ordinals.len());
+        for (slot, ordinal) in ordinals.iter().enumerate() {
+            let Ok(position) = u32::try_from(slot) else {
+                break;
+            };
+            let mut held: Vec<u32> = membership_of(seed, anchor, anchors, member, *ordinal)
+                .into_iter()
+                .filter_map(|index| u32::try_from(index).ok())
+                .collect();
+            // The draw can land twice on the same anchor, and a member belongs
+            // to a collection once however many times it was drawn into it.
+            held.sort_unstable();
+            held.dedup();
+            for index in &held {
+                if let Some(bucket) = usize::try_from(*index)
+                    .ok()
+                    .and_then(|at| by_anchor.get_mut(at))
+                {
+                    bucket.push(position);
+                }
+            }
+            by_member.push(held);
+        }
+        Self {
+            by_anchor,
+            by_member,
+        }
+    }
+}
+
+/// Which of two collections anchors their shared membership.
+fn membership_sides<'a>(left: &'a str, right: &'a str) -> (&'a str, &'a str) {
+    if left <= right {
+        (left, right)
+    } else {
+        (right, left)
+    }
+}
+
 /// A change laid over the base world.
 #[derive(Debug, Clone)]
 enum Delta {
@@ -364,6 +421,9 @@ pub struct EntityStore {
     /// seed and the two census sizes, all of which are fixed for the life of a
     /// store, so it is computed once and never invalidated.
     partitions: RwLock<FxHashMap<(LeanString, LeanString, LeanString), Arc<Partition>>>,
+    /// One membership table per many-to-many, on the same terms as
+    /// `partitions`: built on first use, never invalidated.
+    memberships: RwLock<FxHashMap<(LeanString, LeanString), Arc<Membership>>>,
 }
 
 impl std::fmt::Debug for EntityStore {
@@ -416,6 +476,7 @@ impl EntityStore {
             next_created: AtomicU64::new(0),
             tombstones: RwLock::new(FxHashMap::default()),
             partitions: RwLock::new(FxHashMap::default()),
+            memberships: RwLock::new(FxHashMap::default()),
         }
     }
 
@@ -721,14 +782,28 @@ impl EntityStore {
             // from — a file belongs to several collections and a collection
             // holds several files. Membership has to be computed the same way
             // from either end, or the two directions disagree.
-            if points_back_many(target, entity) {
+            if is_membership(target, entity) {
                 children.extend(
-                    self.keys(member.as_str())
+                    self.membership_positions(entity, key, member.as_str())
                         .into_iter()
-                        .filter_map(|child_key| {
-                            self.shares_membership(entity, key, member.as_str(), &child_key)
-                                .then(|| self.get(member.as_str(), &child_key))?
-                        }),
+                        .filter_map(|position| {
+                            self.census
+                                .get(member.as_str())?
+                                .derived
+                                .get(usize::try_from(position).ok()?)
+                                .cloned()
+                        })
+                        .filter_map(|child_key| self.get(member.as_str(), &child_key)),
+                );
+                // Members created at runtime are not in the table. Bounded by
+                // the number of creations rather than by the size of the world.
+                children.extend(
+                    self.created_keys(member.as_str())
+                        .into_iter()
+                        .filter(|child_key| {
+                            self.shares_membership(member.as_str(), child_key, entity, key)
+                        })
+                        .filter_map(|child_key| self.get(member.as_str(), &child_key)),
                 );
                 continue;
             }
@@ -793,11 +868,72 @@ impl EntityStore {
             .collect()
     }
 
+    /// Every key of an entity that a write brought into being.
+    ///
+    /// Its size is the number of creations, not the size of the world.
+    fn created_keys(&self, entity: &str) -> Vec<EntityKey> {
+        self.created
+            .read()
+            .keys_of(entity)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The positions of `target` sharing a membership with one instance.
+    ///
+    /// A derived instance reads the inverted table; one created at runtime is
+    /// not in it, so its own side is drawn from the function the table was
+    /// built from. Both ends of a membership therefore answer from one
+    /// derivation, which is what stops `collection.items` and
+    /// `doc.collections` contradicting each other.
+    fn membership_positions(&self, entity: &str, key: &EntityKey, target: &str) -> Vec<u32> {
+        let table = self.membership(entity, target);
+        let index = self.index_of(entity, key);
+
+        // A membership an entity has with itself has one side, so it is only
+        // symmetric if both are read: two instances are related when either
+        // one drew the other.
+        if entity == target {
+            let Some(index) = index.and_then(|index| usize::try_from(index).ok()) else {
+                return Vec::new();
+            };
+            let mut both = table.by_anchor.get(index).cloned().unwrap_or_default();
+            both.extend(table.by_member.get(index).into_iter().flatten().copied());
+            both.sort_unstable();
+            both.dedup();
+            return both;
+        }
+
+        let (anchor, _) = membership_sides(entity, target);
+        if let Some(index) = index.and_then(|index| usize::try_from(index).ok()) {
+            let side = if anchor == entity {
+                &table.by_anchor
+            } else {
+                &table.by_member
+            };
+            return side.get(index).cloned().unwrap_or_default();
+        }
+
+        // Nothing draws an anchor created at runtime: the draw lands inside
+        // the anchor's census, which a created key sits past the end of.
+        if anchor == entity {
+            return Vec::new();
+        }
+        let Some(ordinal) = self.ordinal_of(entity, key) else {
+            return Vec::new();
+        };
+        let anchors = self.census.get(target).map_or(0, |c| c.derived.len());
+        let mut drawn: Vec<u32> = membership_of(self.config.seed, target, anchors, entity, ordinal)
+            .into_iter()
+            .filter_map(|index| u32::try_from(index).ok())
+            .collect();
+        drawn.sort_unstable();
+        drawn.dedup();
+        drawn
+    }
+
     /// Whether two instances are on opposite ends of the same many-to-many
     /// membership.
-    ///
-    /// Both ends compute it from the same anchored function, so
-    /// `collection.items` and `file.collections` cannot contradict each other.
     fn shares_membership(
         &self,
         left: &str,
@@ -805,29 +941,36 @@ impl EntityStore {
         right: &str,
         right_key: &EntityKey,
     ) -> bool {
-        let ((anchor, anchor_key), (member, member_key)) = if left < right {
-            ((left, left_key), (right, right_key))
-        } else {
-            ((right, right_key), (left, left_key))
-        };
-
-        let Some(anchor_census) = self.census.get(anchor) else {
+        let Some(index) = self.index_of(right, right_key) else {
             return false;
         };
-        let Some(member_ordinal) = self.ordinal_of(member, member_key) else {
-            return false;
-        };
+        self.membership_positions(left, left_key, right)
+            .contains(&index)
+    }
 
-        membership_of(
-            self.config.seed,
-            anchor,
-            anchor_census.derived.len(),
-            member,
-            member_ordinal,
-        )
-        .into_iter()
-        .filter_map(|index| anchor_census.derived.get(usize::try_from(index).ok()?))
-        .any(|derived| derived == anchor_key)
+    /// How many instances of `target` share a membership with one instance.
+    ///
+    /// The same enumeration `relation_children` walks, counted rather than
+    /// built, so a count field and the collection it names cannot disagree.
+    fn membership_count(&self, entity: &str, key: &EntityKey, target: &str) -> usize {
+        let derived = self
+            .membership_positions(entity, key, target)
+            .into_iter()
+            .filter_map(|position| {
+                self.census
+                    .get(target)?
+                    .derived
+                    .get(usize::try_from(position).ok()?)
+            })
+            .filter(|child_key| !self.is_tombstoned(target, child_key))
+            .count();
+        let created = self
+            .created_keys(target)
+            .into_iter()
+            .filter(|child_key| !self.is_tombstoned(target, child_key))
+            .filter(|child_key| self.shares_membership(target, child_key, entity, key))
+            .count();
+        derived + created
     }
 
     /// Which concrete entity an abstract link resolves to for one instance.
@@ -1204,6 +1347,32 @@ impl EntityStore {
         built
     }
 
+    /// The membership table two collections share.
+    fn membership(&self, left: &str, right: &str) -> Arc<Membership> {
+        let (anchor, member) = membership_sides(left, right);
+        let slot = (LeanString::from(anchor), LeanString::from(member));
+        if let Some(held) = self.memberships.read().get(&slot) {
+            return Arc::clone(held);
+        }
+        let anchors = self.census.get(anchor).map_or(0, |c| c.derived.len());
+        let ordinals: Vec<u64> = self.census.get(member).map_or_else(Vec::new, |census| {
+            census
+                .derived
+                .iter()
+                .filter_map(|key| census.slots.get(key).map(|slot| slot.ordinal))
+                .collect()
+        });
+        let built = Arc::new(Membership::of(
+            self.config.seed,
+            anchor,
+            anchors,
+            member,
+            &ordinals,
+        ));
+        self.memberships.write().insert(slot, Arc::clone(&built));
+        built
+    }
+
     /// Whether a record has been written to, so its own fields are the answer
     /// rather than what its ordinal derives.
     fn is_written(&self, entity: &str, key: &EntityKey) -> bool {
@@ -1383,17 +1552,25 @@ impl EntityStore {
             let Some(target) = self.graph.get(member.as_str()) else {
                 continue;
             };
-            let Some((back_field, back_relation)) = reciprocal_link(target, entity) else {
+
+            // The same question `relation_children` asks, so the count and the
+            // collection cannot land on different mechanisms.
+            if is_membership(target, entity) {
+                total += i64::try_from(self.membership_count(entity, key, member.as_str()))
+                    .unwrap_or(i64::MAX);
                 continue;
-            };
-            let role = back_field.name.to_string();
-            let carrier = back_relation.carrier.key_field(&back_field.name).clone();
+            }
+
+            let back = reciprocal_link(target, entity);
+            let role = back.map_or_else(String::new, |(field, _)| field.name.to_string());
+            let carrier =
+                back.map(|(field, relation)| relation.carrier.key_field(&field.name).clone());
 
             let partition = self.partition(member.as_str(), entity, &role);
             let range = partition.range_of(parent_index);
             total += i64::from(range.end - range.start);
 
-            for (child_key, stated) in self.stated_owners(member.as_str(), &carrier) {
+            for (child_key, stated) in self.stated_owners(member.as_str(), carrier.as_ref()) {
                 let derived_here = self
                     .census
                     .get(member.as_str())
@@ -1417,20 +1594,22 @@ impl EntityStore {
     ///
     /// Read from the delta rather than through `get`, so nothing is
     /// materialised. A tombstone reports no owner, which is what removes it
-    /// from whichever collection it was in.
+    /// from whichever collection it was in — and so does a relation with no
+    /// carrier to read, where a written record has left the derived collection
+    /// with nothing to say where it went.
     fn stated_owners(
         &self,
         entity: &str,
-        carrier: &LeanString,
+        carrier: Option<&LeanString>,
     ) -> Vec<(EntityKey, Option<String>)> {
         self.delta
             .iter()
             .filter(|entry| entry.key().0 == entity)
             .map(|entry| {
                 let stated = match entry.value() {
-                    Delta::Created(fields) | Delta::Patched(fields) => {
-                        fields.get(carrier.as_str()).and_then(values::key_text)
-                    }
+                    Delta::Created(fields) | Delta::Patched(fields) => carrier
+                        .and_then(|carrier| fields.get(carrier.as_str()))
+                        .and_then(values::key_text),
                     Delta::Tombstone => None,
                 };
                 (entry.key().1.clone(), stated)
@@ -1644,13 +1823,20 @@ fn membership_of(
         .collect()
 }
 
-/// Whether `entity` has a to-many link back to `other`, which is what makes a
-/// relation a many-to-many rather than a parent-child.
-fn points_back_many(entity: &EntityType, other: &str) -> bool {
-    entity.relations().any(|(_, relation)| {
-        relation.cardinality == Cardinality::Many
-            && relation.concrete_targets().iter().any(|t| t == other)
-    })
+/// Whether a to-many onto `target` is a membership rather than an ownership.
+///
+/// Both ends being collections leaves no owner to derive from. A to-many
+/// pointing back does not settle that on its own — a folder's `children` is
+/// itself a to-many at `Folder`, and an unrelated `liked_by` is one at `User` —
+/// so it is the absence of a functional carrier that decides. Everything
+/// reading the relation has to ask this same question or the readers answer
+/// from different mechanisms.
+fn is_membership(target: &EntityType, entity: &str) -> bool {
+    reciprocal_link(target, entity).is_none()
+        && target.relations().any(|(_, relation)| {
+            relation.cardinality == Cardinality::Many
+                && relation.concrete_targets().iter().any(|t| t == entity)
+        })
 }
 
 /// The to-many relation a `*_count` field is counting, if it is counting one.

@@ -1293,3 +1293,232 @@ fn a_field_name_outside_ascii_does_not_break_the_count_check() {
         assert!(record.get("名前").is_some());
     }
 }
+
+/// A folder tree: one relation, both of its directions declared on the same
+/// entity, with a count field beside them.
+fn tree_store(seed: u64, folders: usize) -> EntityStore {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Folder")
+            .with_field(scalar_field("children_count", ScalarKind::Int))
+            .with_field(relation_field("parent", "Folder", Cardinality::One))
+            .with_field(relation_field("children", "Folder", Cardinality::Many)),
+    );
+    EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(seed).with_count("Folder", folders),
+    )
+}
+
+fn relation_of<'a>(store: &'a EntityStore, entity: &str, field: &str) -> &'a Relation {
+    store
+        .graph()
+        .get(entity)
+        .unwrap()
+        .field(field)
+        .unwrap()
+        .relation()
+        .unwrap()
+}
+
+#[test]
+fn a_self_relation_answers_the_same_way_from_both_ends() {
+    let store = tree_store(3, 24);
+    let parent_relation = relation_of(&store, "Folder", "parent");
+
+    for folder in store.keys("Folder") {
+        let children = store
+            .related("Folder", &folder, "children", &Selection::new())
+            .unwrap();
+        for child in &children.records {
+            let parent = store
+                .relation_target("Folder", &child.key, "parent", parent_relation)
+                .unwrap();
+            assert_eq!(
+                parent.key, folder,
+                "folder.children must hold exactly the folders whose parent is that folder"
+            );
+        }
+        let stated = store
+            .get("Folder", &folder)
+            .unwrap()
+            .get("children_count")
+            .unwrap()
+            .as_u64()
+            .unwrap();
+        assert_eq!(
+            usize::try_from(stated).unwrap(),
+            children.total,
+            "`children_count` must agree with the collection it counts"
+        );
+    }
+}
+
+#[test]
+fn an_unrelated_back_edge_does_not_move_a_relation_onto_membership() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("User")
+            .with_field(scalar_field("post_count", ScalarKind::Int))
+            .with_field(relation_field("posts", "Post", Cardinality::Many)),
+    );
+    graph.insert(
+        entity("Post")
+            .with_field(relation_field("author", "User", Cardinality::One))
+            .with_field(relation_field("liked_by", "User", Cardinality::Many)),
+    );
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(17)
+            .with_count("User", 6)
+            .with_count("Post", 30),
+    );
+    let author_relation = relation_of(&store, "Post", "author");
+
+    let mut reached = 0;
+    for user in store.keys("User") {
+        let posts = store
+            .related("User", &user, "posts", &Selection::new())
+            .unwrap();
+        for post in &posts.records {
+            let author = store
+                .relation_target("Post", &post.key, "author", author_relation)
+                .unwrap();
+            assert_eq!(
+                author.key, user,
+                "a to-many beside a real foreign key must not change how the link resolves"
+            );
+        }
+        reached += posts.total;
+        let stated = store
+            .get("User", &user)
+            .unwrap()
+            .get("post_count")
+            .unwrap()
+            .as_u64()
+            .unwrap();
+        assert_eq!(usize::try_from(stated).unwrap(), posts.total);
+    }
+    assert_eq!(
+        reached,
+        store.count("Post"),
+        "every post is owned by exactly one user"
+    );
+}
+
+#[test]
+fn a_count_field_on_a_many_to_many_reports_what_the_collection_holds() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Collection")
+            .with_field(scalar_field("item_count", ScalarKind::Int))
+            .with_field(relation_field("items", "Doc", Cardinality::Many)),
+    );
+    graph.insert(
+        entity("Doc")
+            .with_field(scalar_field("collection_count", ScalarKind::Int))
+            .with_field(relation_field("collections", "Collection", Cardinality::Many)),
+    );
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(5)
+            .with_count("Collection", 6)
+            .with_count("Doc", 20),
+    );
+
+    for collection in store.keys("Collection") {
+        let held = store
+            .related("Collection", &collection, "items", &Selection::new())
+            .unwrap()
+            .total;
+        let stated = store
+            .get("Collection", &collection)
+            .unwrap()
+            .get("item_count")
+            .unwrap()
+            .as_u64()
+            .unwrap();
+        assert_eq!(usize::try_from(stated).unwrap(), held);
+    }
+    for doc in store.keys("Doc") {
+        let held = store
+            .related("Doc", &doc, "collections", &Selection::new())
+            .unwrap()
+            .total;
+        let stated = store
+            .get("Doc", &doc)
+            .unwrap()
+            .get("collection_count")
+            .unwrap()
+            .as_u64()
+            .unwrap();
+        assert_eq!(usize::try_from(stated).unwrap(), held);
+    }
+}
+
+#[test]
+fn a_membership_an_entity_has_with_itself_is_symmetric() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("User").with_field(relation_field(
+        "friends",
+        "User",
+        Cardinality::Many,
+    )));
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(21).with_count("User", 20),
+    );
+
+    let mut pairs = 0;
+    for user in store.keys("User") {
+        let friends = store
+            .related("User", &user, "friends", &Selection::new())
+            .unwrap();
+        for friend in &friends.records {
+            let back = store
+                .related("User", &friend.key, "friends", &Selection::new())
+                .unwrap();
+            assert!(
+                back.records.iter().any(|other| other.key == user),
+                "friendship has one side, so both ends must read it the same way"
+            );
+            pairs += 1;
+        }
+    }
+    assert!(pairs > 0, "the fixture should relate something");
+}
+
+#[test]
+fn a_to_many_with_no_link_back_still_counts_what_it_lists() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Feed")
+            .with_field(scalar_field("item_count", ScalarKind::Int))
+            .with_field(relation_field("items", "Item", Cardinality::Many)),
+    );
+    graph.insert(entity("Item").with_field(scalar_field("title", ScalarKind::String)));
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(8)
+            .with_count("Feed", 5)
+            .with_count("Item", 40),
+    );
+
+    let mut seen = 0;
+    for feed in store.keys("Feed") {
+        let held = store
+            .related("Feed", &feed, "items", &Selection::new())
+            .unwrap()
+            .total;
+        let stated = store
+            .get("Feed", &feed)
+            .unwrap()
+            .get("item_count")
+            .unwrap()
+            .as_u64()
+            .unwrap();
+        assert_eq!(usize::try_from(stated).unwrap(), held);
+        seen += held;
+    }
+    assert_eq!(seen, store.count("Item"));
+}
