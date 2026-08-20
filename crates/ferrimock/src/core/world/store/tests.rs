@@ -1723,3 +1723,102 @@ fn a_cascade_follows_a_chain_of_entities_all_the_way_down() {
         );
     }
 }
+
+/// A schema's shape says how many of each thing there are. One constant for
+/// every entity says the opposite, and it is wrong in the direction a client
+/// notices: the collection it pages through most is the one furthest down.
+#[test]
+fn an_entity_further_down_the_graph_is_more_numerous() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("User"));
+    graph.insert(entity("Folder").with_field(relation_field("owner", "User", Cardinality::One)));
+    graph.insert(entity("File").with_field(relation_field("folder", "Folder", Cardinality::One)));
+    let store = EntityStore::new(Arc::new(graph), StoreConfig::seeded(1));
+
+    assert_eq!(store.count("User"), DEFAULT_SEED_COUNT);
+    assert!(store.count("Folder") > store.count("User"));
+    assert!(store.count("File") > store.count("Folder"));
+    assert!(
+        store.count("User") > crate::core::world::algebra::DEFAULT_PAGE_SIZE,
+        "one unpaginated request must not return the whole population"
+    );
+}
+
+#[test]
+fn a_self_relation_is_not_a_step_down_the_graph() {
+    let store = tree_store(1, 30);
+    assert_eq!(store.count("Folder"), 30);
+
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Folder")
+            .with_field(relation_field("parent", "Folder", Cardinality::One))
+            .with_field(relation_field("children", "Folder", Cardinality::Many)),
+    );
+    let derived = EntityStore::new(Arc::new(graph), StoreConfig::seeded(1));
+    assert_eq!(
+        derived.count("Folder"),
+        DEFAULT_SEED_COUNT,
+        "a hierarchy is one entity, and its depth is levels within itself"
+    );
+}
+
+#[test]
+fn the_fanout_stops_rather_than_running_away() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("L0"));
+    for depth in 1..10 {
+        graph.insert(entity(&format!("L{depth}")).with_field(relation_field(
+            "up",
+            &format!("L{}", depth - 1),
+            Cardinality::One,
+        )));
+    }
+    let store = EntityStore::new(Arc::new(graph), StoreConfig::seeded(1));
+    assert_eq!(store.count("L9"), MAX_SEED_COUNT);
+}
+
+#[test]
+fn a_scale_multiplies_the_default_and_leaves_a_stated_count_alone() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("User"));
+    graph.insert(entity("Folder").with_field(relation_field("owner", "User", Cardinality::One)));
+
+    let mut config = StoreConfig::seeded(1).with_count("Folder", 7);
+    config.scale = 2.0;
+    let store = EntityStore::new(Arc::new(graph), config);
+
+    assert_eq!(store.count("User"), DEFAULT_SEED_COUNT * 2);
+    assert_eq!(
+        store.count("Folder"),
+        7,
+        "a count the caller stated is what the caller said"
+    );
+}
+
+#[test]
+fn a_flat_default_still_overrides_the_graph() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("User"));
+    graph.insert(entity("Folder").with_field(relation_field("owner", "User", Cardinality::One)));
+
+    let mut config = StoreConfig::seeded(1);
+    config.default_count = Some(5);
+    let store = EntityStore::new(Arc::new(graph), config);
+
+    assert_eq!(store.count("User"), 5);
+    assert_eq!(store.count("Folder"), 5);
+}
+
+#[test]
+fn a_cycle_does_not_make_a_world_the_census_cannot_build() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("A").with_field(relation_field("b", "B", Cardinality::One)));
+    graph.insert(entity("B").with_field(relation_field("a", "A", Cardinality::One)));
+    let store = EntityStore::new(Arc::new(graph), StoreConfig::seeded(1));
+
+    for name in ["A", "B"] {
+        assert!(store.count(name) >= DEFAULT_SEED_COUNT);
+        assert!(store.count(name) <= MAX_SEED_COUNT);
+    }
+}

@@ -69,6 +69,15 @@ pub struct WorldConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<usize>,
 
+    /// Multiplies whatever the default count resolves to.
+    ///
+    /// A schema does not say how big its world should be, and the answer is
+    /// different for a unit test and for a screen someone is looking at. This
+    /// is how a mount asks for a bigger one without naming every entity in it;
+    /// a count stated per entity is what the caller said and is left alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<f64>,
+
     /// Per-entity instance counts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(

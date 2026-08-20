@@ -840,6 +840,7 @@ impl MockRegistry {
         let settings = crate::core::WorldSettings {
             seed: config.seed,
             default_count: config.count,
+            scale: config.scale,
             counts: config
                 .counts
                 .iter()

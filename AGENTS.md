@@ -403,6 +403,19 @@ impossible.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+How many instances an entity gets is read off its place in the graph rather
+than from one constant. The child end of a to-one link is more numerous than
+the parent end -- a file store has more files than folders and more folders
+than users -- so the count fans out with depth and stops at a cap, because the
+census is eager and a five-deep document would otherwise ask for ten thousand
+leaves. `world.count` still sets a flat default for everything, `world.counts`
+still names one entity, and `world.scale` multiplies whatever the default
+resolved to, which is how a mount asks for a bigger world without naming every
+entity in it. Size is not a cosmetic setting: an entity smaller than one page
+hands a client the whole population in a single request, and a five-member enum
+needs about forty draws before anything can tell its distribution from uniform,
+so a world too small to sample is a world whose statistics cannot be tested.
+
 `ferrimock world doctor` lints the generated world for the things that give a
 mock away, and it is the number any change to the world is judged against. It
 runs with no corpus, because the case a mock exists for is the one where no

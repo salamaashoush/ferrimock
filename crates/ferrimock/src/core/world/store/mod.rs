@@ -34,8 +34,31 @@ use super::model::{
 use crate::fake_data::rng;
 use values::ValueSeed;
 
-/// How many instances an entity gets when neither it nor the caller says.
-pub const DEFAULT_SEED_COUNT: usize = 12;
+/// How many instances an entity at the top of the graph gets when neither it
+/// nor the caller says.
+///
+/// Larger than a default page on purpose. At twelve, one unpaginated request
+/// returned the entire population of every entity — the loudest signature the
+/// engine had — and nothing statistical about the world could be measured at
+/// all: a five-member enum needs about forty draws before a chi-square can
+/// tell it from uniform, so the tests for every distribution fix would have
+/// had nothing to run against.
+pub const DEFAULT_SEED_COUNT: usize = 40;
+
+/// How much more numerous each step down the graph is.
+///
+/// A file store has more files than folders and more folders than users. One
+/// constant for every entity says the opposite — that a schema's shape carries
+/// no information about how many of each thing there are — and it is wrong in
+/// the direction a client notices, because the collection it pages through
+/// most is the one furthest down.
+const FANOUT: usize = 3;
+
+/// Where the fanout stops.
+///
+/// A five-deep document would otherwise ask for ten thousand instances of its
+/// leaf entity, and the census is eager: every key is derived at load.
+pub const MAX_SEED_COUNT: usize = 600;
 
 /// One materialised instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,8 +89,13 @@ pub struct PageResult {
 #[derive(Debug, Clone)]
 pub struct StoreConfig {
     pub seed: u64,
-    /// Instances per entity when the entity does not specify.
-    pub default_count: usize,
+    /// Instances per entity when the entity does not specify. `None` reads it
+    /// off the entity's place in the graph instead.
+    pub default_count: Option<usize>,
+    /// Multiplies whatever the default resolves to, so a mount can ask for a
+    /// bigger world without naming every entity in it. Counts stated per
+    /// entity are what the caller said and are left alone.
+    pub scale: f64,
     /// Per-entity overrides, by entity name.
     pub counts: FxHashMap<LeanString, usize>,
     /// Whether removing a record also removes what points at it. Without it a
@@ -79,7 +107,8 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             seed: 0,
-            default_count: DEFAULT_SEED_COUNT,
+            default_count: None,
+            scale: 1.0,
             counts: FxHashMap::default(),
             cascade_delete: true,
         }
@@ -597,7 +626,9 @@ impl EntityStore {
         reserved: &FxHashMap<LeanString, Vec<EntityKey>>,
     ) -> Self {
         let mut census = FxHashMap::default();
-        for name in &graph.seed_order().order {
+        let order = graph.seed_order();
+        let depths = fanout_depths(&graph, &order.order);
+        for name in &order.order {
             let Some(entity) = graph.get(name) else {
                 continue;
             };
@@ -606,7 +637,12 @@ impl EntityStore {
                 .get(name)
                 .copied()
                 .or(entity.seed_count)
-                .unwrap_or(config.default_count);
+                .unwrap_or_else(|| {
+                    let base = config
+                        .default_count
+                        .unwrap_or_else(|| fanned_out(depths.get(name).copied().unwrap_or(0)));
+                    scaled(base, config.scale)
+                });
             census.insert(
                 name.clone(),
                 build_census(config.seed, entity, count, reserved.get(name)),
@@ -1827,6 +1863,56 @@ impl EntityStore {
             .get(usize::try_from(owner).ok()?)
             .cloned()
     }
+}
+
+/// How many instances an entity at a given depth gets.
+fn fanned_out(depth: u32) -> usize {
+    DEFAULT_SEED_COUNT
+        .saturating_mul(FANOUT.saturating_pow(depth))
+        .min(MAX_SEED_COUNT)
+}
+
+/// A count with the world's scale applied, never rounded away to nothing.
+fn scaled(count: usize, scale: f64) -> usize {
+    if !scale.is_finite() || scale <= 0.0 {
+        return count;
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a census size, clamped below by one and above by the cap"
+    )]
+    let wanted = (count as f64 * scale).round() as usize;
+    wanted.clamp(1, MAX_SEED_COUNT.max(count))
+}
+
+/// How far each entity sits below the top of the graph.
+///
+/// Read off the seed order, which is already the order that puts a link's
+/// target before the entity holding it — so one forward pass answers it, with
+/// no recursion to overflow on a long chain. An edge that had to be cut to
+/// break a cycle contributes nothing, which is the same thing the seeding
+/// itself does with it. A self-link is skipped: a hierarchy is one entity, and
+/// its depth is levels within itself rather than a step down the graph.
+fn fanout_depths(graph: &EntityGraph, order: &[LeanString]) -> FxHashMap<LeanString, u32> {
+    let mut depths: FxHashMap<LeanString, u32> = FxHashMap::default();
+    for name in order {
+        let Some(entity) = graph.get(name.as_str()) else {
+            continue;
+        };
+        let depth = entity
+            .relations()
+            .filter(|(_, relation)| relation.cardinality == Cardinality::One)
+            .flat_map(|(_, relation)| relation.concrete_targets().to_vec())
+            .filter(|target| target != name)
+            .filter_map(|target| depths.get(&target).copied())
+            .map(|above| above.saturating_add(1))
+            .max()
+            .unwrap_or(0);
+        depths.insert(name.clone(), depth);
+    }
+    depths
 }
 
 /// Derive `count` keys for an entity, stepping over any a created record

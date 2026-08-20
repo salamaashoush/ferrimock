@@ -41,6 +41,7 @@ struct Settings {
     seed_source: Option<PathBuf>,
     default_count: Option<usize>,
     default_count_source: Option<PathBuf>,
+    scale: Option<f64>,
     counts: FxHashMap<LeanString, usize>,
     cascade_delete: Option<bool>,
     overrides: FieldRules,
@@ -53,8 +54,9 @@ impl Settings {
                 .or_else(crate::fake_data::rng::global_seed)
                 .unwrap_or(0),
         );
-        if let Some(count) = self.default_count {
-            config.default_count = count;
+        config.default_count = self.default_count;
+        if let Some(scale) = self.scale {
+            config.scale = scale;
         }
         if let Some(cascade) = self.cascade_delete {
             config.cascade_delete = cascade;
@@ -85,6 +87,9 @@ fn contested<'a, T: PartialEq + Copy>(
 pub struct WorldSettings {
     pub seed: Option<u64>,
     pub default_count: Option<usize>,
+    /// Multiplies whatever the default resolves to, so a mount can ask for a
+    /// bigger world without naming every entity in it.
+    pub scale: Option<f64>,
     pub counts: FxHashMap<LeanString, usize>,
     /// Whether removing a record also removes what points at it. `None` keeps
     /// whatever the world already had.
