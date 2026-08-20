@@ -1434,6 +1434,8 @@ impl EntityStore {
             .get(entity.name.as_str(), key)
             .ok_or_else(|| crate::mp_err!("`{}` with key `{key}` not found", entity.name))?;
 
+        refuse_backward_states(entity, &existing.fields, &provided)?;
+
         let mut fields = if replace {
             JsonMap::new()
         } else {
@@ -1476,11 +1478,11 @@ impl EntityStore {
 
         let dependents = self.dependents_of(entity.name.as_str(), key);
         if !dependents.is_empty() && !self.config.cascade_delete {
-            return Err(crate::mp_err!(
+            return Err(crate::FerrimockError::Conflict(format!(
                 "`{}` `{key}` still has {} dependent record(s)",
                 entity.name,
                 dependents.len()
-            ));
+            )));
         }
 
         // To a fixpoint, not one generation. Over a real hierarchy a single
@@ -2195,6 +2197,48 @@ fn derive_key(
     EntityKey::from_parts(scalars.iter().map(|(field, scalar)| {
         values::derive_key_value(seed, entity, field.as_deref(), scalar, ordinal, arrival)
     }))
+}
+
+/// Refuse a write that moves a record backwards through its own lifecycle.
+///
+/// A delivered order cannot return to draft. A service that let it would be
+/// broken, so the mock answers the way the real one does rather than storing
+/// the contradiction — which is the whole point of declaring the lifecycle at
+/// all.
+fn refuse_backward_states(
+    entity: &EntityType,
+    held: &JsonMap<String, JsonValue>,
+    provided: &JsonMap<String, JsonValue>,
+) -> crate::Result<()> {
+    for field in &entity.fields {
+        let ValueSpec::Lifecycle(lifecycle) = &field.value else {
+            continue;
+        };
+        let Some(wanted) = provided
+            .get(field.name.as_str())
+            .and_then(JsonValue::as_str)
+        else {
+            continue;
+        };
+        let Some(to) = lifecycle.position_of(wanted) else {
+            return Err(crate::FerrimockError::Conflict(format!(
+                "`{}` has no state `{wanted}`",
+                field.name
+            )));
+        };
+        let was = held.get(field.name.as_str()).and_then(JsonValue::as_str);
+        if was
+            .and_then(|state| lifecycle.position_of(state))
+            .is_some_and(|from| to < from)
+        {
+            return Err(crate::FerrimockError::Conflict(format!(
+                "`{}` cannot move from `{}` back to `{wanted}`",
+                field.name,
+                was.unwrap_or_default()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The scalar describing one named field, defaulting to an opaque identifier.

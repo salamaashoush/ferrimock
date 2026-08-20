@@ -415,6 +415,17 @@ one per write -- that keeping them apart prevents.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+A status field is a position in a lifecycle, not a categorical draw.
+`world.states` declares one per `Entity.field`, and what it declares is an
+*implication*: `shipped` means `shipped_at` holds a value and `delivered_at`
+does not. No correlation reproduces that -- a latent gives a probability where
+the schema needs a certainty -- so the fields a state names are cleared after
+everything else has run. The order is the lifecycle, which is why it is written
+as a sequence rather than a mapping: a YAML mapping does not promise to keep
+the order it was written in, and the order is the whole content. Writes move
+along it, so a delivered order cannot return to draft and attempting it is the
+409 the real service would also answer.
+
 `core::world::store::clock` is the world's history. A creation time is a
 monotone function of the ordinal and of nothing else -- in particular not of
 how many instances exist, because placing arrival *i* among *N* would make

@@ -320,7 +320,12 @@ fn explain(world: &World, verbose: bool) {
 
         let scalars: Vec<&str> = entity
             .value_fields()
-            .filter(|f| matches!(f.value, ValueSpec::Scalar(_) | ValueSpec::Enum(_)))
+            .filter(|f| {
+                matches!(
+                    f.value,
+                    ValueSpec::Scalar(_) | ValueSpec::Enum(_) | ValueSpec::Lifecycle(_)
+                )
+            })
             .map(|f| f.name.as_str())
             .collect();
         if !scalars.is_empty() {

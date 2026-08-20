@@ -22,7 +22,7 @@ use rustc_hash::FxHashMap;
 use serde_json::Value as JsonValue;
 
 use super::model::{
-    Constraints, EntityGraph, EntityType, Scalar, ScalarKind, TextShape, ValueSpec,
+    Constraints, EntityGraph, EntityType, Lifecycle, Scalar, ScalarKind, TextShape, ValueSpec,
 };
 use crate::type_detector::FieldType;
 
@@ -37,6 +37,9 @@ pub enum FieldRule {
     Shape(TextShape),
     /// One of a fixed set.
     OneOf(Vec<LeanString>),
+    /// A position in a lifecycle, with what each state implies about the rest
+    /// of the record.
+    Lifecycle(Lifecycle),
     /// Always this.
     Constant(JsonValue),
     /// A number in a range.
@@ -279,6 +282,7 @@ fn rewrite(value: &mut ValueSpec, rule: &FieldRule) {
             ..existing.with_shape(*shape)
         }),
         FieldRule::OneOf(options) => ValueSpec::Enum(options.clone()),
+        FieldRule::Lifecycle(lifecycle) => ValueSpec::Lifecycle(Box::new(lifecycle.clone())),
         FieldRule::Constant(constant) => {
             ValueSpec::Scalar(existing.with_semantic(FieldType::Constant(constant.clone())))
         }

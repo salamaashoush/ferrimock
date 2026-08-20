@@ -210,6 +210,12 @@ impl BoundOperation {
                 };
                 match written {
                     Ok(record) => self.ok(&self.wrap_one(entity, record)),
+                    // A write the world's own state refuses is a conflict, not
+                    // a missing record: the record is right there, and what it
+                    // holds is the reason the write cannot land.
+                    Err(crate::FerrimockError::Conflict(why)) => {
+                        Self::failed(StatusCode::CONFLICT, &why)
+                    }
                     Err(_) => Self::not_found(entity, key),
                 }
             }

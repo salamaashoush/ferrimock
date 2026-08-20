@@ -434,6 +434,8 @@ pub enum ValueSpec {
     Scalar(Scalar),
     /// One of a fixed set of strings.
     Enum(Vec<LeanString>),
+    /// A position in a lifecycle, which is not the same thing as one of a set.
+    Lifecycle(Box<Lifecycle>),
     List(Box<ValueSpec>),
     /// A structured value with no identity of its own — inlined, never stored.
     Embedded(Vec<FieldDef>),
@@ -539,6 +541,40 @@ pub enum ScalarKind {
     Id,
     /// A scalar the spec named but did not define (`DateTime`, `JSON`, …).
     Custom(LeanString),
+}
+
+/// A field whose value is a position in a lifecycle.
+///
+/// A status is not a categorical draw. `shipped` *means* `shipped_at` holds a
+/// value and `delivered_at` does not — a logical implication, and no
+/// correlation reproduces one: a latent gives a probability where the schema
+/// needs a certainty. Ordering is the other half: a delivered order cannot go
+/// back to draft, and a service that let it would be broken.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lifecycle {
+    /// In order. A record moves to a later state, never to an earlier one.
+    pub states: Vec<LifecycleState>,
+}
+
+impl Lifecycle {
+    #[must_use]
+    pub fn position_of(&self, state: &str) -> Option<usize> {
+        self.states.iter().position(|held| held.name == state)
+    }
+
+    #[must_use]
+    pub fn state(&self, at: usize) -> Option<&LifecycleState> {
+        self.states.get(at)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifecycleState {
+    pub name: LeanString,
+    /// How much of the population sits here.
+    pub weight: f64,
+    /// Fields that hold nothing while a record is in this state.
+    pub empty: Vec<LeanString>,
 }
 
 /// Bounds a generated value has to respect.

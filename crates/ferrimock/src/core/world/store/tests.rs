@@ -2055,3 +2055,193 @@ fn a_created_record_keeps_the_values_the_caller_sent() {
     );
     assert_eq!(store.get("Person", &made.key).unwrap().fields, made.fields);
 }
+
+fn ordered_store(seed: u64, orders: usize) -> EntityStore {
+    use crate::core::world::model::{Lifecycle, LifecycleState};
+
+    let state = |name: &str, weight: f64, empty: &[&str]| LifecycleState {
+        name: name.into(),
+        weight,
+        empty: empty.iter().map(|held| (*held).into()).collect(),
+    };
+    let lifecycle = Lifecycle {
+        states: vec![
+            state("draft", 5.0, &["paid_at", "shipped_at", "delivered_at"]),
+            state("paid", 40.0, &["shipped_at", "delivered_at"]),
+            state("shipped", 35.0, &["delivered_at"]),
+            state("delivered", 20.0, &[]),
+        ],
+    };
+
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Order")
+            .with_field(FieldDef::new(
+                "status",
+                ValueSpec::Lifecycle(Box::new(lifecycle)),
+                false,
+            ))
+            .with_field(timestamp_field("paid_at"))
+            .with_field(timestamp_field("shipped_at"))
+            .with_field(timestamp_field("delivered_at")),
+    );
+    EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(seed).with_count("Order", orders),
+    )
+}
+
+fn timestamp_field(name: &str) -> FieldDef {
+    let mut inner = Scalar::new(ScalarKind::String);
+    inner.semantic = Some(crate::type_detector::FieldType::Timestamp {
+        format: crate::type_detector::TimestampFormat::Rfc3339Utc,
+    });
+    FieldDef::new(name, ValueSpec::Scalar(inner), true)
+}
+
+/// `shipped` *means* `shipped_at` holds a value and `delivered_at` does not.
+/// That is an implication, not a correlation: no latent produces it, because a
+/// latent gives a probability where the schema needs a certainty.
+#[test]
+fn a_state_decides_what_the_rest_of_the_record_can_hold() {
+    let store = ordered_store(3, 300);
+    let mut seen: Vec<String> = Vec::new();
+
+    for key in store.keys("Order") {
+        let record = store.get("Order", &key).unwrap();
+        let status = record.get("status").unwrap().as_str().unwrap().to_string();
+        let filled = |name: &str| record.get(name).is_some_and(|held| !held.is_null());
+
+        match status.as_str() {
+            "draft" => {
+                assert!(!filled("paid_at") && !filled("shipped_at") && !filled("delivered_at"));
+            }
+            "paid" => assert!(!filled("shipped_at") && !filled("delivered_at")),
+            "shipped" => assert!(!filled("delivered_at")),
+            "delivered" => {}
+            other => panic!("`{other}` is not a state of this lifecycle"),
+        }
+        seen.push(status);
+    }
+
+    for state in ["draft", "paid", "shipped", "delivered"] {
+        assert!(
+            seen.iter().any(|held| held == state),
+            "`{state}` never came up"
+        );
+    }
+    let drafts = seen.iter().filter(|held| *held == "draft").count();
+    let paid = seen.iter().filter(|held| *held == "paid").count();
+    assert!(
+        paid > drafts * 3,
+        "the weights are the caller's: {paid} paid against {drafts} draft"
+    );
+}
+
+/// A delivered order cannot return to draft. A service that let it would be
+/// broken, and answering the way the real one does is the point of declaring
+/// the lifecycle.
+#[test]
+fn a_record_cannot_move_backwards_through_its_own_lifecycle() {
+    let store = ordered_store(3, 300);
+    let delivered = store
+        .keys("Order")
+        .into_iter()
+        .find(|key| {
+            store
+                .get("Order", key)
+                .and_then(|record| {
+                    record
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                })
+                .as_deref()
+                == Some("delivered")
+        })
+        .expect("a delivered order");
+
+    let refused = store.apply(
+        "Order",
+        Mutation::Patch {
+            key: delivered.clone(),
+            values: serde_json::json!({ "status": "draft" }),
+        },
+    );
+    assert!(
+        matches!(refused, Err(crate::FerrimockError::Conflict(_))),
+        "{refused:?}"
+    );
+
+    let unknown = store.apply(
+        "Order",
+        Mutation::Patch {
+            key: delivered,
+            values: serde_json::json!({ "status": "incinerated" }),
+        },
+    );
+    assert!(matches!(unknown, Err(crate::FerrimockError::Conflict(_))));
+
+    let draft = store
+        .keys("Order")
+        .into_iter()
+        .find(|key| {
+            store
+                .get("Order", key)
+                .and_then(|record| {
+                    record
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                })
+                .as_deref()
+                == Some("draft")
+        })
+        .expect("a draft order");
+    assert!(
+        store
+            .apply(
+                "Order",
+                Mutation::Patch {
+                    key: draft,
+                    values: serde_json::json!({ "status": "shipped" }),
+                },
+            )
+            .is_ok(),
+        "moving forward is what a lifecycle is for"
+    );
+}
+
+#[test]
+fn a_written_state_still_decides_what_the_record_holds() {
+    let store = ordered_store(3, 300);
+    let draft = store
+        .keys("Order")
+        .into_iter()
+        .find(|key| {
+            store
+                .get("Order", key)
+                .and_then(|record| {
+                    record
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                })
+                .as_deref()
+                == Some("draft")
+        })
+        .expect("a draft order");
+
+    store
+        .apply(
+            "Order",
+            Mutation::Patch {
+                key: draft.clone(),
+                values: serde_json::json!({ "status": "paid" }),
+            },
+        )
+        .unwrap();
+
+    let record = store.get("Order", &draft).unwrap();
+    assert_eq!(record.get("status").unwrap().as_str(), Some("paid"));
+}

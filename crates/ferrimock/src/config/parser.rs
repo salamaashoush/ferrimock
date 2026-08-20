@@ -119,6 +119,18 @@ pub struct WorldConfig {
         schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
     )]
     pub scalars: Option<std::collections::BTreeMap<String, FieldOverride>>,
+
+    /// What a status field means, keyed by `Entity.field`.
+    ///
+    /// A sequence rather than a mapping, because the order *is* the lifecycle:
+    /// a record moves to a later state and never to an earlier one, and a YAML
+    /// mapping does not promise to keep the order it was written in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
+    )]
+    pub states: Option<std::collections::BTreeMap<String, Vec<StateConfig>>>,
 }
 
 /// What an override says a field holds.
@@ -180,8 +192,32 @@ impl WorldConfig {
                 resolve(declared, stated)?,
             );
         }
+        for (target, states) in self.states.iter().flatten() {
+            rules.insert(parse_target(target), lifecycle_of(target, states)?);
+        }
         Ok(rules)
     }
+}
+
+/// One state of a lifecycle, and what a record in it does not carry.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct StateConfig {
+    pub name: String,
+
+    /// How much of the population sits here.
+    #[serde(default = "one")]
+    pub weight: f64,
+
+    /// Fields a record in this state does not have. An order that has not
+    /// shipped has no `shipped_at`, and a payload carrying one is a
+    /// contradiction rather than an unlikely value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub empty: Vec<String>,
+}
+
+const fn one() -> f64 {
+    1.0
 }
 
 /// `User.email`, `*.email` or a bare `email` — all three name a place.
@@ -196,6 +232,34 @@ fn parse_target(target: &str) -> crate::core::world::overrides::RuleKey {
         },
         None => RuleKey::AnyEntity(LeanString::from(target)),
     }
+}
+
+fn lifecycle_of(
+    target: &str,
+    states: &[StateConfig],
+) -> crate::Result<crate::core::world::overrides::FieldRule> {
+    use crate::core::world::model::{Lifecycle, LifecycleState};
+    use crate::core::world::overrides::FieldRule;
+
+    if states.len() < 2 {
+        return Err(crate::mp_err!(
+            "`{target}` is a lifecycle, so it needs at least two states"
+        ));
+    }
+    Ok(FieldRule::Lifecycle(Lifecycle {
+        states: states
+            .iter()
+            .map(|state| LifecycleState {
+                name: LeanString::from(state.name.as_str()),
+                weight: state.weight,
+                empty: state
+                    .empty
+                    .iter()
+                    .map(|name| LeanString::from(name.as_str()))
+                    .collect(),
+            })
+            .collect(),
+    }))
 }
 
 fn resolve(

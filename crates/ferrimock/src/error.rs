@@ -24,6 +24,9 @@ pub enum FerrimockError {
     /// A referenced item was not found.
     #[error("not found: {0}")]
     NotFound(String),
+    /// The request contradicts the state the world is in.
+    #[error("conflict: {0}")]
+    Conflict(String),
     /// Script evaluation or scripted handler failure.
     #[error("script error: {0}")]
     Script(String),
