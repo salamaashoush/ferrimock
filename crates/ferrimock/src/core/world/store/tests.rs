@@ -306,6 +306,75 @@ fn a_patch_survives_and_leaves_the_rest_alone() {
     assert_eq!(updated.get("id"), original.get("id"));
 }
 
+/// A replacement has to be a replacement on the next read too. Storing it as
+/// a patch made the same verb mean two things: on a seeded record the delta
+/// was merged back over the derived values, so a `PUT` that dropped a field
+/// got that field back; on a created record it was returned verbatim.
+#[test]
+fn a_replace_still_reads_as_a_replace_on_the_next_get() {
+    let store = blog_store(21, 3, 6);
+    let key = store.keys("Post").into_iter().next().unwrap();
+    assert!(store.get("Post", &key).unwrap().get("title").is_some());
+
+    let replaced = store
+        .apply(
+            "Post",
+            Mutation::Replace {
+                key: key.clone(),
+                values: serde_json::json!({ "author": null }),
+            },
+        )
+        .unwrap();
+    let Written::Updated(answered) = replaced else {
+        panic!("a replace answers with the record")
+    };
+    assert!(answered.get("title").is_none());
+
+    let read = store.get("Post", &key).unwrap();
+    assert_eq!(
+        read.fields, answered.fields,
+        "the response to a PUT and the next GET are the same record"
+    );
+    assert!(
+        read.get("title").is_none(),
+        "a field the caller dropped came back from the derived layer"
+    );
+}
+
+/// The same verb on a record the client created, which is where replacing
+/// already worked — both provenances have to answer the same way.
+#[test]
+fn a_replace_reads_the_same_way_whatever_the_record_was() {
+    let store = blog_store(21, 3, 6);
+    let Written::Created(made) = store
+        .apply(
+            "Post",
+            Mutation::Insert {
+                values: serde_json::json!({ "title": "First" }),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("an insert answers with the record")
+    };
+
+    for key in [made.key, store.keys("Post").into_iter().next().unwrap()] {
+        let Written::Updated(answered) = store
+            .apply(
+                "Post",
+                Mutation::Replace {
+                    key: key.clone(),
+                    values: serde_json::json!({ "title": "Only" }),
+                },
+            )
+            .unwrap()
+        else {
+            panic!("a replace answers with the record")
+        };
+        assert_eq!(store.get("Post", &key).unwrap().fields, answered.fields);
+    }
+}
+
 #[test]
 fn a_replace_drops_unmentioned_fields_but_keeps_the_key() {
     let store = blog_store(6, 3, 3);

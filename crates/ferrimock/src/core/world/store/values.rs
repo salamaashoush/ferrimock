@@ -516,7 +516,16 @@ fn kind_value(scalar: &Scalar, path: &str, seed: ValueSeed<'_>, derived: u64) ->
         ScalarKind::Id => JsonValue::String(fake_data::fake_uuid()),
         ScalarKind::String | ScalarKind::Custom(_) => JsonValue::String(match scalar.shape {
             TextShape::Prose => bounded_string(constraints, path),
-            TextShape::Word => fake_data::fake_word().to_lowercase(),
+            // A closed set the field name actually implies, drawn the way an
+            // enum is: `"status": "perferendis"` is not a value a distribution
+            // can fix, because it does not mean what the field says.
+            TextShape::Word => {
+                let vocabulary = fake_data::token_vocabulary(path);
+                let ranking = Ranking::of(vocabulary.len(), seed.per_field(path, "ranking"));
+                vocabulary
+                    .get(ranking.pick(derived))
+                    .map_or_else(String::new, |token| (*token).to_string())
+            }
             TextShape::Slug => fake_data::fake_slug(),
         }),
     }
@@ -824,6 +833,60 @@ mod tests {
         let most = counts.iter().copied().max().unwrap_or(0);
         let least = counts.iter().copied().min().unwrap_or(0);
         assert!(most > least * 2, "a flat enum: {counts:?}");
+    }
+
+    fn shaped(name: &str, shape: TextShape) -> FieldDef {
+        let inner = Scalar::new(ScalarKind::String).with_shape(shape);
+        FieldDef::new(name, ValueSpec::Scalar(inner), false)
+    }
+
+    /// `"status": "perferendis"` is not a value a distribution can fix: it does
+    /// not mean what the field name says, and a client switching on it breaks
+    /// on the first record.
+    #[test]
+    fn a_short_token_field_holds_a_word_its_own_name_implies() {
+        for (name, expected) in [
+            ("status", "active"),
+            ("sync_state", "pending"),
+            ("collection_type", "standard"),
+            ("member_role", "owner"),
+            ("log_level", "critical"),
+        ] {
+            let vocabulary = fake_data::token_vocabulary(name);
+            assert!(
+                vocabulary.contains(&expected),
+                "`{name}` should draw from a set holding `{expected}`"
+            );
+            let drawn = drawn_values(shaped(name, TextShape::Word), 300);
+            for value in &drawn {
+                let held = value.as_str().unwrap_or_default();
+                assert!(
+                    vocabulary.contains(&held),
+                    "`{name}` answered `{held}`, which is not one of its own tokens"
+                );
+            }
+            let mut distinct: Vec<&str> = drawn.iter().filter_map(|value| value.as_str()).collect();
+            distinct.sort_unstable();
+            distinct.dedup();
+            assert!(distinct.len() > 1, "`{name}` only ever answers one thing");
+        }
+    }
+
+    #[test]
+    fn a_slug_is_built_from_words_a_person_could_have_written() {
+        let stems = fake_data::slug_stems();
+        for value in drawn_values(shaped("share_slug", TextShape::Slug), 300) {
+            let held = value.as_str().unwrap_or_default();
+            assert!(!held.is_empty());
+            let words: Vec<&str> = held.split('-').collect();
+            assert!((2..=4).contains(&words.len()), "{held}");
+            for word in words {
+                assert!(
+                    stems.contains(&word) || word.chars().all(|c| c.is_ascii_digit()),
+                    "`{held}` holds `{word}`, which is not a word"
+                );
+            }
+        }
     }
 
     /// `required` and `nullable` are separate answers, so an optional field

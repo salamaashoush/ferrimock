@@ -697,7 +697,14 @@ fn membership_sides<'a>(left: &'a str, right: &'a str) -> (&'a str, &'a str) {
 #[derive(Debug, Clone)]
 enum Delta {
     Created(JsonMap<String, JsonValue>),
+    /// Fields merged over what the record derives.
     Patched(JsonMap<String, JsonValue>),
+    /// The whole record, standing in place of what it derives.
+    ///
+    /// Distinct from a patch because a replacement is not a layer: a `PUT`
+    /// that omits a field means the field is gone, and merging it back over
+    /// the derived values would hand the caller a value it had just removed.
+    Replaced(JsonMap<String, JsonValue>),
     Tombstone,
 }
 
@@ -831,7 +838,7 @@ impl EntityStore {
         let entity_type = self.graph.get(entity)?;
 
         let fields = match self.delta.get(&(entity.into(), key.clone())).as_deref() {
-            Some(Delta::Created(values)) => values.clone(),
+            Some(Delta::Created(values) | Delta::Replaced(values)) => values.clone(),
             Some(Delta::Patched(patch)) => {
                 let mut base = self.base_fields(entity_type, key)?;
                 for (k, v) in patch {
@@ -1423,16 +1430,20 @@ impl EntityStore {
         }
         write_key_fields(entity, key, &mut fields);
 
+        // A replacement is stored as one, whatever the record's provenance.
+        // Keeping it as a patch made the same verb mean two things: on a
+        // seeded record `get` merged it back over the derived values, so a
+        // `PUT` that dropped a field got that field back on the next `GET`,
+        // while on a created record the delta was returned verbatim and the
+        // replacement really replaced.
         let slot = (entity.name.clone(), key.clone());
         let created = matches!(self.delta.get(&slot).as_deref(), Some(Delta::Created(_)));
-        self.delta.insert(
-            slot,
-            if created {
-                Delta::Created(fields.clone())
-            } else {
-                Delta::Patched(fields.clone())
-            },
-        );
+        let held = match (created, replace) {
+            (true, _) => Delta::Created(fields.clone()),
+            (false, true) => Delta::Replaced(fields.clone()),
+            (false, false) => Delta::Patched(fields.clone()),
+        };
+        self.delta.insert(slot, held);
 
         Ok(Written::Updated(Record {
             entity: entity.name.clone(),
@@ -1570,14 +1581,16 @@ impl EntityStore {
     /// Put a snapshot's writes back on, reporting the ones that no longer fit.
     ///
     /// A creation carries its own fields, so it survives any rebuild. A patch
-    /// is a layer over a derived record, so it survives only while the record
-    /// it layers over still exists — shrinking an entity's count can take that
-    /// away, and the caller is told rather than left with a silent hole.
+    /// or a replacement stands in for a derived record, so it survives only
+    /// while the record it stands in for still exists — shrinking an entity's
+    /// count can take that away, and the caller is told rather than left with
+    /// a silent hole.
     pub fn import_delta(&self, snapshot: DeltaSnapshot) -> Vec<DeltaConflict> {
         let mut conflicts = Vec::new();
 
         for (entity, key, delta) in snapshot.entries {
-            if matches!(delta, Delta::Patched(_))
+            // Both layer over a record the census still has to hold.
+            if matches!(delta, Delta::Patched(_) | Delta::Replaced(_))
                 && self.ordinal_of(entity.as_str(), &key).is_none()
             {
                 conflicts.push(DeltaConflict {
@@ -1939,9 +1952,11 @@ impl EntityStore {
             .filter(|entry| entry.key().0 == entity)
             .map(|entry| {
                 let stated = match entry.value() {
-                    Delta::Created(fields) | Delta::Patched(fields) => carrier
-                        .and_then(|carrier| fields.get(carrier.as_str()))
-                        .and_then(values::key_text),
+                    Delta::Created(fields) | Delta::Patched(fields) | Delta::Replaced(fields) => {
+                        { carrier }
+                            .and_then(|carrier| fields.get(carrier.as_str()))
+                            .and_then(values::key_text)
+                    }
                     Delta::Tombstone => None,
                 };
                 (entry.key().1.clone(), stated)
