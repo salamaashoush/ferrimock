@@ -136,6 +136,59 @@ impl Ranking {
     }
 }
 
+/// A skewed preference over a large set, with its weights computed once.
+///
+/// The same shape [`Ranking`] draws, kept rather than recomputed. An enum has
+/// a handful of members and a census has hundreds, so walking a cumulative
+/// sum per draw is fine for one and quadratic for the other.
+#[derive(Debug, Clone)]
+pub struct Preference {
+    carried: Vec<f64>,
+    order: u64,
+}
+
+impl Preference {
+    #[must_use]
+    pub fn of(members: usize, derived: u64) -> Self {
+        let exponent = between(LEAST_SKEW, MOST_SKEW, unit(derived));
+        let mut carried = Vec::with_capacity(members + 1);
+        let mut running = 0.0;
+        carried.push(0.0);
+        for rank in 0..members {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a rank inside a census, far below the f64 mantissa"
+            )]
+            let position = (rank + 1) as f64;
+            running += position.powf(-exponent);
+            carried.push(running);
+        }
+        Self {
+            carried,
+            order: derived.rotate_left(17),
+        }
+    }
+
+    #[must_use]
+    pub fn members(&self) -> usize {
+        self.carried.len().saturating_sub(1)
+    }
+
+    /// Which member one draw lands on.
+    #[must_use]
+    pub fn pick(&self, derived: u64) -> usize {
+        let members = self.members();
+        if members <= 1 {
+            return 0;
+        }
+        let total = self.carried.last().copied().unwrap_or(1.0);
+        let target = unit(derived) * total;
+        let at = self.carried.partition_point(|edge| *edge <= target);
+        let rank = at.saturating_sub(1).min(members - 1);
+        permuted(rank, members, self.order)
+    }
+}
+
 /// How often a flag is set.
 ///
 /// Never a fair coin. A real boolean is lopsided in one direction or the

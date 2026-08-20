@@ -257,24 +257,56 @@ fn children_do_not_arrive_in_one_run_per_parent() {
     }
 }
 
+/// Both sides of a many-to-many have a tail now: the degree is drawn rather
+/// than fixed at one or two, and anchors are drawn by preference, so
+/// inverting the attachment does not give every collection the same size.
 #[test]
-fn a_many_to_many_reports_its_two_bar_degree_histogram() {
+fn a_many_to_many_has_more_than_two_degrees_on_either_side() {
     let mut graph = EntityGraph::new();
     graph.insert(entity("Doc").with_field(link("collections", "Collection", Cardinality::Many)));
     graph.insert(entity("Collection").with_field(link("items", "Doc", Cardinality::Many)));
     let store = EntityStore::new(
         Arc::new(graph),
         StoreConfig::seeded(9)
-            .with_count("Doc", 60)
-            .with_count("Collection", 12),
+            .with_count("Doc", 300)
+            .with_count("Collection", 40),
     );
 
     let report = examine(&store);
-    let found = failed(&report, Check::MembershipDegree);
     assert!(
-        found.iter().any(|f| f.subject == "Doc.collections"),
-        "{found:?}"
+        failed(&report, Check::MembershipDegree).is_empty(),
+        "{:?}",
+        failed(&report, Check::MembershipDegree)
     );
+
+    let sizes = |entity: &str, field: &str| {
+        let mut held: Vec<usize> = store
+            .keys(entity)
+            .into_iter()
+            .filter_map(|key| {
+                store
+                    .related(entity, &key, field, &Selection::new())
+                    .ok()
+                    .map(|page| page.total)
+            })
+            .collect();
+        held.sort_unstable();
+        held
+    };
+
+    for (entity, field) in [("Doc", "collections"), ("Collection", "items")] {
+        let held = sizes(entity, field);
+        let largest = held.last().copied().unwrap_or(0);
+        let middle = held.get(held.len() / 2).copied().unwrap_or(0);
+        assert!(
+            held.first() == Some(&0),
+            "{entity}.{field}: nothing is in nothing"
+        );
+        assert!(
+            largest > middle * 3,
+            "{entity}.{field} has no tail: median {middle}, largest {largest}"
+        );
+    }
 }
 
 #[test]

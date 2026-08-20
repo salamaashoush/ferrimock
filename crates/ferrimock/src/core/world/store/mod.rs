@@ -35,6 +35,7 @@ use super::model::{
     ScalarKind, ValueSpec,
 };
 use crate::fake_data::{self, rng};
+use distribution::Preference;
 use values::{Arrival, ValueSeed};
 
 /// How many instances an entity at the top of the graph gets when neither it
@@ -651,17 +652,28 @@ struct Membership {
     by_anchor: Vec<Vec<u32>>,
     /// Member position -> the anchor positions it holds.
     by_member: Vec<Vec<u32>>,
+    /// Which anchors are popular. Kept, because a member created at runtime is
+    /// not in the table and has to draw from the same preference the table was
+    /// built from.
+    preference: Preference,
 }
 
 impl Membership {
     fn of(seed: u64, anchor: &str, anchors: usize, member: &str, ordinals: &[u64]) -> Self {
+        // Built once for the whole table rather than per member: an enum has a
+        // handful of members and a census has hundreds, so walking a
+        // cumulative sum per draw would be quadratic here.
+        let preference = Preference::of(
+            anchors,
+            rng::derive_seed(seed, &format!("{anchor}<->{member}#preference"), 0),
+        );
         let mut by_anchor = vec![Vec::new(); anchors];
         let mut by_member = Vec::with_capacity(ordinals.len());
         for (slot, ordinal) in ordinals.iter().enumerate() {
             let Ok(position) = u32::try_from(slot) else {
                 break;
             };
-            let mut held: Vec<u32> = membership_of(seed, anchor, anchors, member, *ordinal)
+            let mut held: Vec<u32> = membership_of(seed, anchor, &preference, member, *ordinal)
                 .into_iter()
                 .filter_map(|index| u32::try_from(index).ok())
                 .collect();
@@ -682,6 +694,7 @@ impl Membership {
         Self {
             by_anchor,
             by_member,
+            preference,
         }
     }
 }
@@ -1238,11 +1251,11 @@ impl EntityStore {
         let Some(ordinal) = self.ordinal_of(entity, key) else {
             return Vec::new();
         };
-        let anchors = self.census.get(target).map_or(0, |c| c.derived.len());
-        let mut drawn: Vec<u32> = membership_of(self.config.seed, target, anchors, entity, ordinal)
-            .into_iter()
-            .filter_map(|index| u32::try_from(index).ok())
-            .collect();
+        let mut drawn: Vec<u32> =
+            membership_of(self.config.seed, target, &table.preference, entity, ordinal)
+                .into_iter()
+                .filter_map(|index| u32::try_from(index).ok())
+                .collect();
         drawn.sort_unstable();
         drawn.dedup();
         drawn
@@ -2323,29 +2336,54 @@ fn key_value_json(entity: &EntityType, value: &str) -> JsonValue {
 
 /// The anchor instances one member belongs to.
 ///
+/// Which anchors one member holds.
+///
 /// Keyed by the lexicographically smaller entity name so the answer does not
 /// depend on which side is asking, which is what keeps the two directions of a
 /// many-to-many agreeing.
+///
+/// The degree is drawn rather than fixed. `1 + (base % 2)` gave every member
+/// exactly one or two anchors, fifty-fifty — a histogram with two bars, no
+/// member in nothing, and no member in many. And the anchors are drawn by
+/// *preference* rather than uniformly, so some collections are popular and
+/// most are not, which is what makes the other side of the relation
+/// heavy-tailed too: inverting a uniform attachment gives every anchor the
+/// same expected size.
 fn membership_of(
     seed: u64,
     anchor: &str,
-    anchor_count: usize,
+    preference: &Preference,
     member: &str,
     member_ordinal: u64,
 ) -> Vec<u64> {
-    if anchor_count == 0 {
+    /// How many anchors a member holds on average.
+    const TYPICAL_DEGREE: f64 = 1.6;
+    /// Where a long tail stops being a tail.
+    const MOST: usize = 24;
+
+    if preference.members() == 0 {
         return Vec::new();
     }
     let stream = format!("{member}<->{anchor}");
     let base = rng::derive_seed(seed, &stream, member_ordinal);
-    // One or two anchors each: enough that a collection holds several members
-    // and a member appears in more than one collection, without every pair
-    // being related to every other.
-    let degree = 1 + (base % 2);
-    (0..degree)
+    let drawn = distribution::Spread::Geometric {
+        mean: TYPICAL_DEGREE,
+    }
+    .draw(base);
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a degree, clamped to the anchors that exist"
+    )]
+    let degree = (drawn.max(0.0) as usize)
+        .min(MOST)
+        .min(preference.members());
+
+    (0..degree as u64)
         .map(|i| {
-            rng::derive_seed(seed, &stream, member_ordinal.wrapping_add(i * 0x9E37_79B9))
-                % anchor_count as u64
+            let word =
+                rng::derive_seed(seed, &stream, member_ordinal.wrapping_add(i * 0x9E37_79B9));
+            preference.pick(word) as u64
         })
         .collect()
 }
