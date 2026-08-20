@@ -1822,3 +1822,76 @@ fn a_cycle_does_not_make_a_world_the_census_cannot_build() {
         assert!(store.count(name) <= MAX_SEED_COUNT);
     }
 }
+
+/// The partition is what makes counting arithmetic, and it was also why every
+/// parent's children came out as exactly one run of the default order — a
+/// deterministic identity, not a statistic, visible in one response.
+#[test]
+fn a_parents_children_are_scattered_through_the_census() {
+    let store = counted_store(3, 10, 200);
+    let folders = store.keys("Folder");
+    let files = store.keys("File");
+    let position = |key: &EntityKey| files.iter().position(|held| held == key);
+
+    let mut spread = 0;
+    for folder in &folders {
+        let held = store
+            .related("Folder", folder, "items", &Selection::new())
+            .unwrap();
+        if held.records.len() < 4 {
+            continue;
+        }
+        let mut at: Vec<usize> = held
+            .records
+            .iter()
+            .filter_map(|r| position(&r.key))
+            .collect();
+        at.sort_unstable();
+        let runs = at
+            .windows(2)
+            .filter(|pair| pair.first().map(|s| s + 1) != pair.get(1).copied())
+            .count()
+            + 1;
+        assert!(
+            runs > 1,
+            "the children of one folder sit side by side in the census: {at:?}"
+        );
+        spread += 1;
+    }
+    assert!(spread > 0, "the fixture should give some folder children");
+}
+
+/// Ordering is still total and still census order, so a page of a collection
+/// reads the way the entity's own list does.
+#[test]
+fn a_collection_is_read_in_the_order_the_entity_lists_in() {
+    let store = counted_store(6, 8, 120);
+    let files = store.keys("File");
+    for folder in store.keys("Folder") {
+        let held = store
+            .related("Folder", &folder, "items", &Selection::new())
+            .unwrap();
+        let at: Vec<usize> = held
+            .records
+            .iter()
+            .filter_map(|record| files.iter().position(|key| key == &record.key))
+            .collect();
+        assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{at:?}");
+    }
+}
+
+#[test]
+fn scattering_is_a_bijection_over_the_census() {
+    for count in [0_u32, 1, 2, 7, 64, 257] {
+        let scatter = Scatter::of(9, "File", "Folder", "folder", count);
+        let mut landed = vec![false; count as usize];
+        for position in 0..count {
+            let index = scatter.index_at(position).expect("every position lands");
+            assert_eq!(scatter.position_of(index), Some(position));
+            let slot = landed.get_mut(index as usize).expect("inside the census");
+            assert!(!*slot, "{count}: two positions landed on {index}");
+            *slot = true;
+        }
+        assert!(landed.iter().all(|hit| *hit));
+    }
+}

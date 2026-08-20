@@ -231,24 +231,30 @@ fn a_hierarchy_reports_nothing_that_parents_itself() {
     }
 }
 
-/// The partition files a parent's children side by side, so the number of runs
-/// down an unsorted page equals the number of parents on it exactly.
+/// Ownership is contiguous in partition position; where an instance sits in
+/// the census is a shuffle of that. So a page of children no longer reads as
+/// one run per parent — the identity that made the partition visible in a
+/// single response.
 #[test]
-fn children_arrive_in_one_run_per_parent() {
-    let mut graph = EntityGraph::new();
-    graph.insert(entity("Shelf").with_field(link("books", "Book", Cardinality::Many)));
-    graph.insert(entity("Book").with_field(link("shelf", "Shelf", Cardinality::One)));
-    let store = EntityStore::new(
-        Arc::new(graph),
-        StoreConfig::seeded(2)
-            .with_count("Shelf", 10)
-            .with_count("Book", 120),
-    );
+fn children_do_not_arrive_in_one_run_per_parent() {
+    for seed in 0..12 {
+        let mut graph = EntityGraph::new();
+        graph.insert(entity("Shelf").with_field(link("books", "Book", Cardinality::Many)));
+        graph.insert(entity("Book").with_field(link("shelf", "Shelf", Cardinality::One)));
+        let store = EntityStore::new(
+            Arc::new(graph),
+            StoreConfig::seeded(seed)
+                .with_count("Shelf", 10)
+                .with_count("Book", 120),
+        );
 
-    let report = examine(&store);
-    let found = failed(&report, Check::ContiguousChildren);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].subject, "Shelf.books");
+        let report = examine(&store);
+        assert!(
+            failed(&report, Check::ContiguousChildren).is_empty(),
+            "seed {seed}: {:?}",
+            failed(&report, Check::ContiguousChildren)
+        );
+    }
 }
 
 #[test]

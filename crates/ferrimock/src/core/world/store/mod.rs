@@ -485,30 +485,153 @@ fn span(levels: &[u32], depth: usize) -> u32 {
     end.saturating_sub(start)
 }
 
+/// A shuffle of the child census, with its inverse.
+///
+/// The partition is what makes counting arithmetic, and it is also why every
+/// parent's children came out as exactly one run of the default list order:
+/// the number of runs of the parent key down an unsorted page equalled the
+/// number of distinct parents on it, exactly, with no variance at any size —
+/// a deterministic identity rather than a statistic, and visible in a single
+/// response. Levels made it worse, since every root would have come first.
+///
+/// So the two spaces are separated. Ownership stays contiguous in *partition
+/// position*, which keeps the range read and the arithmetic count; where an
+/// instance sits in the *census* is a shuffle of that. A Fisher-Yates table
+/// and its inverse are two `Vec<u32>` beside a census that already holds a
+/// `Vec<EntityKey>` and a slot map, so they are cheaper than what is already
+/// allocated and cost one array index rather than the four hashes a cipher
+/// would.
+#[derive(Debug)]
+struct Scatter {
+    /// Partition position -> census index.
+    outward: Vec<u32>,
+    /// Census index -> partition position.
+    homeward: Vec<u32>,
+}
+
+impl Scatter {
+    fn of(seed: u64, child: &str, parent: &str, role: &str, children: u32) -> Self {
+        let count = children as usize;
+        let mut outward: Vec<u32> = (0..children).collect();
+        let stream = format!("{child}~{parent}#{role}#scatter");
+        // Fisher-Yates, drawn from the same derivation everything else uses so
+        // the table is a function of the seed and the census size alone.
+        for at in (1..count).rev() {
+            let drawn = rng::derive_seed(seed, &stream, at as u64);
+            let swap = usize::try_from(drawn % (at as u64 + 1)).unwrap_or(0);
+            outward.swap(at, swap);
+        }
+        let mut homeward = vec![0_u32; count];
+        for (position, index) in outward.iter().enumerate() {
+            if let Some(slot) = usize::try_from(*index)
+                .ok()
+                .and_then(|at| homeward.get_mut(at))
+            {
+                *slot = u32::try_from(position).unwrap_or(0);
+            }
+        }
+        Self { outward, homeward }
+    }
+
+    fn index_at(&self, position: u32) -> Option<u32> {
+        usize::try_from(position)
+            .ok()
+            .and_then(|at| self.outward.get(at))
+            .copied()
+    }
+
+    fn position_of(&self, index: u32) -> Option<u32> {
+        usize::try_from(index)
+            .ok()
+            .and_then(|at| self.homeward.get(at))
+            .copied()
+    }
+}
+
 /// Who owns whom for one relation.
 ///
 /// Two entities are cut flat: each parent takes one contiguous run of the
-/// child census. An entity against itself cannot be, so it is levelled. Both
-/// answer the same two questions, which is what lets every reader of a
-/// relation stay on one code path.
+/// child *positions*. An entity against itself cannot be, so it is levelled.
+/// Either way the positions are scattered across the census before anyone
+/// outside sees them, which is why nothing here hands out a range: the two
+/// spaces meeting in a caller is exactly the bug — `*_count` drifting from
+/// the list endpoint by one per write — that keeping them apart prevents.
 #[derive(Debug)]
-enum Ownership {
+struct Ownership {
+    cut: Cut,
+    scatter: Scatter,
+}
+
+#[derive(Debug)]
+enum Cut {
     Flat(Partition),
     Levelled(Hierarchy),
 }
 
 impl Ownership {
+    /// Which parent the instance at one census index belongs to.
     fn owner_of(&self, child_index: u32) -> Option<u32> {
-        match self {
-            Self::Flat(partition) => partition.owner_of(child_index),
-            Self::Levelled(hierarchy) => hierarchy.owner_of(child_index),
+        let position = self.scatter.position_of(child_index)?;
+        let owner = match &self.cut {
+            Cut::Flat(partition) => partition.owner_of(position),
+            Cut::Levelled(hierarchy) => hierarchy.owner_of(position),
+        }?;
+        self.parent_index(owner)
+    }
+
+    /// Where a parent sits in the cut.
+    ///
+    /// The two sides of a flat cut are different censuses and only the child
+    /// one is scattered. A hierarchy's two sides are the same census, so a
+    /// parent is scattered exactly as its children are — and reading one side
+    /// in the other's space is what turns a levelled tree back into a chain
+    /// with a fixed point in it.
+    fn parent_position(&self, parent_index: u32) -> Option<u32> {
+        match &self.cut {
+            Cut::Flat(_) => Some(parent_index),
+            Cut::Levelled(_) => self.scatter.position_of(parent_index),
         }
     }
 
-    fn range_of(&self, parent_index: u32) -> std::ops::Range<u32> {
-        match self {
-            Self::Flat(partition) => partition.range_of(parent_index),
-            Self::Levelled(hierarchy) => hierarchy.range_of(parent_index),
+    fn parent_index(&self, position: u32) -> Option<u32> {
+        match &self.cut {
+            Cut::Flat(_) => Some(position),
+            Cut::Levelled(_) => self.scatter.index_at(position),
+        }
+    }
+
+    /// Where one parent's children sit in the census, in census order.
+    fn children_of(&self, parent_index: u32) -> Vec<u32> {
+        let mut found: Vec<u32> = self
+            .positions_of(parent_index)
+            .filter_map(|position| self.scatter.index_at(position))
+            .collect();
+        // Census order, so a collection reads the way the entity's own list
+        // does rather than the way the partition happened to cut it.
+        found.sort_unstable();
+        found
+    }
+
+    /// How many children one parent has, without naming any of them.
+    fn child_span(&self, parent_index: u32) -> u32 {
+        let range = self.positions_of(parent_index);
+        range.end.saturating_sub(range.start)
+    }
+
+    /// Whether one census index is among a parent's children.
+    fn holds(&self, parent_index: u32, child_index: u32) -> bool {
+        self.scatter
+            .position_of(child_index)
+            .is_some_and(|position| self.positions_of(parent_index).contains(&position))
+    }
+
+    fn positions_of(&self, parent_index: u32) -> std::ops::Range<u32> {
+        let Some(position) = self.parent_position(parent_index) else {
+            return 0..0;
+        };
+        match &self.cut {
+            Cut::Flat(partition) => partition.range_of(position),
+            Cut::Levelled(hierarchy) => hierarchy.range_of(position),
         }
     }
 }
@@ -997,25 +1120,26 @@ impl EntityStore {
                 back.map(|(field, relation)| relation.carrier.key_field(&field.name).clone());
 
             // The derived children are a contiguous run of the member's
-            // positions, so this reads only that run rather than filtering
-            // every child of every parent.
+            // partition positions, so this reads only that run rather than
+            // filtering every child of every parent.
             if let Some(parent_index) = self.index_of(entity, key) {
-                let partition = self.ownership(member.as_str(), entity, &role);
-                let range = partition.range_of(parent_index);
-                children.extend(range.filter_map(|position| {
-                    let child_key = self
-                        .census
-                        .get(member.as_str())?
-                        .derived
-                        .get(usize::try_from(position).ok()?)?
-                        .clone();
-                    // A child that has been written answers from its own
-                    // fields, and may have been pointed somewhere else since.
-                    if self.is_written(member.as_str(), &child_key) {
-                        return None;
-                    }
-                    self.get(member.as_str(), &child_key)
-                }));
+                let ownership = self.ownership(member.as_str(), entity, &role);
+                children.extend(ownership.children_of(parent_index).into_iter().filter_map(
+                    |index| {
+                        let child_key = self
+                            .census
+                            .get(member.as_str())?
+                            .derived
+                            .get(usize::try_from(index).ok()?)?
+                            .clone();
+                        // A child that has been written answers from its own
+                        // fields, and may have been pointed somewhere else since.
+                        if self.is_written(member.as_str(), &child_key) {
+                            return None;
+                        }
+                        self.get(member.as_str(), &child_key)
+                    },
+                ));
             }
 
             // Everything written: records created here, and derived records
@@ -1531,10 +1655,10 @@ impl EntityStore {
             .unwrap_or(u32::MAX);
         let parents = u32::try_from(self.census.get(parent).map_or(0, |c| c.derived.len()))
             .unwrap_or(u32::MAX);
-        let built = Arc::new(if child == parent {
-            Ownership::Levelled(Hierarchy::of(self.config.seed, child, role, children))
+        let cut = if child == parent {
+            Cut::Levelled(Hierarchy::of(self.config.seed, child, role, children))
         } else {
-            Ownership::Flat(Partition::of(
+            Cut::Flat(Partition::of(
                 self.config.seed,
                 child,
                 parent,
@@ -1542,6 +1666,10 @@ impl EntityStore {
                 children,
                 parents,
             ))
+        };
+        let built = Arc::new(Ownership {
+            cut,
+            scatter: Scatter::of(self.config.seed, child, parent, role, children),
         });
         self.ownership.write().insert(slot, Arc::clone(&built));
         built
@@ -1771,16 +1899,15 @@ impl EntityStore {
             let carrier =
                 back.map(|(field, relation)| relation.carrier.key_field(&field.name).clone());
 
-            let partition = self.ownership(member.as_str(), entity, &role);
-            let range = partition.range_of(parent_index);
-            total += i64::from(range.end - range.start);
+            let ownership = self.ownership(member.as_str(), entity, &role);
+            total += i64::from(ownership.child_span(parent_index));
 
             for (child_key, stated) in self.stated_owners(member.as_str(), carrier.as_ref()) {
                 let derived_here = self
                     .census
                     .get(member.as_str())
                     .and_then(|census| census.slots.get(&child_key))
-                    .is_some_and(|slot| range.contains(&slot.index));
+                    .is_some_and(|slot| ownership.holds(parent_index, slot.index));
                 let stated_here = stated
                     .as_ref()
                     .is_some_and(|stated| self.entity_key_of(entity, stated) == *key);
@@ -1856,8 +1983,8 @@ impl EntityStore {
         role: &str,
         parent: &str,
     ) -> Option<EntityKey> {
-        let partition = self.ownership(child, parent, role);
-        let owner = partition.owner_of(child_index)?;
+        let ownership = self.ownership(child, parent, role);
+        let owner = ownership.owner_of(child_index)?;
         self.census
             .get(parent)?
             .derived

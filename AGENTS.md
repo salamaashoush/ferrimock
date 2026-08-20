@@ -399,6 +399,18 @@ than one level. Stopping at the first generation leaves everything below it
 pointing at a tombstone, which is the dangling key this store exists to make
 impossible.
 
+Ownership is contiguous in *partition position*; where an instance sits in the
+*census* is a seeded shuffle of that. Without the separation the partition was
+visible in a single response: the number of runs of the parent key down an
+unsorted page equalled the number of distinct parents on it, exactly, with no
+variance at any size -- an identity rather than a statistic. Levels would have
+made it louder still, since every root would have come first. The shuffle is a
+Fisher-Yates table and its inverse, two `Vec<u32>` beside a census that already
+holds a `Vec<EntityKey>` and a slot map, so it costs one array index per child
+read. Nothing outside `Ownership` is handed a range: the two spaces meeting in
+a caller is exactly the bug -- a `*_count` drifting from the list endpoint by
+one per write -- that keeping them apart prevents.
+
 `Slot` is why the partition works after a census had to step over a reserved
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
