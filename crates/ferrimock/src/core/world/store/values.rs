@@ -137,24 +137,31 @@ fn lifecycle_rank(field: &str) -> Option<u8> {
     None
 }
 
-/// How a timestamp is written, so only values that compare are reordered.
+/// How a timestamp is written, so only values that can trade places do.
 ///
-/// Two fields are comparable when they render the same way — a date sorts
-/// against a date and an RFC 3339 instant against another one, because in both
-/// cases the text orders the way the moment does. Mixing them would compare
-/// `2024-03-01` against `2024-03-01T09:12:44Z` and get it wrong.
+/// The reordering deals one field's value into another, so two fields have to
+/// be written the same way or a `Tue, 05 Mar 2024 …` lands in a field the
+/// schema said holds an RFC 3339 instant. Grouping by the exact format is what
+/// keeps that from happening — `"instant"` covering every timestamp variant
+/// meant a date could be dealt against an epoch and an offset against a UTC
+/// stamp.
 fn timestamp_shape(field: &FieldDef) -> Option<&'static str> {
     let ValueSpec::Scalar(scalar) = &field.value else {
         return None;
     };
     match scalar.semantic.as_ref()? {
-        FieldType::Timestamp { .. } => Some("instant"),
-        FieldType::IsoDate { .. } => Some("date"),
+        FieldType::Timestamp { format } => Some(format.name()),
+        FieldType::IsoDate { format } => Some(format.name()),
         _ => None,
     }
 }
 
 /// Deal a record's lifecycle timestamps back out in the order they happened.
+///
+/// Ordered by the instant each value names rather than by its text. For most
+/// of the formats those are different orders: `…T00:00:00+09:00` sorts before
+/// `…T00:00:00-05:00` and is fourteen hours later, `9.5` sorts after `10.2`,
+/// and an RFC 2822 date leads with a weekday.
 fn order_lifecycle(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>) {
     let mut ordered: Vec<(&'static str, u8, &str)> = fields
         .iter()
@@ -174,7 +181,9 @@ fn order_lifecycle(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>)
     // every run.
     ordered.sort_unstable();
 
-    for shape in ["instant", "date"] {
+    let mut shapes: Vec<&'static str> = ordered.iter().map(|(shape, _, _)| *shape).collect();
+    shapes.dedup();
+    for shape in shapes {
         let group: Vec<&str> = ordered
             .iter()
             .filter(|(held, _, _)| *held == shape)
@@ -187,7 +196,9 @@ fn order_lifecycle(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>)
             .iter()
             .filter_map(|name| record.get(*name)?.as_str().map(ToString::to_string))
             .collect();
-        values.sort_unstable();
+        // A value nothing can read keeps its place rather than being dealt to
+        // the front of the record.
+        values.sort_by_key(|value| fake_data::instant_of(value).unwrap_or(i64::MAX));
         for (name, value) in group.iter().zip(values) {
             record.insert((*name).to_string(), JsonValue::String(value));
         }
@@ -523,6 +534,69 @@ mod tests {
 
     fn scalar(kind: ScalarKind) -> ValueSpec {
         ValueSpec::Scalar(Scalar::new(kind))
+    }
+
+    fn stamped(name: &str, format: crate::type_detector::TimestampFormat) -> FieldDef {
+        let mut inner = Scalar::new(ScalarKind::String);
+        inner.semantic = Some(FieldType::Timestamp { format });
+        FieldDef::new(name, ValueSpec::Scalar(inner), false)
+    }
+
+    fn held(record: &JsonMap<String, JsonValue>, name: &str) -> String {
+        record
+            .get(name)
+            .and_then(JsonValue::as_str)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    /// `created` before `updated` has to mean the moment, not the text.
+    ///
+    /// Two instants an hour apart in opposite zones sort by their local wall
+    /// clocks, which is not the order they happened in: `20:00+09:00` is
+    /// 11:00Z and `10:00-05:00` is 15:00Z, so the text puts the later one
+    /// first.
+    #[test]
+    fn a_lifecycle_orders_by_the_moment_rather_than_by_the_text() {
+        use crate::type_detector::TimestampFormat;
+
+        let fields = vec![
+            stamped("created_at", TimestampFormat::Rfc3339Offset),
+            stamped("updated_at", TimestampFormat::Rfc3339Offset),
+        ];
+        let mut record = JsonMap::new();
+        record.insert(
+            "created_at".to_string(),
+            JsonValue::from("2024-03-17T10:00:00-05:00"),
+        );
+        record.insert(
+            "updated_at".to_string(),
+            JsonValue::from("2024-03-17T20:00:00+09:00"),
+        );
+        order_lifecycle(&fields, &mut record);
+
+        let created = fake_data::instant_of(&held(&record, "created_at"));
+        let updated = fake_data::instant_of(&held(&record, "updated_at"));
+        assert!(created <= updated, "updated before created: {record:?}");
+    }
+
+    /// Two lifecycle fields written differently cannot trade places: dealing a
+    /// `Sun, 17 Mar 2024 …` into a field the schema said holds an RFC 3339
+    /// instant changes its type, and no client survives a field whose format
+    /// depends on which record it is reading.
+    #[test]
+    fn a_lifecycle_only_reorders_fields_written_the_same_way() {
+        use crate::type_detector::TimestampFormat;
+
+        let fields = vec![
+            stamped("created_at", TimestampFormat::HttpDate),
+            stamped("updated_at", TimestampFormat::Rfc3339Utc),
+        ];
+        for ordinal in 0..200 {
+            let record = generate_fields(&fields, "", ValueSeed::new(7, "Doc", ordinal));
+            assert!(held(&record, "created_at").ends_with("GMT"), "{record:?}");
+            assert!(held(&record, "updated_at").ends_with('Z'), "{record:?}");
+        }
     }
 
     #[test]

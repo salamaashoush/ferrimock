@@ -115,8 +115,6 @@ fn the_doctor_names_the_tells_the_generators_leave() {
     let report = examine(&wide_world(3, 400));
 
     for check in [
-        Check::DayOfMonth,
-        Check::StaleClock,
         Check::NumberSupport,
         Check::ConstantListLength,
         Check::NeverAbsent,
@@ -130,6 +128,21 @@ fn the_doctor_names_the_tells_the_generators_leave() {
             "`{}` should fire on the world as it stands: {}",
             check.name(),
             check.tell()
+        );
+    }
+}
+
+/// The calendar tells are closed: dates run to the end of the month and the
+/// window follows the wall clock instead of a constant that went stale.
+#[test]
+fn the_calendar_no_longer_gives_the_world_away() {
+    let report = examine(&wide_world(3, 400));
+    for check in [Check::DayOfMonth, Check::StaleClock] {
+        assert!(
+            failed(&report, check).is_empty(),
+            "`{}` should not fire: {:?}",
+            check.name(),
+            failed(&report, check)
         );
     }
 }
@@ -286,16 +299,6 @@ fn a_date_is_read_out_of_whatever_format_wrote_it() {
     assert_eq!(year_of("2024-03-17T05:00:00Z"), Some(2024));
     assert_eq!(year_of("17/03/2024"), Some(2024));
     assert_eq!(year_of("Tue, 17 Mar 2024 05:00:00 GMT"), Some(2024));
-}
-
-#[test]
-fn an_offset_bearing_instant_sorts_by_when_it_happened() {
-    let east = sortable_instant("2024-03-17T00:00:00+09:00").unwrap();
-    let west = sortable_instant("2024-03-17T00:00:00-05:00").unwrap();
-    assert!(
-        east < west,
-        "the same wall clock further east is the earlier instant"
-    );
 }
 
 #[test]

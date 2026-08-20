@@ -19,6 +19,7 @@ use serde_json::Value as JsonValue;
 use super::algebra::{DEFAULT_PAGE_SIZE, Selection};
 use super::model::{Cardinality, EntityType, FieldDef, Relation, ScalarKind, ValueSpec};
 use super::store::{EntityStore, Record, counted_relation, is_membership};
+use crate::fake_data;
 
 /// How many instances of one entity a check reads before it has enough.
 ///
@@ -578,7 +579,7 @@ fn check_id_time_order(entity: &EntityType, records: &[Record], report: &mut Rep
             let stamp = record
                 .get(&field)
                 .and_then(JsonValue::as_str)
-                .and_then(sortable_instant)?;
+                .and_then(fake_data::instant_of)?;
             Some((record.key.to_string(), stamp))
         })
         .collect();
@@ -615,7 +616,7 @@ fn newest_timestamp_field(entity: &EntityType, records: &[Record]) -> Option<Str
             records
                 .iter()
                 .filter_map(|record| record.get(name).and_then(JsonValue::as_str))
-                .filter_map(sortable_instant)
+                .filter_map(fake_data::instant_of)
                 .count()
                 >= records.len().min(2)
         })
@@ -1117,24 +1118,6 @@ fn epoch_year(value: f64) -> Option<i32> {
         return None;
     }
     chrono::DateTime::from_timestamp(value as i64, 0).map(|moment| moment.year())
-}
-
-/// A comparable instant, normalised so an offset-bearing timestamp does not
-/// sort by its text.
-fn sortable_instant(text: &str) -> Option<i64> {
-    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) {
-        return Some(parsed.timestamp());
-    }
-    if let Ok(parsed) = chrono::DateTime::parse_from_rfc2822(text) {
-        return Some(parsed.timestamp());
-    }
-    if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S") {
-        return Some(parsed.and_utc().timestamp());
-    }
-    chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
-        .ok()
-        .and_then(|date| date.and_hms_opt(0, 0, 0))
-        .map(|moment| moment.and_utc().timestamp())
 }
 
 /// The words of one value, lowercased, with punctuation dropped.
