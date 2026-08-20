@@ -15,6 +15,7 @@
 //! seed, and the state is deterministic given the seed plus the sequence of
 //! writes.
 
+pub mod bus;
 pub mod distribution;
 pub mod pattern;
 pub mod values;
@@ -1385,10 +1386,14 @@ impl EntityStore {
         let index = (children > 0).then(|| u32::try_from(ordinal % children as u64).unwrap_or(0));
         self.write_links(entity, ordinal, index, &mut fields);
         self.write_counts(entity, &key, &mut fields);
+        let stated: Vec<String> = provided.keys().cloned().collect();
         for (name, value) in provided {
             fields.insert(name, value);
         }
         write_key_fields(entity, &key, &mut fields);
+        // What the caller wrote stands, even where it disagrees with the rest
+        // of the record — that is what the caller asked for.
+        values::wire(&entity.fields, &mut fields, &stated);
 
         self.delta.insert(
             (entity.name.clone(), key.clone()),
@@ -1734,6 +1739,9 @@ impl EntityStore {
         self.write_links(entity, ordinal, index, &mut fields);
         self.write_counts(entity, key, &mut fields);
         write_key_fields(entity, key, &mut fields);
+        // Again now the key is the one the record is filed under, rather than
+        // the one its own field happened to derive.
+        values::wire(&entity.fields, &mut fields, &[]);
         Some(fields)
     }
 

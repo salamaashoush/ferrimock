@@ -1964,3 +1964,94 @@ fn scattering_is_a_bijection_over_the_census() {
         assert!(landed.iter().all(|hit| *hit));
     }
 }
+
+/// The bus has to settle after the store writes the key, or the link a record
+/// carries ends in an id it was never filed under.
+#[test]
+fn a_record_agrees_with_itself() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Person")
+            .with_field(scalar_field("first_name", ScalarKind::String))
+            .with_field(scalar_field("last_name", ScalarKind::String))
+            .with_field(scalar_field("full_name", ScalarKind::String))
+            .with_field(scalar_field("initials", ScalarKind::String))
+            .with_field(scalar_field("username", ScalarKind::String))
+            .with_field(scalar_field("email", ScalarKind::String))
+            .with_field(scalar_field("avatar_url", ScalarKind::String))
+            .with_field(scalar_field("title", ScalarKind::String))
+            .with_field(scalar_field("slug", ScalarKind::String)),
+    );
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(3).with_count("Person", 60),
+    );
+
+    for key in store.keys("Person") {
+        let record = store.get("Person", &key).unwrap();
+        let text = |name: &str| {
+            record
+                .get(name)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+        };
+
+        assert_eq!(
+            text("full_name"),
+            format!("{} {}", text("first_name"), text("last_name"))
+        );
+        assert!(text("email").starts_with(text("username")));
+        assert!(
+            text("avatar_url").ends_with(&key.to_string()),
+            "`{}` does not end in the id it is filed under `{key}`",
+            text("avatar_url")
+        );
+        assert!(!text("slug").is_empty());
+        assert_eq!(
+            text("slug"),
+            text("title")
+                .chars()
+                .map(|c| if c.is_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                })
+                .collect::<String>()
+                .split('-')
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("-")
+        );
+    }
+}
+
+/// What a client wrote stands, even where it disagrees with the rest of the
+/// record.
+#[test]
+fn a_created_record_keeps_the_values_the_caller_sent() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Person")
+            .with_field(scalar_field("first_name", ScalarKind::String))
+            .with_field(scalar_field("last_name", ScalarKind::String))
+            .with_field(scalar_field("full_name", ScalarKind::String)),
+    );
+    let store = EntityStore::new(Arc::new(graph), StoreConfig::seeded(3));
+
+    let Written::Created(made) = store
+        .apply(
+            "Person",
+            Mutation::Insert {
+                values: serde_json::json!({ "full_name": "Whatever I Said" }),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("an insert answers with the record")
+    };
+    assert_eq!(
+        made.get("full_name").and_then(|v| v.as_str()),
+        Some("Whatever I Said")
+    );
+    assert_eq!(store.get("Person", &made.key).unwrap().fields, made.fields);
+}

@@ -415,6 +415,17 @@ one per write -- that keeping them apart prevents.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+`core::world::store::bus` settles the fields of a record that are *functions*
+of other fields of it: `full_name` is `first_name` plus `last_name`, `email`
+holds a slug of the name, `slug` is the title slugified, an avatar URL ends in
+the record's own id. These are not correlations and no latent vector produces
+them at any dimension -- one field simply is a function of another, and a
+record where the two disagree is wrong rather than improbable. `order_lifecycle`
+was already this shape and is the precedent. The bus runs after the store has
+written the key and the links, because a link ending in an id has to end in the
+one the record is actually filed under; it is re-runnable, and a field the
+caller stated is left alone.
+
 `core::world::store::distribution` is where a value's *shape* lives, separate
 from what draws it. Every draw is a pure map over the bytes the field already
 derived, so nothing about laziness, replay or determinism changes -- only what

@@ -10,6 +10,7 @@ use lean_string::LeanString;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::core::world::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
+use crate::core::world::store::bus;
 use crate::core::world::store::distribution::{
     self, Ranking, Spread, falls_within, lopsided_chance,
 };
@@ -187,8 +188,19 @@ pub fn generate_fields(
             }
         }
     }
-    order_lifecycle(fields, &mut record);
+    wire(fields, &mut record, &[]);
     record
+}
+
+/// Settle the fields of a record that are functions of the others.
+///
+/// Separate from generating them, and re-runnable, because the store writes a
+/// record's key and its links after the values are drawn — an avatar URL
+/// ending in the id has to be settled once the id is the one the record is
+/// actually filed under.
+pub fn wire(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>, stated: &[String]) {
+    order_lifecycle(fields, record);
+    bus::wire(fields, record, stated);
 }
 
 /// Where a timestamp sits in a record's life.
