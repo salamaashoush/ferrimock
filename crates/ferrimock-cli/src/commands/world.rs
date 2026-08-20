@@ -33,6 +33,17 @@ pub enum WorldAction {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Lint the generated world for the things that give a mock away
+    Doctor {
+        /// Directory of mocks and schemas (defaults to the configured one)
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+
+        /// Exit non-zero when anything at all is reported, not just a defect
+        #[arg(long)]
+        strict: bool,
+    },
 }
 
 pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
@@ -51,7 +62,111 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
             explain(world, verbose);
             Ok(())
         }
+        WorldAction::Doctor { dir, strict } => {
+            let registry = MockRegistry::new();
+            let dir = dir.unwrap_or_else(|| PathBuf::from(crate::config::mocks_dir()));
+
+            registry
+                .load_from_directory(&dir)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let world = registry.world();
+            if world.is_empty() {
+                crate::say!(
+                    "{}",
+                    ui::warning(&format!(
+                        "no schemas in {} — nothing to lint",
+                        dir.display()
+                    ))
+                );
+                return Ok(());
+            }
+            diagnose(&world.store(), strict)
+        }
     }
+}
+
+/// Print what a client could tell about this world, worst first.
+///
+/// Every proposal against the engine either moves a number here or does not
+/// ship, so the report leads with the counts rather than with the prose.
+fn diagnose(
+    store: &ferrimock::core::world::store::EntityStore,
+    strict: bool,
+) -> anyhow::Result<()> {
+    use ferrimock::core::world::doctor::{self, Severity};
+
+    let report = doctor::examine(store);
+
+    crate::say!("{}", ui::header("World doctor"));
+    crate::say!();
+    crate::say!(
+        "{}",
+        ui::info(&format!(
+            "{} record(s) read · {} defect(s) · {} tell(s) · {} check(s) the world is too small for",
+            report.sampled,
+            report.broken(),
+            report.findings.len() - report.broken(),
+            report.unmeasured.len()
+        ))
+    );
+
+    for severity in [Severity::Broken, Severity::Tell] {
+        let group: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|finding| finding.check.severity() == severity)
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        crate::say!();
+        crate::say!(
+            "{}",
+            ui::header(match severity {
+                Severity::Broken => "Defects",
+                Severity::Tell => "Tells",
+            })
+        );
+        for finding in group {
+            let line = format!(
+                "{} {} — {}",
+                finding.check.name(),
+                finding.subject,
+                finding.check.tell()
+            );
+            crate::say!(
+                "{}",
+                match severity {
+                    Severity::Broken => ui::error(&line),
+                    Severity::Tell => ui::warning(&line),
+                }
+            );
+            crate::say!("{}", ui::dim(&format!("    {}", finding.measured)));
+        }
+    }
+
+    if !report.unmeasured.is_empty() {
+        crate::say!();
+        crate::say!("{}", ui::header("Not measurable in this world"));
+        for item in &report.unmeasured {
+            crate::say!(
+                "{}",
+                ui::dim(&format!(
+                    "  {} {} — needs {}",
+                    item.check.name(),
+                    item.subject,
+                    item.needs
+                ))
+            );
+        }
+    }
+
+    if report.broken() > 0 || (strict && !report.is_clean()) {
+        anyhow::bail!("world doctor reported {} finding(s)", report.findings.len());
+    }
+    Ok(())
 }
 
 fn report(world: &Arc<World>, dir: &std::path::Path, mocks: usize) {

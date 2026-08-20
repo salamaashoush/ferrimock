@@ -1831,7 +1831,7 @@ fn membership_of(
 /// so it is the absence of a functional carrier that decides. Everything
 /// reading the relation has to ask this same question or the readers answer
 /// from different mechanisms.
-fn is_membership(target: &EntityType, entity: &str) -> bool {
+pub(crate) fn is_membership(target: &EntityType, entity: &str) -> bool {
     reciprocal_link(target, entity).is_none()
         && target.relations().any(|(_, relation)| {
             relation.cardinality == Cardinality::Many
@@ -1844,7 +1844,7 @@ fn is_membership(target: &EntityType, entity: &str) -> bool {
 /// Matched on the name with the suffix removed: `item_count` counts `items`,
 /// `commentCount` counts `comments`. A field whose stem names nothing is an
 /// ordinary number.
-fn counted_relation<'a>(
+pub(crate) fn counted_relation<'a>(
     entity: &'a EntityType,
     field: &str,
 ) -> Option<(&'a FieldDef, &'a Relation)> {

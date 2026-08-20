@@ -9,6 +9,13 @@ use serde_json::Value as JsonValue;
 
 use super::model::EntityKey;
 
+/// How many records a page holds when the request does not say.
+///
+/// The REST binding's default, and the number the world doctor measures a
+/// population against: an entity smaller than one page hands a client the
+/// whole world in a single unpaginated request.
+pub const DEFAULT_PAGE_SIZE: usize = 25;
+
 /// A read against one entity type.
 #[derive(Debug, Clone, Default)]
 pub struct Selection {

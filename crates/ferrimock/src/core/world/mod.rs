@@ -14,6 +14,7 @@
 //! spec-derived routes serve.
 
 pub mod algebra;
+pub mod doctor;
 pub mod model;
 pub mod overrides;
 pub mod store;

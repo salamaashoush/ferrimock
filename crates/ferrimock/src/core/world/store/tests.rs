@@ -1417,7 +1417,11 @@ fn a_count_field_on_a_many_to_many_reports_what_the_collection_holds() {
     graph.insert(
         entity("Doc")
             .with_field(scalar_field("collection_count", ScalarKind::Int))
-            .with_field(relation_field("collections", "Collection", Cardinality::Many)),
+            .with_field(relation_field(
+                "collections",
+                "Collection",
+                Cardinality::Many,
+            )),
     );
     let store = EntityStore::new(
         Arc::new(graph),
@@ -1459,11 +1463,7 @@ fn a_count_field_on_a_many_to_many_reports_what_the_collection_holds() {
 #[test]
 fn a_membership_an_entity_has_with_itself_is_symmetric() {
     let mut graph = EntityGraph::new();
-    graph.insert(entity("User").with_field(relation_field(
-        "friends",
-        "User",
-        Cardinality::Many,
-    )));
+    graph.insert(entity("User").with_field(relation_field("friends", "User", Cardinality::Many)));
     let store = EntityStore::new(
         Arc::new(graph),
         StoreConfig::seeded(21).with_count("User", 20),

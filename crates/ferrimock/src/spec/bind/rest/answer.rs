@@ -24,7 +24,7 @@ use crate::spec::bind::plan::RootPlan;
 use crate::types::{DynamicResponse, RequestContext};
 
 /// The window a list answers with when the request asked for none.
-const DEFAULT_PAGE_SIZE: usize = 25;
+use crate::core::world::algebra::DEFAULT_PAGE_SIZE;
 
 /// How many members of a to-many link are written into a payload.
 ///

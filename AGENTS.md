@@ -385,6 +385,16 @@ so they are built on first use and never invalidated.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+`ferrimock world doctor` lints the generated world for the things that give a
+mock away, and it is the number any change to the world is judged against. It
+runs with no corpus, because the case a mock exists for is the one where no
+corpus of real responses exists; each check fails independently and reports the
+measurement that failed it, so a change either moves a check or it does not. Two
+outcomes are not a pass: a **defect** is a behaviour no real API has, and a
+check the world is **too small to measure** — a five-member enum needs about
+forty draws, which a twelve-record entity cannot supply — is reported as its own
+outcome rather than silently as a clean bill.
+
 `World::reset()` drops every write and leaves exactly what the seed derives —
 call it between tests, or state leaks from one into the next.
 `World::pending_writes()` is how you see that it did.
