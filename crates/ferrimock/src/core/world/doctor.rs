@@ -278,6 +278,11 @@ impl FieldStats {
 
 fn check_values(entity: &EntityType, records: &[Record], report: &mut Report) {
     for field in entity.value_fields() {
+        // A `*_count` naming a to-many holds the real width of a partition,
+        // not a draw, so the value checks have nothing to say about it.
+        if counted_relation(entity, field.name.as_str()).is_some() {
+            continue;
+        }
         let mut stats = FieldStats::default();
         for record in records {
             stats.observe(record.get(field.name.as_str()));
@@ -386,8 +391,16 @@ fn check_enum(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut 
     }
 }
 
+/// Whether a boolean reads as a fair coin.
+///
+/// The sample size is set by the power the test needs, not by what is
+/// convenient. At thirty draws a genuinely lopsided field — two in three —
+/// fails to reject fairness about half the time, so the check would fire on
+/// exactly the worlds it was supposed to pass. Ninety is where a coin that far
+/// off the middle is caught reliably, and a smaller world is reported as
+/// unmeasurable rather than as broken.
 fn check_boolean(stats: &FieldStats, subject: &str, report: &mut Report) {
-    const ENOUGH: usize = 30;
+    const ENOUGH: usize = 90;
 
     let n = stats.trues + stats.falses;
     if n == 0 {

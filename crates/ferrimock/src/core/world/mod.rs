@@ -375,6 +375,10 @@ impl World {
                 current.default_count_source = Some(source.to_path_buf());
             }
 
+            if let Some(scale) = settings.scale {
+                current.scale = Some(scale);
+            }
+
             for (entity, count) in &settings.counts {
                 current.counts.insert(entity.clone(), *count);
             }

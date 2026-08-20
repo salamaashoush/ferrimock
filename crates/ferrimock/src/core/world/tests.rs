@@ -95,6 +95,29 @@ fn counts_are_honoured_per_entity() {
     assert_eq!(world.count("Post"), 9);
 }
 
+/// A schema does not say how big its world should be, and the answer differs
+/// between a unit test and a screen someone is looking at.
+#[test]
+fn a_scale_asks_for_a_bigger_world_without_naming_every_entity() {
+    let world = World::new();
+    world
+        .configure(
+            &WorldSettings {
+                seed: Some(1),
+                default_count: Some(4),
+                scale: Some(5.0),
+                counts: std::iter::once((LeanString::from("Post"), 9)).collect(),
+                ..WorldSettings::default()
+            },
+            Path::new("test.yaml"),
+        )
+        .unwrap();
+    world.add_entities(&graph_of(&["User", "Post"])).unwrap();
+
+    assert_eq!(world.count("User"), 20);
+    assert_eq!(world.count("Post"), 9, "a stated count is left alone");
+}
+
 #[test]
 fn two_collections_cannot_disagree_about_the_seed() {
     let world = World::new();

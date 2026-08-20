@@ -15,6 +15,7 @@
 //! seed, and the state is deterministic given the seed plus the sequence of
 //! writes.
 
+pub mod distribution;
 pub mod pattern;
 pub mod values;
 

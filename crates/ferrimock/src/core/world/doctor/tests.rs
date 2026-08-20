@@ -114,14 +114,7 @@ fn skipped(report: &Report, check: Check) -> Vec<&Unmeasured> {
 fn the_doctor_names_the_tells_the_generators_leave() {
     let report = examine(&wide_world(3, 400));
 
-    for check in [
-        Check::NumberSupport,
-        Check::ConstantListLength,
-        Check::FairCoin,
-        Check::UniformEnum,
-        Check::SmallVocabulary,
-        Check::IdTimeOrder,
-    ] {
+    for check in [Check::SmallVocabulary, Check::IdTimeOrder] {
         assert!(
             !failed(&report, check).is_empty(),
             "`{}` should fire on the world as it stands: {}",
@@ -131,13 +124,20 @@ fn the_doctor_names_the_tells_the_generators_leave() {
     }
 }
 
-/// Closed tells: dates run to the end of the month, the window follows the
-/// wall clock instead of a constant that went stale, and a field the schema
-/// said may be missing sometimes is.
+/// Closed tells. Each of these read as a flat line, a constant, or a support
+/// that stopped at a round number, and each is now a distribution.
 #[test]
 fn the_calendar_no_longer_gives_the_world_away() {
     let report = examine(&wide_world(3, 400));
-    for check in [Check::DayOfMonth, Check::StaleClock, Check::NeverAbsent] {
+    for check in [
+        Check::DayOfMonth,
+        Check::StaleClock,
+        Check::NeverAbsent,
+        Check::NumberSupport,
+        Check::ConstantListLength,
+        Check::FairCoin,
+        Check::UniformEnum,
+    ] {
         assert!(
             failed(&report, check).is_empty(),
             "`{}` should not fire: {:?}",

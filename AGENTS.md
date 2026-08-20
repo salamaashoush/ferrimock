@@ -403,6 +403,23 @@ impossible.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+`core::world::store::distribution` is where a value's *shape* lives, separate
+from what draws it. Every draw is a pure map over the bytes the field already
+derived, so nothing about laziness, replay or determinism changes -- only what
+comes out. The defaults are the point: uniform everywhere is the loudest
+statistical signature an engine can have, and it is not one a client has to
+work to see. A number nothing bounded is log-uniform over orders of magnitude
+with a little mass on zero; a number with a *narrow* declared range stays
+uniform, because a rating or a percentage is not Benford-ish and a log-normal
+truncated below a decade is uniform again anyway. An enum is Zipf over a
+permutation keyed on the field, which gives a skewed marginal without claiming
+which member is modal -- declaration order does not say: lifecycle enums list
+the terminal state last, machine-emitted schemas are often alphabetical, and
+protobuf mandates `UNSPECIFIED` first. A boolean gets a chance drawn per field
+and pushed away from the middle. A collection length is geometric rather than
+always two. Which member is *actually* modal, and what the real rates are, is
+something only a recording can say.
+
 `required` and `nullable` are separate facts on a `FieldDef`, because a schema
 gives two separate answers: `required` says the key is in the payload,
 `nullable` says the value may be null. A GraphQL field that was selected is

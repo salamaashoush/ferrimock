@@ -10,12 +10,43 @@ use lean_string::LeanString;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::core::world::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
+use crate::core::world::store::distribution::{
+    self, Ranking, Spread, falls_within, lopsided_chance,
+};
 use crate::core::world::store::pattern;
 use crate::fake_data::{self, rng};
 use crate::type_detector::FieldType;
 
-/// How many elements a generated list holds when nothing constrains it.
-const DEFAULT_LIST_LEN: usize = 2;
+/// How long a generated collection is when nothing constrains it.
+///
+/// Two, always, for every array in the world, was zero variance — the
+/// cheapest thing in the engine for a client to notice, and no test statistic
+/// needed. A real collection is mostly short, sometimes empty, occasionally
+/// long.
+const LIST_MEAN: f64 = 2.5;
+
+/// A nested list stays short: the product grows fast and nothing reads it.
+const NESTED_LIST_MEAN: f64 = 0.8;
+
+const MAX_LIST_LEN: f64 = 12.0;
+
+/// What an unbounded number's support is.
+///
+/// `1..=1000` was a single-feature giveaway needing no test statistic and
+/// about five samples: the support itself was the tell. A real unconstrained
+/// integer spans orders of magnitude, so the support does too and the spread
+/// is log-uniform inside it — which is also what makes a leading-digit
+/// profile read like a real one.
+const OPEN_INT_CEILING: f64 = 1_000_000.0;
+const OPEN_FLOAT_CEILING: f64 = 100_000.0;
+
+/// How much of an unbounded number's mass sits on zero.
+const MOST_ZEROS: f64 = 0.2;
+
+/// Where equal-mass-per-decade starts to matter. Below two decades a declared
+/// range is narrow enough that uniform is the honest answer, and Benford does
+/// not apply to a rating or a percentage anyway.
+const DECADES_WORTH_SPREADING: f64 = 100.0;
 
 /// The derivation context for one field of one record.
 #[derive(Debug, Clone, Copy)]
@@ -295,12 +326,15 @@ fn order_lifecycle(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>)
 
 fn generate_in_scope(spec: &ValueSpec, path: &str, seed: ValueSeed<'_>, derived: u64) -> JsonValue {
     match spec {
-        ValueSpec::Scalar(scalar) => scalar_value(scalar, path, seed.ordinal),
-        ValueSpec::Enum(options) => options
-            .get(pick_index(derived, options.len()))
-            .map_or(JsonValue::Null, |v| JsonValue::String(v.to_string())),
+        ValueSpec::Scalar(scalar) => scalar_value(scalar, path, seed, derived),
+        ValueSpec::Enum(options) => {
+            let ranking = Ranking::of(options.len(), seed.per_field(path, "ranking"));
+            options
+                .get(ranking.pick(derived))
+                .map_or(JsonValue::Null, |v| JsonValue::String(v.to_string()))
+        }
         ValueSpec::List(inner) => {
-            let len = list_len(inner);
+            let len = list_len(inner, derived);
             JsonValue::Array(
                 (0..len)
                     .map(|i| {
@@ -337,27 +371,29 @@ fn render(template: &str) -> JsonValue {
     serde_json::from_str(&rendered).unwrap_or(JsonValue::String(rendered))
 }
 
-fn list_len(inner: &ValueSpec) -> usize {
-    match inner {
-        // Nested lists stay short: the product grows fast and nothing reads it.
-        ValueSpec::List(_) => 1,
-        _ => DEFAULT_LIST_LEN,
-    }
+fn list_len(inner: &ValueSpec, derived: u64) -> usize {
+    let mean = match inner {
+        ValueSpec::List(_) => NESTED_LIST_MEAN,
+        _ => LIST_MEAN,
+    };
+    // A word of its own: the length of a collection is not a fact about the
+    // first element of it.
+    let drawn = Spread::Geometric { mean }.draw(derived.rotate_left(41));
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to a collection length either side of the cast"
+    )]
+    let clamped = drawn.clamp(0.0, MAX_LIST_LEN) as usize;
+    clamped
 }
 
-fn pick_index(derived: u64, len: usize) -> usize {
-    if len == 0 {
-        return 0;
-    }
-    usize::try_from(derived % len as u64).unwrap_or(0)
-}
-
-fn scalar_value(scalar: &Scalar, path: &str, ordinal: u64) -> JsonValue {
+fn scalar_value(scalar: &Scalar, path: &str, seed: ValueSeed<'_>, derived: u64) -> JsonValue {
     let value = scalar
         .semantic
         .as_ref()
-        .and_then(|semantic| semantic_value(semantic, &scalar.constraints, ordinal))
-        .unwrap_or_else(|| kind_value(scalar, path));
+        .and_then(|semantic| semantic_value(semantic, scalar, path, seed, derived))
+        .unwrap_or_else(|| kind_value(scalar, path, seed, derived));
 
     // A declared pattern is the strictest thing the spec said, so a value that
     // does not satisfy it is wrong however realistic it reads. The realistic
@@ -385,9 +421,13 @@ fn scalar_value(scalar: &Scalar, path: &str, ordinal: u64) -> JsonValue {
 /// the schema will be validated against.
 fn semantic_value(
     field_type: &FieldType,
-    constraints: &Constraints,
-    ordinal: u64,
+    scalar: &Scalar,
+    path: &str,
+    seed: ValueSeed<'_>,
+    derived: u64,
 ) -> Option<JsonValue> {
+    let constraints = &scalar.constraints;
+    let ordinal = seed.ordinal;
     let value = match field_type {
         FieldType::Uuid => JsonValue::String(fake_data::fake_uuid()),
         FieldType::Email => JsonValue::String(fake_data::fake_email()),
@@ -410,7 +450,7 @@ fn semantic_value(
         FieldType::Timestamp { format } => JsonValue::String(fake_data::fake_timestamp_in(*format)),
         FieldType::IsoDate { format } => JsonValue::String(fake_data::fake_date_in(*format)),
         FieldType::Boolean { spelling } => {
-            let flag = fake_data::fake_boolean();
+            let flag = falls_within(lopsided_chance(seed.per_field(path, "flag")), derived);
             let (falsy, truthy) = spelling.pair();
             if matches!(spelling, crate::type_detector::BooleanSpelling::TrueFalse) {
                 JsonValue::Bool(flag)
@@ -426,34 +466,52 @@ fn semantic_value(
             let offset = step.saturating_mul(i64::try_from(ordinal).unwrap_or(i64::MAX));
             JsonValue::Number((*start).saturating_add(offset).into())
         }
+        // Both ends were observed in a recording, so they are as good as
+        // declared — the spread inside them is what was missing.
         FieldType::RandomNumber { min, max } => {
             let low = constraints.min.map_or(min.unwrap_or(1), clamp_to_i64);
             let high = constraints.max.map_or(max.unwrap_or(1000), clamp_to_i64);
-            JsonValue::Number(int_between(low, high).into())
+            let spread = bounded_spread(as_f64(low), as_f64(high));
+            JsonValue::Number(spread.whole(derived, low, high).into())
         }
         FieldType::RandomFloat { min, max } => {
             let low = constraints.min.or(*min).unwrap_or(0.0);
             let high = constraints.max.or(*max).unwrap_or(1000.0);
-            json_float(fake_data::fake_price(low, high), low, high)
+            json_float(bounded_spread(low, high).draw(derived), low, high)
         }
         _ => return None,
     };
     Some(value)
 }
 
-fn kind_value(scalar: &Scalar, path: &str) -> JsonValue {
+fn kind_value(scalar: &Scalar, path: &str, seed: ValueSeed<'_>, derived: u64) -> JsonValue {
     let constraints = &scalar.constraints;
     match &scalar.kind {
-        ScalarKind::Boolean => JsonValue::Bool(fake_data::fake_boolean()),
+        ScalarKind::Boolean => JsonValue::Bool(falls_within(
+            lopsided_chance(seed.per_field(path, "flag")),
+            derived,
+        )),
         ScalarKind::Int => {
-            let low = constraints.min.map_or(1, clamp_to_i64);
-            let high = constraints.max.map_or(1000, clamp_to_i64);
-            JsonValue::Number(int_between(low, high).into())
+            let bounded = constraints.min.is_some() || constraints.max.is_some();
+            let low = constraints.min.map_or(0, clamp_to_i64);
+            let high = constraints.max.unwrap_or(OPEN_INT_CEILING).max(1.0);
+            let spread = if bounded {
+                bounded_spread(as_f64(low), high)
+            } else {
+                open_spread(1.0, OPEN_INT_CEILING, path, seed)
+            };
+            JsonValue::Number(spread.whole(derived, low, clamp_to_i64(high)).into())
         }
         ScalarKind::Float => {
+            let bounded = constraints.min.is_some() || constraints.max.is_some();
             let low = constraints.min.unwrap_or(0.0);
-            let high = constraints.max.unwrap_or(1000.0);
-            json_float(fake_data::fake_price(low, high), low, high)
+            let high = constraints.max.unwrap_or(OPEN_FLOAT_CEILING);
+            let spread = if bounded {
+                bounded_spread(low, high)
+            } else {
+                open_spread(0.01, OPEN_FLOAT_CEILING, path, seed)
+            };
+            json_float(spread.draw(derived), low, high)
         }
         ScalarKind::Id => JsonValue::String(fake_data::fake_uuid()),
         ScalarKind::String | ScalarKind::Custom(_) => JsonValue::String(match scalar.shape {
@@ -493,6 +551,40 @@ fn bounded_string(constraints: &Constraints, path: &str) -> String {
     text
 }
 
+/// How a number inside a declared range is spread.
+///
+/// Two decades or more and equal-mass-per-decade is the realistic answer;
+/// below that the range is narrow enough that uniform is, and the digit
+/// profile a wider field would have does not apply to a rating or a
+/// percentage.
+fn bounded_spread(low: f64, high: f64) -> Spread {
+    if low > 0.0 && high / low >= DECADES_WORTH_SPREADING {
+        Spread::LogUniform { low, high }
+    } else {
+        Spread::Uniform { low, high }
+    }
+}
+
+/// How a number nothing bounded is spread.
+///
+/// Orders of magnitude, and sometimes zero: an unconstrained integer in a real
+/// payload is a count, a size or a balance, and none of those are uniform on a
+/// three-decade window that never reaches a fourth.
+fn open_spread(low: f64, high: f64, path: &str, seed: ValueSeed<'_>) -> Spread {
+    Spread::ZeroInflated {
+        zero: distribution::unit(seed.per_field(path, "zeroes")) * MOST_ZEROS,
+        inner: Box::new(Spread::LogUniform { low, high }),
+    }
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a declared bound, compared against another as a magnitude"
+)]
+fn as_f64(bound: i64) -> f64 {
+    bound as f64
+}
+
 /// A declared bound is a float even when the field is an integer; the whole
 /// number inside it is what the bound actually means.
 fn clamp_to_i64(bound: f64) -> i64 {
@@ -508,14 +600,6 @@ fn clamp_to_i64(bound: f64) -> i64 {
     #[allow(clippy::cast_possible_truncation)]
     let truncated = bound as i64;
     truncated
-}
-
-fn int_between(low: i64, high: i64) -> i64 {
-    use rand::RngExt as _;
-    if low >= high {
-        return low;
-    }
-    rng::rng().random_range(low..=high)
 }
 
 /// JSON numbers cannot be NaN or infinite; a bound that produces one is a spec
@@ -622,6 +706,124 @@ mod tests {
 
     fn scalar(kind: ScalarKind) -> ValueSpec {
         ValueSpec::Scalar(Scalar::new(kind))
+    }
+
+    fn drawn_values(field: FieldDef, count: u64) -> Vec<JsonValue> {
+        let name = field.name.to_string();
+        let fields = vec![field];
+        (0..count)
+            .filter_map(|ordinal| {
+                generate_fields(&fields, "", ValueSeed::new(11, "Doc", ordinal))
+                    .get(&name)
+                    .cloned()
+            })
+            .collect()
+    }
+
+    fn bounded(kind: ScalarKind, min: Option<f64>, max: Option<f64>) -> FieldDef {
+        let mut inner = Scalar::new(kind);
+        inner.constraints.min = min;
+        inner.constraints.max = max;
+        FieldDef::new("n", ValueSpec::Scalar(inner), false)
+    }
+
+    /// The support was the tell: no test statistic needed and about five
+    /// samples enough.
+    #[test]
+    fn an_unconstrained_number_is_not_capped_at_a_round_thousand() {
+        let drawn: Vec<f64> = drawn_values(bounded(ScalarKind::Int, None, None), 2000)
+            .into_iter()
+            .filter_map(|value| value.as_f64())
+            .collect();
+        assert_eq!(drawn.len(), 2000);
+
+        let largest = drawn.iter().copied().fold(f64::MIN, f64::max);
+        assert!(largest > 1000.0, "largest was {largest}");
+        assert!(drawn.contains(&0.0), "never zero");
+
+        // Equal mass per decade, which is what a leading-digit profile is made
+        // of: a flat draw over the same support would put a thousandth here.
+        let small = drawn.iter().filter(|value| **value < 1000.0).count();
+        assert!(
+            small > drawn.len() / 4,
+            "only {small} of {} fell in the lower three decades",
+            drawn.len()
+        );
+    }
+
+    #[test]
+    fn a_declared_range_is_still_the_range() {
+        let drawn: Vec<f64> = drawn_values(bounded(ScalarKind::Int, Some(10.0), Some(20.0)), 500)
+            .into_iter()
+            .filter_map(|value| value.as_f64())
+            .collect();
+        assert!(drawn.iter().all(|value| (10.0..=20.0).contains(value)));
+
+        let mut distinct: Vec<String> = drawn.iter().map(f64::to_string).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert!(distinct.len() > 5, "a range should be used: {distinct:?}");
+    }
+
+    /// A collection of exactly two, every time, is zero variance.
+    #[test]
+    fn a_list_is_not_always_two_long() {
+        let field = FieldDef::new(
+            "tags",
+            ValueSpec::List(Box::new(scalar(ScalarKind::String))),
+            false,
+        );
+        let lengths: Vec<usize> = drawn_values(field, 500)
+            .into_iter()
+            .filter_map(|value| value.as_array().map(Vec::len))
+            .collect();
+
+        let mut distinct = lengths.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert!(distinct.len() > 3, "lengths were {distinct:?}");
+        assert!(lengths.contains(&0), "never empty");
+        assert!(lengths.iter().any(|len| *len > 4), "never long");
+    }
+
+    /// Half the users of an API are not administrators.
+    #[test]
+    fn a_boolean_is_not_a_fair_coin() {
+        let field = FieldDef::new("flag", scalar(ScalarKind::Boolean), false);
+        let set = drawn_values(field, 1000)
+            .into_iter()
+            .filter(|value| value == &JsonValue::Bool(true))
+            .count();
+        assert!(
+            !(450..=550).contains(&set),
+            "a boolean read as a coin flip: {set} of 1000"
+        );
+    }
+
+    #[test]
+    fn an_enum_is_skewed_rather_than_flat() {
+        let members = ["draft", "review", "live", "archived"];
+        let field = FieldDef::new(
+            "status",
+            ValueSpec::Enum(members.iter().map(|m| (*m).into()).collect()),
+            false,
+        );
+        let drawn = drawn_values(field, 1200);
+        let counts: Vec<usize> = members
+            .iter()
+            .map(|member| {
+                drawn
+                    .iter()
+                    .filter(|value| value.as_str() == Some(*member))
+                    .count()
+            })
+            .collect();
+        assert_eq!(counts.iter().sum::<usize>(), 1200);
+        assert!(counts.iter().all(|count| *count > 0), "{counts:?}");
+
+        let most = counts.iter().copied().max().unwrap_or(0);
+        let least = counts.iter().copied().min().unwrap_or(0);
+        assert!(most > least * 2, "a flat enum: {counts:?}");
     }
 
     /// `required` and `nullable` are separate answers, so an optional field
