@@ -193,26 +193,29 @@ fn nothing_in_a_seeded_world_disagrees_with_itself() {
     );
 }
 
-/// The number D2 and R2 have to move: a self-relation has no roots and a third
-/// of a small world parents itself.
+/// A levelled hierarchy has no fixed point to find, at any seed or size.
 #[test]
-fn a_hierarchy_reports_the_records_that_parent_themselves() {
-    let mut graph = EntityGraph::new();
-    graph.insert(
-        entity("Folder")
-            .with_field(link("parent", "Folder", Cardinality::One))
-            .with_field(link("children", "Folder", Cardinality::Many)),
-    );
-    let store = EntityStore::new(
-        Arc::new(graph),
-        StoreConfig::seeded(6).with_count("Folder", 60),
-    );
+fn a_hierarchy_reports_nothing_that_parents_itself() {
+    for seed in 0..24 {
+        let mut graph = EntityGraph::new();
+        graph.insert(
+            entity("Folder")
+                .with_field(link("parent", "Folder", Cardinality::One))
+                .with_field(link("children", "Folder", Cardinality::Many)),
+        );
+        let store = EntityStore::new(
+            Arc::new(graph),
+            StoreConfig::seeded(seed).with_count("Folder", 60),
+        );
 
-    let report = examine(&store);
-    let found = failed(&report, Check::SelfParent);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].subject, "Folder.parent");
-    assert_eq!(report.broken(), 1);
+        let report = examine(&store);
+        assert!(
+            failed(&report, Check::SelfParent).is_empty(),
+            "seed {seed}: {:?}",
+            failed(&report, Check::SelfParent)
+        );
+        assert_eq!(report.broken(), 0, "seed {seed}");
+    }
 }
 
 /// The partition files a parent's children side by side, so the number of runs

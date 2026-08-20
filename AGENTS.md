@@ -381,6 +381,24 @@ every child, and a `*_count` field is arithmetic rather than a scan. Partitions
 depend only on the seed and the two census sizes, all fixed for a store's life,
 so they are built on first use and never invalidated.
 
+An entity that owns *itself* cannot use that partition. Cutting a census
+against itself has a fixed point for every seed and every count — the owning
+map is monotone over a rising boundary vector, so `owner_of(i) - i` has to
+cross zero — and a third of a twelve-record hierarchy came out as its own
+parent. Self-relations are levelled instead: positions are cut into contiguous
+levels, each level is partitioned across the one above it, and level zero has
+nothing above it, which is where the world's roots come from. A parent is
+always at a lower level than its child, so a cycle of any length is impossible
+rather than merely unlikely, and the range property survives — one parent still
+owns one contiguous run, so reading its children is a range read and counting
+them is still arithmetic. A `parent` the spec marked non-nullable is therefore
+unsatisfiable, and `world explain` says so.
+
+Because a hierarchy has generations, a delete cascades to a *fixpoint* rather
+than one level. Stopping at the first generation leaves everything below it
+pointing at a tombstone, which is the dangling key this store exists to make
+impossible.
+
 `Slot` is why the partition works after a census had to step over a reserved
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.

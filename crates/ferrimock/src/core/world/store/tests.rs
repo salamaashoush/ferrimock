@@ -1522,3 +1522,204 @@ fn a_to_many_with_no_link_back_still_counts_what_it_lists() {
     }
     assert_eq!(seen, store.count("Item"));
 }
+
+#[test]
+fn a_hierarchy_has_roots() {
+    let store = tree_store(3, 40);
+    let parent_relation = relation_of(&store, "Folder", "parent");
+
+    let roots = store
+        .keys("Folder")
+        .into_iter()
+        .filter(|key| {
+            store
+                .relation_target("Folder", key, "parent", parent_relation)
+                .is_none()
+        })
+        .count();
+    assert!(roots > 0, "a tree with no root is not a tree");
+    assert!(roots < store.count("Folder"), "and not every folder is one");
+
+    for key in store.keys("Folder") {
+        let record = store.get("Folder", &key).unwrap();
+        let stated = record.get("parent").unwrap();
+        let resolves = store
+            .relation_target("Folder", &key, "parent", parent_relation)
+            .is_some();
+        assert_eq!(
+            stated.is_null(),
+            !resolves,
+            "a root says so rather than naming a folder that is not its parent"
+        );
+    }
+}
+
+/// Every chain terminates at a root, at every seed and every size.
+///
+/// A partition of a census against itself has a fixed point for every seed:
+/// the owning map is monotone over a rising boundary vector, so
+/// `owner_of(i) - i` has to cross zero. Levels are what make that impossible
+/// rather than merely unlikely, so this walks the whole world rather than
+/// sampling it.
+#[test]
+fn no_chain_of_parents_ever_returns_to_where_it_started() {
+    for seed in 0..32 {
+        let store = tree_store(seed, 50);
+        let total = store.count("Folder");
+
+        for key in store.keys("Folder") {
+            let walked = ancestors_of(&store, key.clone(), total);
+            let mut seen = walked.clone();
+            seen.push(key.clone());
+            seen.sort_by_key(ToString::to_string);
+            let before = seen.len();
+            seen.dedup();
+            assert_eq!(
+                before,
+                seen.len(),
+                "seed {seed}: the chain from {key} repeats"
+            );
+            assert!(
+                walked.len() < total,
+                "seed {seed}: the chain from {key} does not end"
+            );
+        }
+    }
+}
+
+/// Every folder above one, nearest first, stopping at `bound` hops.
+///
+/// The bound is the point: a chain with a fixed point in it never ends, and a
+/// test that hangs reports nothing at all.
+fn ancestors_of(store: &EntityStore, from: EntityKey, bound: usize) -> Vec<EntityKey> {
+    let parent_relation = relation_of(store, "Folder", "parent");
+    let mut walked = Vec::new();
+    let mut at = from;
+    while walked.len() <= bound {
+        let Some(parent) = store.relation_target("Folder", &at, "parent", parent_relation) else {
+            break;
+        };
+        walked.push(parent.key.clone());
+        at = parent.key;
+    }
+    walked
+}
+
+#[test]
+fn a_hierarchy_is_deep_rather_than_flat() {
+    let store = tree_store(11, 200);
+    let total = store.count("Folder");
+
+    let deepest = store
+        .keys("Folder")
+        .into_iter()
+        .map(|key| ancestors_of(&store, key, total).len())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        (2..=8).contains(&deepest),
+        "a hierarchy should have a few levels, not one and not two hundred: {deepest}"
+    );
+}
+
+/// A one-level cascade over a tree leaves every generation below the second
+/// pointing at a record that is gone.
+#[test]
+fn removing_a_parent_cascades_to_every_generation() {
+    let store = tree_store(5, 60);
+    let parent_relation = relation_of(&store, "Folder", "parent");
+
+    let root = store
+        .keys("Folder")
+        .into_iter()
+        .find(|key| {
+            store
+                .relation_target("Folder", key, "parent", parent_relation)
+                .is_none()
+                && !store
+                    .related("Folder", key, "children", &Selection::new())
+                    .unwrap()
+                    .records
+                    .is_empty()
+        })
+        .expect("a root with children");
+
+    let total = store.count("Folder");
+    let descendants: Vec<EntityKey> = store
+        .keys("Folder")
+        .into_iter()
+        .filter(|key| ancestors_of(&store, key.clone(), total).contains(&root))
+        .collect();
+    assert!(
+        descendants.len() > 2,
+        "the fixture should have more than one generation below the root"
+    );
+
+    store
+        .apply("Folder", Mutation::Remove { key: root.clone() })
+        .unwrap();
+
+    assert!(store.get("Folder", &root).is_none());
+    for key in &descendants {
+        assert!(
+            store.get("Folder", key).is_none(),
+            "a descendant left behind points at a record that no longer exists"
+        );
+    }
+    for key in store.keys("Folder") {
+        if let Some(parent) = store.relation_target("Folder", &key, "parent", parent_relation) {
+            assert!(
+                store.get("Folder", &parent.key).is_some(),
+                "every surviving folder's parent still exists"
+            );
+        }
+    }
+}
+
+/// The cascade is one generation deep in a chain of entities too, not only in
+/// a hierarchy — the tree is what makes it common, not what makes it wrong.
+#[test]
+fn a_cascade_follows_a_chain_of_entities_all_the_way_down() {
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("Org"));
+    graph.insert(entity("Team").with_field(relation_field("org", "Org", Cardinality::One)));
+    graph.insert(entity("Member").with_field(relation_field("team", "Team", Cardinality::One)));
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(3)
+            .with_count("Org", 4)
+            .with_count("Team", 12)
+            .with_count("Member", 40),
+    );
+
+    let team_of = relation_of(&store, "Team", "org");
+    let member_of = relation_of(&store, "Member", "team");
+    let org = store
+        .keys("Org")
+        .into_iter()
+        .find(|org| {
+            store.keys("Team").iter().any(|team| {
+                store
+                    .relation_target("Team", team, "org", team_of)
+                    .is_some_and(|owner| &owner.key == org)
+                    && store.keys("Member").iter().any(|member| {
+                        store
+                            .relation_target("Member", member, "team", member_of)
+                            .is_some_and(|owner| &owner.key == team)
+                    })
+            })
+        })
+        .expect("an org with a team that has a member");
+
+    store.apply("Org", Mutation::Remove { key: org }).unwrap();
+
+    for member in store.keys("Member") {
+        let team = store
+            .relation_target("Member", &member, "team", member_of)
+            .expect("a surviving member still belongs to a team");
+        assert!(
+            store.get("Team", &team.key).is_some(),
+            "the team a surviving member points at was tombstoned two levels up"
+        );
+    }
+}

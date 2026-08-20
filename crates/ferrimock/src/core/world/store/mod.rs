@@ -21,7 +21,7 @@ pub mod values;
 use dashmap::DashMap;
 use lean_string::LeanString;
 use parking_lot::RwLock;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -337,6 +337,152 @@ impl Partition {
     }
 }
 
+/// How many instances sit at the top of a hierarchy.
+///
+/// Root-ish of the total: one root is a chain, a root per record is a flat
+/// list, and a real tree is neither. Halving the square root leaves room for
+/// three or four levels below at any size worth generating.
+fn root_count(total: u32) -> u32 {
+    (total.isqrt() / 2).clamp(1, total.max(1))
+}
+
+/// A relation from an entity to itself, laid out in levels.
+///
+/// Partitioning a census against itself has a fixed point for every seed and
+/// every count. `owner_of` is monotone non-decreasing over a rising boundary
+/// vector, so `owner_of(i) - i` starts at or above zero, ends at or below it
+/// and moves by at most one per step: a discrete intermediate value theorem
+/// guarantees it crosses. A third of a twelve-record hierarchy is its own
+/// parent, and no client can walk a breadcrumb chain through that.
+///
+/// Levels remove it structurally rather than by rejection. Positions are cut
+/// into contiguous levels, each level is partitioned across the level above
+/// it, and level zero has nothing above it — which is where the world's roots
+/// come from. A parent is always at a lower level than its child, so a cycle
+/// of any length is impossible. The range property survives: one parent still
+/// owns one contiguous run, so reading its children is a range read and
+/// counting them is still arithmetic.
+#[derive(Debug)]
+struct Hierarchy {
+    /// Rising offsets: `levels[i]` is where level `i` starts.
+    levels: Vec<u32>,
+    /// `cuts[i]` divides level `i + 1` across the parents of level `i`.
+    cuts: Vec<Partition>,
+}
+
+impl Hierarchy {
+    fn of(seed: u64, entity: &str, role: &str, total: u32) -> Self {
+        let mut levels = vec![0_u32];
+        if total == 0 {
+            levels.push(0);
+            return Self {
+                levels,
+                cuts: Vec::new(),
+            };
+        }
+
+        let stream = format!("{entity}^{entity}#{role}#levels");
+        let mut placed = root_count(total).min(total);
+        let mut width = placed;
+        levels.push(placed);
+        while placed < total {
+            let drawn = rng::derive_seed(seed, &stream, u64::try_from(levels.len()).unwrap_or(0));
+            let factor = u32::try_from(drawn % 3).unwrap_or(0).saturating_add(2);
+            let next = width
+                .saturating_mul(factor)
+                .clamp(1, total.saturating_sub(placed));
+            placed = placed.saturating_add(next);
+            width = next;
+            levels.push(placed);
+        }
+
+        let mut cuts = Vec::with_capacity(levels.len().saturating_sub(2));
+        for depth in 0..levels.len().saturating_sub(2) {
+            let parents = span(&levels, depth);
+            let children = span(&levels, depth + 1);
+            cuts.push(Partition::of(
+                seed,
+                entity,
+                entity,
+                &format!("{role}#level{depth}"),
+                children,
+                parents,
+            ));
+        }
+        Self { levels, cuts }
+    }
+
+    /// Which level a position sits in.
+    fn depth_of(&self, index: u32) -> Option<usize> {
+        let at = self.levels.partition_point(|edge| *edge <= index);
+        let depth = at.checked_sub(1)?;
+        (depth + 1 < self.levels.len()).then_some(depth)
+    }
+
+    fn owner_of(&self, child_index: u32) -> Option<u32> {
+        let depth = self.depth_of(child_index)?;
+        // Level zero is a root, which is the whole point of having levels.
+        let above = depth.checked_sub(1)?;
+        let start = *self.levels.get(depth)?;
+        let parent_start = *self.levels.get(above)?;
+        let local = self
+            .cuts
+            .get(above)?
+            .owner_of(child_index.checked_sub(start)?)?;
+        parent_start.checked_add(local)
+    }
+
+    fn range_of(&self, parent_index: u32) -> std::ops::Range<u32> {
+        let Some(depth) = self.depth_of(parent_index) else {
+            return 0..0;
+        };
+        let (Some(cut), Some(parent_start), Some(child_start)) = (
+            self.cuts.get(depth),
+            self.levels.get(depth).copied(),
+            self.levels.get(depth + 1).copied(),
+        ) else {
+            return 0..0;
+        };
+        let range = cut.range_of(parent_index.saturating_sub(parent_start));
+        child_start.saturating_add(range.start)..child_start.saturating_add(range.end)
+    }
+}
+
+/// The width of one level.
+fn span(levels: &[u32], depth: usize) -> u32 {
+    let start = levels.get(depth).copied().unwrap_or(0);
+    let end = levels.get(depth + 1).copied().unwrap_or(start);
+    end.saturating_sub(start)
+}
+
+/// Who owns whom for one relation.
+///
+/// Two entities are cut flat: each parent takes one contiguous run of the
+/// child census. An entity against itself cannot be, so it is levelled. Both
+/// answer the same two questions, which is what lets every reader of a
+/// relation stay on one code path.
+#[derive(Debug)]
+enum Ownership {
+    Flat(Partition),
+    Levelled(Hierarchy),
+}
+
+impl Ownership {
+    fn owner_of(&self, child_index: u32) -> Option<u32> {
+        match self {
+            Self::Flat(partition) => partition.owner_of(child_index),
+            Self::Levelled(hierarchy) => hierarchy.owner_of(child_index),
+        }
+    }
+
+    fn range_of(&self, parent_index: u32) -> std::ops::Range<u32> {
+        match self {
+            Self::Flat(partition) => partition.range_of(parent_index),
+            Self::Levelled(hierarchy) => hierarchy.range_of(parent_index),
+        }
+    }
+}
+
 /// Which instances of two collections hold each other, as positions.
 ///
 /// A relation whose both ends are collections has no owner to derive from, so
@@ -417,10 +563,10 @@ pub struct EntityStore {
     /// paginated list, and walking the whole delta to answer it made the cost
     /// of a read grow with the number of writes that had ever happened.
     tombstones: RwLock<FxHashMap<LeanString, usize>>,
-    /// One partition per relation, built on first use. It depends only on the
+    /// One ownership per relation, built on first use. It depends only on the
     /// seed and the two census sizes, all of which are fixed for the life of a
     /// store, so it is computed once and never invalidated.
-    partitions: RwLock<FxHashMap<(LeanString, LeanString, LeanString), Arc<Partition>>>,
+    ownership: RwLock<FxHashMap<(LeanString, LeanString, LeanString), Arc<Ownership>>>,
     /// One membership table per many-to-many, on the same terms as
     /// `partitions`: built on first use, never invalidated.
     memberships: RwLock<FxHashMap<(LeanString, LeanString), Arc<Membership>>>,
@@ -475,7 +621,7 @@ impl EntityStore {
             created: RwLock::new(CreatedKeys::default()),
             next_created: AtomicU64::new(0),
             tombstones: RwLock::new(FxHashMap::default()),
-            partitions: RwLock::new(FxHashMap::default()),
+            ownership: RwLock::new(FxHashMap::default()),
             memberships: RwLock::new(FxHashMap::default()),
         }
     }
@@ -817,7 +963,7 @@ impl EntityStore {
             // positions, so this reads only that run rather than filtering
             // every child of every parent.
             if let Some(parent_index) = self.index_of(entity, key) {
-                let partition = self.partition(member.as_str(), entity, &role);
+                let partition = self.ownership(member.as_str(), entity, &role);
                 let range = partition.range_of(parent_index);
                 children.extend(range.filter_map(|position| {
                     let child_key = self
@@ -1143,17 +1289,28 @@ impl EntityStore {
         }
 
         let dependents = self.dependents_of(entity.name.as_str(), key);
-        if !dependents.is_empty() {
-            if !self.config.cascade_delete {
-                return Err(crate::mp_err!(
-                    "`{}` `{key}` still has {} dependent record(s)",
-                    entity.name,
-                    dependents.len()
-                ));
+        if !dependents.is_empty() && !self.config.cascade_delete {
+            return Err(crate::mp_err!(
+                "`{}` `{key}` still has {} dependent record(s)",
+                entity.name,
+                dependents.len()
+            ));
+        }
+
+        // To a fixpoint, not one generation. Over a real hierarchy a single
+        // level of cascade tombstones the children and leaves every generation
+        // below them pointing at a record that is gone — the dangling key this
+        // store exists to make impossible. `seen` is what stops a link a write
+        // retargeted from walking in a circle.
+        let mut seen: FxHashSet<(LeanString, EntityKey)> = FxHashSet::default();
+        seen.insert((entity.name.clone(), key.clone()));
+        let mut pending = dependents;
+        while let Some((child_entity, child_key)) = pending.pop() {
+            if !seen.insert((child_entity.clone(), child_key.clone())) {
+                continue;
             }
-            for (child_entity, child_key) in dependents {
-                self.tombstone(child_entity, child_key);
-            }
+            pending.extend(self.dependents_of(child_entity.as_str(), &child_key));
+            self.tombstone(child_entity, child_key);
         }
 
         self.tombstone(entity.name.clone(), key.clone());
@@ -1323,27 +1480,33 @@ impl EntityStore {
         Some(self.census.get(entity)?.slots.get(key)?.index)
     }
 
-    /// The partition deciding who owns whom for one relation.
-    fn partition(&self, child: &str, parent: &str, role: &str) -> Arc<Partition> {
+    /// Who owns whom for one relation.
+    fn ownership(&self, child: &str, parent: &str, role: &str) -> Arc<Ownership> {
         let slot = (
             LeanString::from(child),
             LeanString::from(parent),
             LeanString::from(role),
         );
-        if let Some(held) = self.partitions.read().get(&slot) {
+        if let Some(held) = self.ownership.read().get(&slot) {
             return Arc::clone(held);
         }
-        let children = self.census.get(child).map_or(0, |c| c.derived.len());
-        let parents = self.census.get(parent).map_or(0, |c| c.derived.len());
-        let built = Arc::new(Partition::of(
-            self.config.seed,
-            child,
-            parent,
-            role,
-            u32::try_from(children).unwrap_or(u32::MAX),
-            u32::try_from(parents).unwrap_or(u32::MAX),
-        ));
-        self.partitions.write().insert(slot, Arc::clone(&built));
+        let children = u32::try_from(self.census.get(child).map_or(0, |c| c.derived.len()))
+            .unwrap_or(u32::MAX);
+        let parents = u32::try_from(self.census.get(parent).map_or(0, |c| c.derived.len()))
+            .unwrap_or(u32::MAX);
+        let built = Arc::new(if child == parent {
+            Ownership::Levelled(Hierarchy::of(self.config.seed, child, role, children))
+        } else {
+            Ownership::Flat(Partition::of(
+                self.config.seed,
+                child,
+                parent,
+                role,
+                children,
+                parents,
+            ))
+        });
+        self.ownership.write().insert(slot, Arc::clone(&built));
         built
     }
 
@@ -1419,11 +1582,16 @@ impl EntityStore {
                 Some(value) => {
                     fields.insert(carrier.to_string(), value);
                 }
-                // Nothing to point at. A link with a field of its own says so;
-                // a link carried by a declared scalar leaves that scalar the
-                // value its own type generated, rather than nulling a field the
-                // schema may have marked required.
-                None if relation.carrier.is_inline_key(&field.name)
+                // Nothing to point at — a root of a hierarchy, or a target
+                // with no instances. A link with a field of its own says so,
+                // and so does one the schema said may be absent. What is left
+                // is a declared scalar the spec marked required, where the
+                // relation was usually inferred from the field's name: nulling
+                // that on the strength of a name match is worse than leaving
+                // the value its own type generated, and `world explain` reports
+                // the hole either way.
+                None if field.nullable
+                    || relation.carrier.is_inline_key(&field.name)
                     || matches!(relation.carrier, Carrier::Embedded | Carrier::Connection(_)) =>
                 {
                     fields.insert(carrier.to_string(), JsonValue::Null);
@@ -1566,7 +1734,7 @@ impl EntityStore {
             let carrier =
                 back.map(|(field, relation)| relation.carrier.key_field(&field.name).clone());
 
-            let partition = self.partition(member.as_str(), entity, &role);
+            let partition = self.ownership(member.as_str(), entity, &role);
             let range = partition.range_of(parent_index);
             total += i64::from(range.end - range.start);
 
@@ -1651,7 +1819,7 @@ impl EntityStore {
         role: &str,
         parent: &str,
     ) -> Option<EntityKey> {
-        let partition = self.partition(child, parent, role);
+        let partition = self.ownership(child, parent, role);
         let owner = partition.owner_of(child_index)?;
         self.census
             .get(parent)?

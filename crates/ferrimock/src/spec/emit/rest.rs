@@ -368,6 +368,34 @@ components:
             .to_string()
     }
 
+    /// A folder deep enough to have a grandparent.
+    ///
+    /// Folders are levelled, so the first one is a root and its `parent` is
+    /// null by construction. A test about how deep an expansion goes has to
+    /// start somewhere there is depth.
+    fn nested_folder_key(world: &Arc<World>) -> String {
+        let parent_of = |key: &str| -> Option<String> {
+            world
+                .get("Folder", key)?
+                .get("parent")?
+                .as_str()
+                .map(str::to_string)
+        };
+        world
+            .list("Folder", &crate::core::EntityQuery::default())
+            .unwrap()
+            .records
+            .iter()
+            .filter_map(|record| record["id"].as_str())
+            .find(|key| {
+                parent_of(key)
+                    .and_then(|parent| parent_of(&parent))
+                    .is_some()
+            })
+            .expect("the fixture should hold a folder two levels down")
+            .to_string()
+    }
+
     #[test]
     fn every_operation_becomes_its_own_mock() {
         let (_world, mocks) = mounted();
@@ -721,7 +749,7 @@ components:
     #[tokio::test]
     async fn a_link_the_expansion_stops_at_keeps_the_shape_the_schema_declared() {
         let (world, mocks) = mounted();
-        let key = first_folder_key(&world);
+        let key = nested_folder_key(&world);
 
         let (_, body) = answer(
             find(&mocks, "filestore-rest#getFolder"),

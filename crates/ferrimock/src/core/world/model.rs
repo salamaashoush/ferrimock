@@ -129,9 +129,10 @@ impl EntityGraph {
             let Some(target) = self.get(relation.target.as_str()) else {
                 continue;
             };
-            if target.name == entity.name {
-                continue;
-            }
+            // A self edge is a cycle of length one, and skipping it hid the
+            // only cut that matters: `parent: Folder!` asks for a root that has
+            // a parent, which no finite world can give. The `InProgress` arm
+            // records it and does not descend, so nothing recurses.
             match state.get(target.name.as_str()) {
                 Some(VisitState::InProgress) => broken.push(BrokenCycle {
                     from: entity.name.clone(),
@@ -830,13 +831,32 @@ mod tests {
         );
     }
 
+    /// A self relation is a cycle of length one. Skipping it hid the only cut
+    /// worth reporting: a hierarchy has roots, and a root that must have a
+    /// parent is a hole no finite world can fill.
     #[test]
-    fn a_self_relation_is_not_a_cycle() {
+    fn a_self_relation_is_a_cycle_of_length_one() {
         let mut graph = EntityGraph::new();
         graph.insert(entity("Comment").with_field(relation_field("parent", "Comment", true)));
         let order = graph.seed_order();
         assert_eq!(order.order.len(), 1);
-        assert!(order.broken_cycles.is_empty());
+        assert_eq!(order.broken_cycles.len(), 1);
+        assert!(
+            !order.broken_cycles[0].is_unsatisfiable(),
+            "a comment may have no parent, so the root of the thread fills it with null"
+        );
+    }
+
+    #[test]
+    fn a_self_relation_that_cannot_be_null_is_unsatisfiable() {
+        let mut graph = EntityGraph::new();
+        graph.insert(entity("Folder").with_field(relation_field("parent", "Folder", false)));
+        let order = graph.seed_order();
+        assert_eq!(order.broken_cycles.len(), 1);
+        assert!(
+            order.broken_cycles[0].is_unsatisfiable(),
+            "every hierarchy has a root, and this one says it does not"
+        );
     }
 
     #[test]
