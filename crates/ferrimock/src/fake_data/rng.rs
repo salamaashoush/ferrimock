@@ -339,28 +339,6 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn global_seed_makes_unscoped_draws_reproducible() {
-        let run = || {
-            set_global_seed(Some(99));
-            (0..5)
-                .map(|_| super::super::fake_name())
-                .collect::<Vec<_>>()
-        };
-        let first = run();
-        assert_eq!(first, run());
-
-        set_global_seed(Some(100));
-        assert_ne!(
-            first,
-            (0..5)
-                .map(|_| super::super::fake_name())
-                .collect::<Vec<_>>()
-        );
-        set_global_seed(None);
-    }
-
-    #[test]
-    #[serial_test::serial]
     fn streams_are_independent_per_name() {
         set_global_seed(Some(5));
         let users = {
@@ -379,13 +357,11 @@ mod tests {
         set_global_seed(None);
     }
 
-    #[test]
-    #[serial_test::serial]
-    fn reset_streams_replays_without_reseeding() {
-        set_global_seed(Some(11));
-        let first = super::super::fake_uuid();
-        reset_streams();
-        assert_eq!(first, super::super::fake_uuid());
-        set_global_seed(None);
-    }
+    // Two more properties belong here and cannot be asserted here: that a
+    // global seed makes unscoped draws reproducible, and that `reset_streams`
+    // restarts the process-wide stream. Both read a singleton, and this binary
+    // runs ~180 other tests that draw from it without installing a scope — any
+    // one of them landing between two draws moves the stream underneath the
+    // assertion, and `#[serial]` only serialises against other serial tests.
+    // They live in `tests/global_seed.rs`, which is its own process.
 }
