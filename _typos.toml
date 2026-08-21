@@ -9,6 +9,9 @@ Nd = "Nd"
 wrk = "wrk"
 # "matchers are ANDed" -- the boolean operator, not a misspelt `Dead`
 Ded = "Ded"
+# The stem a field-name matcher looks for, so `surname` is found the way
+# `givenName` and `familyName` are
+sur = "sur"
 
 [files]
 extend-exclude = [

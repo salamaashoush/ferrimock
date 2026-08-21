@@ -19,6 +19,7 @@ pub mod bus;
 pub mod clock;
 pub mod distribution;
 pub mod pattern;
+pub mod persist;
 pub mod values;
 
 use dashmap::DashMap;
@@ -105,12 +106,16 @@ pub struct StoreConfig {
     /// Whether removing a record also removes what points at it. Without it a
     /// delete that would orphan children is refused.
     pub cascade_delete: bool,
+    /// Where writes are kept so they outlive the process. `None` is a world
+    /// that is exactly its seed again on the next start.
+    pub persist: Option<Arc<persist::Persistence>>,
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             seed: 0,
+            persist: None,
             default_count: None,
             scale: 1.0,
             counts: FxHashMap::default(),
@@ -145,7 +150,7 @@ pub enum Written {
 
 /// Every write applied to a store, lifted out so a rebuilt store can take them
 /// back on. The base layer is pure, so this is the entire mutable state.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DeltaSnapshot {
     entries: Vec<(LeanString, EntityKey, Delta)>,
     created: FxHashMap<LeanString, Vec<EntityKey>>,
@@ -709,7 +714,7 @@ fn membership_sides<'a>(left: &'a str, right: &'a str) -> (&'a str, &'a str) {
 }
 
 /// A change laid over the base world.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum Delta {
     Created(JsonMap<String, JsonValue>),
     /// Fields merged over what the record derives.
@@ -2141,7 +2146,15 @@ fn fanned_out(depth: u32) -> usize {
 }
 
 /// A count with the world's scale applied, never rounded away to nothing.
+///
+/// Zero is the exception, because it was asked for rather than arrived at: a
+/// world that starts empty and fills up through the API is a thing a caller
+/// wants, and the clamp below exists to stop a scale factor rounding a real
+/// count away, not to overrule that.
 fn scaled(count: usize, scale: f64) -> usize {
+    if count == 0 {
+        return 0;
+    }
     if !scale.is_finite() || scale <= 0.0 {
         return count;
     }

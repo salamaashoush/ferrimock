@@ -849,6 +849,13 @@ impl MockRegistry {
                 .collect(),
             cascade_delete: config.cascade_delete,
             viewer: config.viewer.as_deref().map(LeanString::from),
+            // Relative to the collection that named it, like every other path
+            // a collection carries.
+            persistence: config.persistence.as_ref().map(|name| {
+                path.parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(name)
+            }),
             overrides: config.field_rules()?,
         };
         self.world.configure(&settings, path)?;

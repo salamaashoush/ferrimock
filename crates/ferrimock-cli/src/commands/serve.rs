@@ -277,6 +277,26 @@ pub async fn serve_mock_server(config: MockServerConfig) -> anyhow::Result<()> {
         eprintln!("{}", ui::error(&format!("Server task failed: {e:?}")));
     }
 
+    // The delta is the world's whole mutable state, so stopping is when it is
+    // worth writing: a run that exits normally comes back with its writes.
+    match registry.world().persist() {
+        Ok(true) => {
+            if let Some(path) = registry.world().persistence_path() {
+                crate::say!(
+                    "{}",
+                    ui::success(&format!("World state written to {}", path.display()))
+                );
+            }
+        }
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!(
+                "{}",
+                ui::error(&format!("World state not written: {error}"))
+            );
+        }
+    }
+
     crate::say!();
     crate::say!("{}", ui::success("Server stopped"));
 

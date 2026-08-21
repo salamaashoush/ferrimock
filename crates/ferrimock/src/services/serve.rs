@@ -70,9 +70,20 @@ pub struct ServeHandle {
 
 impl ServeHandle {
     /// Stop the server gracefully.
+    ///
+    /// Stopping is when a world configured to outlive the process is written:
+    /// the delta is the whole of its state, so keeping it current on disk
+    /// would mean rewriting all of it on every mutation. Runs once — a handle
+    /// stopped explicitly and then dropped does not write twice.
     pub fn stop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
+            // A world nobody asked to persist answers `false` and touches no
+            // disk. A failure here must not derail shutdown, so it is reported
+            // rather than returned: this is also the `Drop` path.
+            if let Err(error) = self.registry.world().persist() {
+                tracing::warn!("world state not written: {error}");
+            }
         }
     }
 

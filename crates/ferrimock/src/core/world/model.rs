@@ -337,7 +337,9 @@ pub enum KeySource {
 }
 
 /// A concrete instance key: the key fields' values, in key order.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct EntityKey(SmallVec<[LeanString; 1]>);
 
 impl EntityKey {

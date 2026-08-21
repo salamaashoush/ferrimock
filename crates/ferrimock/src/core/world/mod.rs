@@ -46,6 +46,7 @@ struct Settings {
     counts: FxHashMap<LeanString, usize>,
     cascade_delete: Option<bool>,
     viewer: Option<LeanString>,
+    persistence: Option<PathBuf>,
     overrides: FieldRules,
 }
 
@@ -64,6 +65,14 @@ impl Settings {
             config.cascade_delete = cascade;
         }
         config.counts.clone_from(&self.counts);
+        // Built here rather than held, so the sink always carries the seed the
+        // store it feeds was actually built with.
+        config.persist = self.persistence.as_ref().map(|path| {
+            std::sync::Arc::new(crate::core::world::store::persist::Persistence::new(
+                path.clone(),
+                config.seed,
+            ))
+        });
         config
     }
 }
@@ -98,6 +107,8 @@ pub struct WorldSettings {
     pub cascade_delete: Option<bool>,
     /// Which entity a request's credential is an instance of.
     pub viewer: Option<LeanString>,
+    /// Where writes are kept so the world outlives the process.
+    pub persistence: Option<PathBuf>,
     /// What a field should hold, where the schema does not say. Collections
     /// accumulate these rather than contesting them: two files naming the same
     /// field is the last one loaded winning, which is the same rule `counts`
@@ -399,6 +410,9 @@ impl World {
                 current.cascade_delete = Some(cascade);
             }
 
+            if let Some(path) = &settings.persistence {
+                current.persistence = Some(path.clone());
+            }
             if let Some(viewer) = &settings.viewer {
                 current.viewer = Some(viewer.clone());
             }
@@ -527,7 +541,19 @@ impl World {
         let graph = self.graph();
         let config = self.settings.read().to_store_config();
 
-        let snapshot = self.store.read().export_delta();
+        let mut snapshot = self.store.read().export_delta();
+
+        // A world configured to outlive the process takes its writes back from
+        // the file, once — only when it is holding none, which is the first
+        // build of a run. A later rebuild is a schema reload, and the writes it
+        // must carry forward are the ones already in memory.
+        if snapshot.is_empty()
+            && let Some(persist) = &config.persist
+            && let Some(held) = persist.load()?
+        {
+            snapshot = held.delta;
+        }
+
         let rebuilt = EntityStore::new_reserving(graph, config, snapshot.reserved_keys());
         let conflicts = rebuilt.import_delta(snapshot);
 
@@ -538,6 +564,29 @@ impl World {
     /// Drop every write, leaving exactly what the seed derives.
     pub fn reset(&self) {
         self.store.read().reset();
+    }
+
+    /// Write the world's state out, where a collection asked for one.
+    ///
+    /// Called when the process is stopping rather than per write: the delta is
+    /// the whole state, so keeping it current on disk would mean rewriting all
+    /// of it on every mutation — quadratic in the number of writes, to protect
+    /// against a crash rather than an exit. A run that is killed outright
+    /// starts again from its seed, which is the trade a mock can afford.
+    ///
+    /// `Ok(false)` means nothing was configured, so nothing was written.
+    pub fn persist(&self) -> crate::Result<bool> {
+        let Some(persist) = self.settings.read().to_store_config().persist else {
+            return Ok(false);
+        };
+        persist.save(&self.store.read().export_delta())?;
+        Ok(true)
+    }
+
+    /// Where this world's state is kept, if anywhere.
+    #[must_use]
+    pub fn persistence_path(&self) -> Option<PathBuf> {
+        self.settings.read().persistence.clone()
     }
 
     /// Entity names declared by more than one schema.

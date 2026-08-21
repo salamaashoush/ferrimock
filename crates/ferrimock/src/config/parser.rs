@@ -87,6 +87,14 @@ pub struct WorldConfig {
     )]
     pub counts: Option<std::collections::BTreeMap<String, usize>>,
 
+    /// Where to keep writes so the world outlives the process.
+    ///
+    /// The file holds the delta — the writes laid over the seed — not the
+    /// entities, because the entities are derived and a seed already
+    /// reproduces them exactly. Relative to the collection file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistence: Option<String>,
+
     /// Repair malformed schemas rather than refusing them.
     #[serde(default, skip_serializing_if = "is_false")]
     pub lenient: bool,
