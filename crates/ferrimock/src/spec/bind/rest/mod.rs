@@ -8,11 +8,13 @@
 
 pub mod answer;
 pub mod classify;
+pub mod protocol;
 
 use lean_string::LeanString;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
+use crate::config::serve::Behaviour;
 use answer::{BoundOperation, Coverage, EnvelopeSlot, Pagination, ParentLink, filterable_fields};
 use classify::classify;
 
@@ -44,14 +46,16 @@ pub struct RestBackend {
 impl RestBackend {
     /// Bind a document to a world.
     pub fn build(table: &Arc<OperationTable>, world: &Arc<World>) -> Self {
-        Self::build_with(table, world, &DefaultProfile)
+        Self::build_with(table, world, &DefaultProfile, Behaviour::none())
     }
 
-    /// [`Self::build`] with a profile naming this API's pagination dialect.
+    /// [`Self::build`] with a profile naming this API's pagination dialect and
+    /// whatever behaviour the mount asked for beyond answering.
     pub fn build_with(
         table: &Arc<OperationTable>,
         world: &Arc<World>,
         profile: &dyn ConsolidationProfile,
+        behaviour: Behaviour,
     ) -> Self {
         let graph = world.graph();
         let entity_names: FxHashSet<LeanString> =
@@ -88,6 +92,7 @@ impl RestBackend {
                     world,
                     &coverage,
                     &pagination,
+                    behaviour,
                 ))
             })
             .collect();
@@ -115,6 +120,7 @@ fn bind_one(
     world: &Arc<World>,
     coverage: &Arc<Coverage>,
     pagination: &Pagination,
+    behaviour: Behaviour,
 ) -> BoundOperation {
     let response = operation.success();
     let status = response
@@ -190,6 +196,8 @@ fn bind_one(
         parent,
         pagination: pagination.clone(),
         filterable,
+        behaviour,
+        replayed: dashmap::DashMap::new(),
     }
 }
 

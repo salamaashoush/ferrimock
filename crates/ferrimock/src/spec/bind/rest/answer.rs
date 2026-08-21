@@ -179,11 +179,147 @@ pub struct BoundOperation {
     /// their values as — a query string is all strings, and a store comparing
     /// `"5"` against `5` matches nothing.
     pub(super) filterable: Vec<(LeanString, ScalarKind)>,
+    /// What the mount asked for beyond answering. Empty for replay, whatever
+    /// the mount said.
+    pub(super) behaviour: crate::config::serve::Behaviour,
+    /// What each `Idempotency-Key` already got back.
+    ///
+    /// A retry after a timeout is the case this exists for: the client never
+    /// saw the answer, sends the same request again, and a service without
+    /// this makes a second resource.
+    pub(super) replayed: dashmap::DashMap<String, (u16, Bytes)>,
 }
 
 impl BoundOperation {
+    /// Whether answering this operation reads a request header.
+    ///
+    /// Declared per operation so a mount that does not read one never pays to
+    /// marshal a header map. Who is asking arrives in a header and nowhere
+    /// else, and so do the tags a conditional request names.
+    #[must_use]
+    pub const fn reads_headers(&self) -> bool {
+        matches!(self.plan, RootPlan::Viewer { .. })
+            || self.behaviour.conditional
+            || self.behaviour.idempotency
+    }
+
     /// Answer one request.
     pub fn answer(&self, ctx: &RequestContext) -> DynamicResponse {
+        if let Some(held) = self.already_answered(ctx) {
+            return held;
+        }
+        if let Some(refused) = self.stale_precondition(ctx) {
+            return refused;
+        }
+        let answered = self.tagged(self.answer_plan(ctx), ctx);
+        self.remember(ctx, &answered);
+        answered
+    }
+
+    /// Refuse a write against a version that has already moved on.
+    ///
+    /// Read *before* the write, not after: `If-Match` names the representation
+    /// the client believes it is changing, and comparing it against the one
+    /// the write just produced would pass exactly when it should fail.
+    fn stale_precondition(&self, ctx: &RequestContext) -> Option<DynamicResponse> {
+        use super::protocol::{etag_of, header, matches_tag};
+
+        if !self.behaviour.conditional
+            || matches!(self.method, http::Method::GET | http::Method::HEAD)
+        {
+            return None;
+        }
+        let named = header(ctx, "if-match")?;
+        let (RootPlan::Update {
+            entity, key_arg, ..
+        }
+        | RootPlan::Delete {
+            entity, key_arg, ..
+        }) = &self.plan
+        else {
+            return None;
+        };
+
+        let store = self.world.store();
+        let key = Self::addressed_key(&store, entity.as_str(), key_arg, ctx)?;
+        let record = store.get(entity.as_str(), &key)?;
+        let held = record.entity.clone();
+        let representation = self.wrap_payload(self.expand_with(&store, &held, record, 0));
+        (!matches_tag(named, &etag_of(&representation))).then(|| {
+            self.failure(
+                StatusCode::PRECONDITION_FAILED,
+                "the representation has moved on since the tag you named",
+            )
+        })
+    }
+
+    /// The answer this idempotency key already got, if it got one.
+    fn already_answered(&self, ctx: &RequestContext) -> Option<DynamicResponse> {
+        if !self.behaviour.idempotency || self.method == http::Method::GET {
+            return None;
+        }
+        let key = super::protocol::header(ctx, "idempotency-key")?;
+        let held = self.replayed.get(key)?;
+        let (status, body) = held.value().clone();
+        Some(DynamicResponse {
+            status: StatusCode::from_u16(status).ok(),
+            headers: Some(
+                std::iter::once(("idempotent-replay".to_string(), "true".to_string())).collect(),
+            ),
+            body,
+            ..DynamicResponse::default()
+        })
+    }
+
+    fn remember(&self, ctx: &RequestContext, answered: &DynamicResponse) {
+        if !self.behaviour.idempotency || self.method == http::Method::GET {
+            return;
+        }
+        let Some(key) = super::protocol::header(ctx, "idempotency-key") else {
+            return;
+        };
+        let status = answered.status.unwrap_or(self.status);
+        // A failure is not an answer worth replaying: the client is meant to
+        // retry it and get a different one.
+        if status.is_success() {
+            self.replayed
+                .insert(key.to_string(), (status.as_u16(), answered.body.clone()));
+        }
+    }
+
+    /// Give an answer its own tag, and hand back a 304 to a client that
+    /// already has that representation.
+    fn tagged(&self, answered: DynamicResponse, ctx: &RequestContext) -> DynamicResponse {
+        use super::protocol::{etag_of, header, matches_tag};
+
+        if !self.behaviour.conditional || answered.status.is_some_and(|s| s.is_client_error()) {
+            return answered;
+        }
+        let Ok(body) = serde_json::from_slice::<JsonValue>(&answered.body) else {
+            return answered;
+        };
+        let etag = etag_of(&body);
+
+        if matches!(self.method, http::Method::GET | http::Method::HEAD)
+            && header(ctx, "if-none-match").is_some_and(|held| matches_tag(held, &etag))
+        {
+            return DynamicResponse {
+                status: Some(StatusCode::NOT_MODIFIED),
+                headers: Some(std::iter::once(("etag".to_string(), etag)).collect()),
+                body: Bytes::new(),
+                ..DynamicResponse::default()
+            };
+        }
+
+        let mut answered = answered;
+        answered
+            .headers
+            .get_or_insert_with(Default::default)
+            .insert("etag".to_string(), etag);
+        answered
+    }
+
+    fn answer_plan(&self, ctx: &RequestContext) -> DynamicResponse {
         let world = &self.world;
         match &self.plan {
             RootPlan::Get {
@@ -199,8 +335,24 @@ impl BoundOperation {
             RootPlan::Create { entity, .. } => {
                 let values = self.input_values(ctx);
                 match world.create(entity.as_str(), values) {
-                    Ok(record) => self.ok(&self.wrap_one(entity, record)),
-                    Err(error) => Self::failed(StatusCode::BAD_REQUEST, &error.to_string()),
+                    Ok(record) => {
+                        let made = record
+                            .get("id")
+                            .and_then(JsonValue::as_str)
+                            .map(str::to_string);
+                        let mut answered = self.ok(&self.wrap_one(entity, record));
+                        // Where the thing that was just made now lives. A
+                        // client that follows it is doing what the status code
+                        // told it to.
+                        if let Some(key) = made {
+                            answered
+                                .headers
+                                .get_or_insert_with(Default::default)
+                                .insert("location".to_string(), self.created_at(&key));
+                        }
+                        answered
+                    }
+                    Err(error) => self.failure(StatusCode::BAD_REQUEST, &error.to_string()),
                 }
             }
 
@@ -208,7 +360,7 @@ impl BoundOperation {
                 entity, key_arg, ..
             } => {
                 let Some(key) = self.addressed_text(entity, key_arg, ctx) else {
-                    return Self::failed(
+                    return self.failure(
                         StatusCode::BAD_REQUEST,
                         &format!("`{key_arg}` is missing from the path"),
                     );
@@ -228,9 +380,9 @@ impl BoundOperation {
                     // a missing record: the record is right there, and what it
                     // holds is the reason the write cannot land.
                     Err(crate::FerrimockError::Conflict(why)) => {
-                        Self::failed(StatusCode::CONFLICT, &why)
+                        self.failure(StatusCode::CONFLICT, &why)
                     }
-                    Err(_) => Self::not_found(entity, key),
+                    Err(_) => self.not_found(entity, key),
                 }
             }
 
@@ -238,7 +390,7 @@ impl BoundOperation {
                 entity, key_arg, ..
             } => {
                 let Some(key) = self.addressed_text(entity, key_arg, ctx) else {
-                    return Self::failed(
+                    return self.failure(
                         StatusCode::BAD_REQUEST,
                         &format!("`{key_arg}` is missing from the path"),
                     );
@@ -248,7 +400,7 @@ impl BoundOperation {
                 // stops being readable.
                 let removed = world.get(entity.as_str(), key);
                 if removed.is_none() {
-                    return Self::not_found(entity, key);
+                    return self.not_found(entity, key);
                 }
                 match world.delete(entity.as_str(), key) {
                     Ok(()) if self.status == StatusCode::NO_CONTENT => DynamicResponse {
@@ -261,7 +413,7 @@ impl BoundOperation {
                             .map_or(JsonValue::Null, |record| self.expand(entity, record, 0));
                         self.ok(&self.wrap_payload(expanded))
                     }
-                    Err(error) => Self::failed(StatusCode::CONFLICT, &error.to_string()),
+                    Err(error) => self.failure(StatusCode::CONFLICT, &error.to_string()),
                 }
             }
 
@@ -296,7 +448,7 @@ impl BoundOperation {
 
         let credential = Credential::read(&ctx.headers);
         if credential == Credential::Absent {
-            let mut refused = Self::failed(StatusCode::UNAUTHORIZED, "no credential was presented");
+            let mut refused = self.failure(StatusCode::UNAUTHORIZED, "no credential was presented");
             refused.headers = Some(
                 std::iter::once(("www-authenticate".to_string(), challenge().to_string()))
                     .collect(),
@@ -314,7 +466,7 @@ impl BoundOperation {
                 let value = self.expand_with(&store, &held, record, 0);
                 self.ok(&self.wrap_payload(value))
             }
-            None => Self::failed(StatusCode::NOT_FOUND, "the credential names nobody"),
+            None => self.failure(StatusCode::NOT_FOUND, "the credential names nobody"),
         }
     }
 
@@ -337,7 +489,7 @@ impl BoundOperation {
             })
         } else {
             if !ctx.captures.contains_key(key_arg.as_str()) {
-                return Self::failed(
+                return self.failure(
                     StatusCode::BAD_REQUEST,
                     &format!("`{key_arg}` is missing from the path"),
                 );
@@ -354,7 +506,7 @@ impl BoundOperation {
                 let value = self.expand_with(&store, &entity, record, 0);
                 self.ok(&self.wrap_payload(value))
             }
-            None => Self::not_found(
+            None => self.not_found(
                 entity,
                 &self
                     .addressed_text(entity, key_arg, ctx)
@@ -369,7 +521,7 @@ impl BoundOperation {
         let page = match &self.parent {
             Some(parent) => {
                 let Some(key) = ctx.captures.get(parent.param.as_str()) else {
-                    return Self::failed(
+                    return self.failure(
                         StatusCode::BAD_REQUEST,
                         &format!("`{}` is missing from the path", parent.param),
                     );
@@ -380,12 +532,13 @@ impl BoundOperation {
             None => self.world.list(entity.as_str(), &query),
         };
 
-        let page = match page {
+        let mut page = match page {
             Ok(page) => page,
-            Err(error) => return Self::failed(StatusCode::BAD_REQUEST, &error.to_string()),
+            Err(error) => return self.failure(StatusCode::BAD_REQUEST, &error.to_string()),
         };
 
         let store = self.world.store();
+        self.hold_back_the_lag(&store, entity, &mut page);
         let records: Vec<JsonValue> = page
             .records
             .iter()
@@ -703,6 +856,47 @@ impl BoundOperation {
         )
     }
 
+    /// Drop the records a lagging replica has not caught up to yet.
+    ///
+    /// Measured in writes rather than seconds, so two identical requests
+    /// answer identically and a delta snapshot can carry it. What it buys is
+    /// the client path that matters: a `POST` answers 201 with the record, the
+    /// `GET` straight after does not list it, and a client that retries or
+    /// polls gets it — which is exactly the code a read-your-writes bug lives
+    /// in and the one a mock with no lag can never exercise.
+    fn hold_back_the_lag(
+        &self,
+        store: &Arc<EntityStore>,
+        entity: &LeanString,
+        page: &mut crate::core::EntityPage,
+    ) {
+        let lag = self.behaviour.replica_lag as u64;
+        if lag == 0 {
+            return;
+        }
+        let now = store.writes();
+        let visible = |record: &JsonValue| {
+            record
+                .get("id")
+                .and_then(JsonValue::as_str)
+                .map(|key| self.world.entity_key(entity.as_str(), key))
+                .and_then(|key| store.created_at(entity.as_str(), &key))
+                .is_none_or(|at| now.saturating_sub(at) > lag)
+        };
+        let before = page.records.len();
+        page.records.retain(visible);
+        page.total = page.total.saturating_sub(before - page.records.len());
+    }
+
+    /// Where a created record is addressable.
+    ///
+    /// The collection path plus the key, which is what an item path under this
+    /// operation's own path is — an operation that creates at `/folders`
+    /// serves the thing it made at `/folders/{id}`.
+    fn created_at(&self, key: &str) -> String {
+        format!("{}/{key}", self.path.trim_end_matches('/'))
+    }
+
     fn ok(&self, body: &JsonValue) -> DynamicResponse {
         DynamicResponse {
             status: Some(self.status),
@@ -711,18 +905,50 @@ impl BoundOperation {
         }
     }
 
-    fn not_found(entity: &str, key: &str) -> DynamicResponse {
-        Self::failed(
+    /// Nothing here — or, when the mount asked for soft deletes and the world
+    /// remembers removing it, something that *was* here.
+    ///
+    /// The difference matters to a client: 404 says try again with a different
+    /// key, 410 says stop asking.
+    fn not_found(&self, entity: &str, key: &str) -> DynamicResponse {
+        if self.behaviour.soft_delete
+            && !key.is_empty()
+            && self
+                .world
+                .store()
+                .was_removed(entity, &self.world.entity_key(entity, key))
+        {
+            return self.failure(StatusCode::GONE, &format!("{entity} `{key}` was removed"));
+        }
+        self.failure(
             StatusCode::NOT_FOUND,
             &format!("no {entity} with key `{key}`"),
         )
     }
 
-    /// A failure the world produced, in a shape a client can parse.
+    /// A failure, in whichever shape this mount asked for.
     ///
-    /// Deliberately generic: an API's own error envelope is its own, and the
-    /// way to serve that one is an ordinary mock at a higher priority.
-    fn failed(status: StatusCode, message: &str) -> DynamicResponse {
+    /// RFC 9457 when the mount said so, because a client with a generic
+    /// problem-details reader gets a `title` and a `status` out of it and
+    /// cannot get either out of an envelope invented per API. Otherwise the
+    /// engine's own, which is deliberately generic for the same reason: an
+    /// API's own error envelope is its own, and the way to serve that one is
+    /// an ordinary mock at a higher priority.
+    fn failure(&self, status: StatusCode, message: &str) -> DynamicResponse {
+        if self.behaviour.problem_json {
+            return DynamicResponse {
+                status: Some(status),
+                headers: Some(
+                    std::iter::once((
+                        "content-type".to_string(),
+                        "application/problem+json".to_string(),
+                    ))
+                    .collect(),
+                ),
+                body: Bytes::from(super::protocol::problem(status, message).to_string()),
+                ..DynamicResponse::default()
+            };
+        }
         let body = serde_json::json!({
             "error": { "status": status.as_u16(), "message": message }
         });

@@ -95,10 +95,10 @@ fn mount(
     let delay = mock.response.delay;
     // A REST operation reads the path, the query string and the body; headers
     // are the transport's, so the matching lanes can skip marshalling them.
-    // The exception is the one endpoint that answers per caller: who is asking
-    // arrives in a header and nowhere else, and it is declared per operation
-    // so nothing that does not ask for it pays.
-    let needs = if matches!(operation.plan, crate::spec::bind::RootPlan::Viewer { .. }) {
+    // Two things need them anyway — the endpoint that answers per caller, and
+    // a mount that asked for conditional requests or idempotency — and both
+    // are declared per operation, so nothing that does not ask for them pays.
+    let needs = if operation.reads_headers() {
         ContextNeeds::ALL
     } else {
         ContextNeeds::body_only()

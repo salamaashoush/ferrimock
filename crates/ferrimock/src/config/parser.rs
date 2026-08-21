@@ -6,6 +6,7 @@ use super::request_transform::RequestTransformConfig;
 use super::response::{
     ResponseConfig, ResponsePatchesConfig, parse_duration, parse_patches_config,
 };
+use super::serve::Behaviour;
 use crate::Result;
 use crate::types::MockDefinition;
 use lean_string::LeanString;
@@ -612,6 +613,11 @@ pub enum ServeConfig {
         protocol: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schema: Option<String>,
+        /// Behaviour a real service has that a document does not describe —
+        /// conditional requests, soft deletes, problem details, replica lag.
+        /// Opt-in per mount, and forced off for replay.
+        #[serde(default, skip_serializing_if = "Behaviour::is_none")]
+        behaviour: Behaviour,
     },
 }
 
@@ -620,6 +626,15 @@ impl ServeConfig {
     pub fn protocol(&self) -> &str {
         match self {
             Self::Protocol(protocol) | Self::Explicit { protocol, .. } => protocol,
+        }
+    }
+
+    /// What this mount asked the serve layer to do beyond answering.
+    #[must_use]
+    pub const fn behaviour(&self) -> Behaviour {
+        match self {
+            Self::Protocol(_) => Behaviour::none(),
+            Self::Explicit { behaviour, .. } => *behaviour,
         }
     }
 

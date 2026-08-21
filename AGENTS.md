@@ -415,6 +415,26 @@ one per write -- that keeping them apart prevents.
 key: `ordinal` is what a record's values derive from, `index` is where it sits
 among its siblings, and everything pairing two instances works in `index`.
 
+A `serve:` mount can ask for behaviour a document does not describe --
+`serve: { protocol: rest, behaviour: { conditional: true, soft_delete: true,
+problem_json: true, replica_lag: 2, idempotency: true } }`. A representation
+carries an `ETag`, `If-None-Match` answers 304 and `If-Match` answers 412
+(checked *before* the write, since the tag names the version the client
+believes it is changing); a removed record answers 410 rather than 404, because
+404 says try a different key and 410 says stop asking; errors come back as
+`application/problem+json`; an `Idempotency-Key` replays the answer it already
+got; and a lagging replica holds a created record back from lists.
+
+Two constraints. Replica lag is counted in **writes**, not seconds: wall-clock
+lag would make `keys()`, `count()` and every page total functions of the clock,
+so two identical requests would answer differently and a delta snapshot has
+nowhere to keep a timer. And **replay forces all of it off** -- not a default, a
+constraint. `consolidator::fidelity` scores status, shape and value equality
+against what was recorded, and a 304, a 412 or a held-back record fails all
+three against the unconsolidated baseline as well, so the attribution logic
+could not tell a consolidator bug from a mock behaving exactly as its mount
+asked.
+
 A root field returning one instance with no way to say *which* -- `viewer`,
 `me`, `currentUser`, `GET /me` -- is `RootPlan::Viewer`, not a `Get` that lost
 its argument. Read as a `Get` it had an empty key, and an empty key resolved to

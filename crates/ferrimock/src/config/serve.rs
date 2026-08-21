@@ -13,6 +13,57 @@ use super::parser::ServeConfig;
 use crate::core::World;
 use crate::types::MockDefinition;
 
+/// What a mount asked the serve layer to do beyond answering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct Behaviour {
+    /// `ETag` on a single record, `If-None-Match` answering 304, `If-Match`
+    /// answering 412.
+    pub conditional: bool,
+    /// A removed record answers 410 rather than 404, which is the difference
+    /// between "there is nothing here" and "there was, and it is gone".
+    pub soft_delete: bool,
+    /// Errors as `application/problem+json` (RFC 9457) rather than as this
+    /// engine's own envelope.
+    pub problem_json: bool,
+    /// How many further writes a created record stays invisible to a list for.
+    ///
+    /// Counted in *writes*, not seconds. Wall-clock lag would make `keys()`,
+    /// `count()` and every page total functions of the clock — two identical
+    /// requests answering differently — and a delta snapshot has nowhere to
+    /// keep a timer, so a rebuild would restart every one of them and could
+    /// resurrect records that had already become visible.
+    pub replica_lag: usize,
+    /// Replay the answer an `Idempotency-Key` already got rather than acting
+    /// on the request twice.
+    pub idempotency: bool,
+}
+
+impl Behaviour {
+    /// Nothing beyond answering. What replay gets, whatever the mount asked
+    /// for.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            conditional: false,
+            soft_delete: false,
+            problem_json: false,
+            replica_lag: 0,
+            idempotency: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_none(&self) -> bool {
+        !self.conditional
+            && !self.soft_delete
+            && !self.problem_json
+            && self.replica_lag == 0
+            && !self.idempotency
+    }
+}
+
 /// Protocols `serve:` understands, for the error when it does not.
 const KNOWN_PROTOCOLS: [&str; 2] = ["graphql", "rest"];
 
@@ -119,7 +170,12 @@ fn expand_rest(
         ));
     };
 
-    let backend = RestBackend::build(table, world);
+    let backend = RestBackend::build_with(
+        table,
+        world,
+        &crate::profile::DefaultProfile,
+        serve.behaviour(),
+    );
     // `source_file` stays whatever the caller set, for the same reason it does
     // under `serve: graphql`: the mocks are declared in a collection, and that
     // is the file `reload_file` knows how to re-run.

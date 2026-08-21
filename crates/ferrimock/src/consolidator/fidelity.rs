@@ -657,11 +657,36 @@ async fn build_matcher(
     // few hundred interactions take an afternoon. Fidelity is not a timing
     // measurement, and nothing here reads the clock.
     strip_delays(&mut collection);
+    strip_behaviour(&mut collection);
 
     let definitions = collection
         .into_mock_definitions_with_dir(base_dir, None)
         .await?;
     Ok(MockMatcher::new(MockRegistry::with_mocks(definitions)))
+}
+
+/// Drop every behaviour a mount asked for beyond answering.
+///
+/// Not a default — a constraint. This scores status, shape and value equality
+/// against what was recorded, and a 304, a 412 or a record a lagging replica
+/// is holding back fails all three. It fails the *unconsolidated* baseline
+/// identically, so the attribution logic could not tell a consolidator bug
+/// from a mock behaving exactly as its mount asked it to.
+fn strip_behaviour(collection: &mut MockCollectionConfig) {
+    use crate::config::ServeConfig;
+
+    for mock in &mut collection.mocks {
+        if let Some(ServeConfig::Explicit {
+            protocol, schema, ..
+        }) = &mock.serve
+        {
+            mock.serve = Some(ServeConfig::Explicit {
+                protocol: protocol.clone(),
+                schema: schema.clone(),
+                behaviour: crate::config::serve::Behaviour::none(),
+            });
+        }
+    }
 }
 
 /// Drop every configured delay from a collection about to be replayed.

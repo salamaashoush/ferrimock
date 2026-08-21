@@ -828,6 +828,24 @@ impl EntityStore {
         (derived + created).saturating_sub(tombstoned)
     }
 
+    /// How many writes this store has taken.
+    ///
+    /// The sequence a replica's lag is measured in. Wall-clock lag would make
+    /// `keys()`, `count()` and every page total functions of the clock — two
+    /// identical requests answering differently — and a delta snapshot has
+    /// nowhere to keep a timer, so a rebuild would restart every one of them
+    /// and could resurrect records that had already become visible.
+    #[must_use]
+    pub fn writes(&self) -> u64 {
+        self.next_created.load(Ordering::Relaxed) + self.delta.len() as u64
+    }
+
+    /// When a created record joined the world, in writes.
+    #[must_use]
+    pub fn created_at(&self, entity: &str, key: &EntityKey) -> Option<u64> {
+        self.created.read().position_of(entity, key)
+    }
+
     /// Every visible key of an entity, derived first then created, in a stable
     /// order.
     #[must_use]
@@ -1656,6 +1674,16 @@ impl EntityStore {
         self.created.write().clear();
         self.tombstones.write().clear();
         self.next_created.store(0, Ordering::Relaxed);
+    }
+
+    /// Whether this key names something the world remembers removing.
+    ///
+    /// The difference between "there is nothing here" and "there was, and it
+    /// is gone" is a real one to a client: one says try a different key, the
+    /// other says stop asking.
+    #[must_use]
+    pub fn was_removed(&self, entity: &str, key: &EntityKey) -> bool {
+        self.is_tombstoned(entity, key)
     }
 
     fn is_tombstoned(&self, entity: &str, key: &EntityKey) -> bool {

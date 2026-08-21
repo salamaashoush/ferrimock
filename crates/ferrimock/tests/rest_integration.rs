@@ -202,6 +202,8 @@ struct Call<'a> {
     body: Option<&'a str>,
     /// What the request says about who is asking.
     credential: Option<String>,
+    /// Conditional and idempotency headers, as sent.
+    sent: Vec<(&'static str, String)>,
 }
 
 impl<'a> Call<'a> {
@@ -212,12 +214,40 @@ impl<'a> Call<'a> {
             query: None,
             body: None,
             credential: None,
+            sent: Vec::new(),
         }
     }
 
     fn presenting(mut self, token: &str) -> Self {
         self.credential = Some(format!("Bearer {token}"));
         self
+    }
+
+    fn sending(mut self, name: &'static str, value: &str) -> Self {
+        self.sent.push((name, value.to_string()));
+        self
+    }
+
+    fn delete(path: &'a str) -> Self {
+        Self {
+            method: Method::DELETE,
+            path,
+            query: None,
+            body: None,
+            credential: None,
+            sent: Vec::new(),
+        }
+    }
+
+    fn put(path: &'a str, body: &'a str) -> Self {
+        Self {
+            method: Method::PUT,
+            path,
+            query: None,
+            body: Some(body),
+            credential: None,
+            sent: Vec::new(),
+        }
     }
 
     fn post(path: &'a str, body: &'a str) -> Self {
@@ -227,6 +257,7 @@ impl<'a> Call<'a> {
             query: None,
             body: Some(body),
             credential: None,
+            sent: Vec::new(),
         }
     }
 
@@ -259,6 +290,12 @@ async fn answered(
         sent.insert(
             http::header::AUTHORIZATION,
             credential.parse().expect("a header value"),
+        );
+    }
+    for (name, value) in &call.sent {
+        sent.insert(
+            http::HeaderName::from_static(name),
+            value.parse().expect("a header value"),
         );
     }
 
@@ -402,6 +439,7 @@ async fn a_hand_written_mock_overrides_exactly_one_endpoint() {
             query: None,
             body: Some("{}"),
             credential: None,
+            sent: Vec::new(),
         },
     )
     .await;
@@ -472,6 +510,7 @@ async fn a_write_through_the_served_document_is_visible_to_the_world() {
             query: None,
             body: Some(r#"{"name":"Reports"}"#),
             credential: None,
+            sent: Vec::new(),
         },
     )
     .await;
@@ -499,6 +538,7 @@ async fn a_delete_through_the_document_removes_the_record() {
             query: None,
             body: None,
             credential: None,
+            sent: Vec::new(),
         },
     )
     .await;
@@ -1304,4 +1344,289 @@ async fn an_unbound_viewer_is_counted_rather_than_guessed() {
         "an unbound viewer is not classified: {:?}",
         backend.coverage().unclassified()
     );
+}
+
+const BEHAVING_DOC: &str = "
+openapi: 3.0.3
+info: { title: Notes, version: '1' }
+paths:
+  /notes:
+    get:
+      operationId: listNotes
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Note' } }
+    post:
+      operationId: createNote
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Note' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+  /notes/{note_id}:
+    parameters:
+      - { name: note_id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getNote
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+    put:
+      operationId: replaceNote
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Note' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+    delete:
+      operationId: deleteNote
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+components:
+  schemas:
+    Note:
+      type: object
+      required: [id, title]
+      properties:
+        id: { type: string }
+        title: { type: string }
+";
+
+async fn load_behaving(behaviour: &str) -> (tempfile::TempDir, Arc<MockRegistry>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.openapi.yaml"), BEHAVING_DOC).unwrap();
+    std::fs::write(
+        dir.path().join("mocks.yaml"),
+        format!(
+            "name: Notes\nworld:\n  schemas:\n    - notes.openapi.yaml\n  seed: 9\n  counts:\n    Note: 5\n\nmocks:\n  - id: notes\n    match:\n      url: https://api.example.com\n    serve:\n      protocol: rest\n      behaviour: {{ {behaviour} }}\n"
+        ),
+    )
+    .unwrap();
+
+    let registry = Arc::new(MockRegistry::with_world(Arc::new(World::new())));
+    registry.load_from_directory(dir.path()).await.unwrap();
+    (dir, registry)
+}
+
+async fn first_note(registry: &Arc<MockRegistry>) -> String {
+    let (_, _, notes) = request(registry, Call::get("/notes")).await;
+    notes[0]["id"].as_str().unwrap().to_string()
+}
+
+/// A document declares shapes and status codes. It does not declare that a
+/// second `GET` with the tag it was given answers 304 — and a client that
+/// handles conditional requests has no way to exercise that against a mock
+/// that does not.
+#[tokio::test]
+async fn a_representation_carries_a_tag_a_client_can_ask_against() {
+    let (_dir, registry) = load_behaving("conditional: true").await;
+    let id = first_note(&registry).await;
+
+    let (_, status, body, headers) = answered(&registry, Call::get(&format!("/notes/{id}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let etag = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("etag"))
+        .map(|(_, value)| value.clone())
+        .expect("a representation carries its own tag");
+    assert!(!body.is_null());
+
+    let (_, status, again, _) = answered(
+        &registry,
+        Call::get(&format!("/notes/{id}")).sending("if-none-match", &etag),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    assert!(again.is_null(), "a 304 carries no body");
+
+    let (_, status, _, _) = answered(
+        &registry,
+        Call::get(&format!("/notes/{id}")).sending("if-none-match", "\"something-else\""),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a tag that does not match is a read"
+    );
+}
+
+#[tokio::test]
+async fn a_write_against_a_version_that_moved_on_is_refused() {
+    let (_dir, registry) = load_behaving("conditional: true").await;
+    let id = first_note(&registry).await;
+
+    let (_, _, _, headers) = answered(&registry, Call::get(&format!("/notes/{id}"))).await;
+    let etag = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("etag"))
+        .map(|(_, value)| value.clone())
+        .unwrap();
+
+    let (_, status, _, _) = answered(
+        &registry,
+        Call::put(&format!("/notes/{id}"), r#"{"title":"Renamed"}"#)
+            .sending("if-match", "\"stale\""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
+
+    let (_, status, _, _) = answered(
+        &registry,
+        Call::put(&format!("/notes/{id}"), r#"{"title":"Renamed"}"#).sending("if-match", &etag),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the tag it was given still holds");
+}
+
+/// 404 says try a different key. 410 says stop asking.
+#[tokio::test]
+async fn a_removed_record_says_it_was_removed() {
+    let (_dir, registry) = load_behaving("soft_delete: true, problem_json: true").await;
+    let id = first_note(&registry).await;
+
+    let (_, status, _) = request(&registry, Call::delete(&format!("/notes/{id}"))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, status, body, headers) = answered(&registry, Call::get(&format!("/notes/{id}"))).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["status"], JsonValue::from(410));
+    assert_eq!(body["title"], JsonValue::from("Gone"));
+    assert!(
+        headers
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("content-type")
+                && value.contains("problem+json")),
+        "{headers:?}"
+    );
+
+    let (_, status, _) = request(&registry, Call::get("/notes/never-existed")).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "nothing is not the same as gone"
+    );
+}
+
+/// A `POST` answers with the record; the `GET` straight after does not list
+/// it; a client that retries gets it. That is the code path a
+/// read-your-writes bug lives in, and a mock with no lag can never exercise it.
+#[tokio::test]
+async fn a_lagging_replica_catches_up_in_writes_rather_than_seconds() {
+    let (_dir, registry) = load_behaving("replica_lag: 2").await;
+
+    let (_, status, made) = request(&registry, Call::post("/notes", r#"{"title":"Fresh"}"#)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = made["id"].as_str().unwrap().to_string();
+
+    let listed = |registry: &Arc<MockRegistry>, id: String| {
+        let registry = Arc::clone(registry);
+        async move {
+            let (_, _, notes) = request(&registry, Call::get("/notes")).await;
+            notes
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|note| note["id"].as_str() == Some(id.as_str()))
+        }
+    };
+
+    assert!(
+        !listed(&registry, id.clone()).await,
+        "the replica has not caught up yet"
+    );
+    for _ in 0..3 {
+        request(&registry, Call::post("/notes", r#"{"title":"Another"}"#)).await;
+    }
+    assert!(
+        listed(&registry, id).await,
+        "further writes are what a replica catches up on"
+    );
+}
+
+/// A retry after a timeout is the case this exists for: the client never saw
+/// the answer, sends the same request again, and a service without this makes
+/// a second resource.
+#[tokio::test]
+async fn an_idempotency_key_is_answered_once() {
+    let (_dir, registry) = load_behaving("idempotency: true").await;
+
+    let send = || Call::post("/notes", r#"{"title":"Once"}"#).sending("idempotency-key", "abc-123");
+
+    let (_, status, first) = request(&registry, send()).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (_, status, again, headers) = answered(&registry, send()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(first, again, "the same key gets the same answer");
+    assert!(
+        headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("idempotent-replay")),
+        "a replay says so: {headers:?}"
+    );
+
+    let (_, _, other) = request(
+        &registry,
+        Call::post("/notes", r#"{"title":"Twice"}"#).sending("idempotency-key", "def-456"),
+    )
+    .await;
+    assert_ne!(
+        first["id"], other["id"],
+        "a different key is a different act"
+    );
+}
+
+#[tokio::test]
+async fn a_creation_says_where_the_thing_it_made_now_lives() {
+    let (_dir, registry) = load_behaving("").await;
+
+    let (_, status, made, headers) =
+        answered(&registry, Call::post("/notes", r#"{"title":"Fresh"}"#)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let location = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("location"))
+        .map(|(_, value)| value.clone())
+        .expect("a creation says where it went");
+    assert_eq!(location, format!("/notes/{}", made["id"].as_str().unwrap()));
+
+    let (_, status, followed) = request(&registry, Call::get(&location)).await;
+    assert_eq!(status, StatusCode::OK, "and a client can follow it");
+    assert_eq!(followed["id"], made["id"]);
+}
+
+/// Nothing beyond answering unless the mount asked for it.
+#[tokio::test]
+async fn a_mount_that_asked_for_nothing_gets_nothing() {
+    let (_dir, registry) = load_behaving("").await;
+    let id = first_note(&registry).await;
+
+    let (_, status, _, headers) = answered(&registry, Call::get(&format!("/notes/{id}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("etag")),
+        "{headers:?}"
+    );
+
+    request(&registry, Call::delete(&format!("/notes/{id}"))).await;
+    let (_, status, _) = request(&registry, Call::get(&format!("/notes/{id}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
