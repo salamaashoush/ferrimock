@@ -16,16 +16,36 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::Datelike;
 use serde_json::Value as JsonValue;
 
-use super::algebra::{DEFAULT_PAGE_SIZE, Selection};
+use super::algebra::{DEFAULT_PAGE_SIZE, Page, Selection};
 use super::model::{Cardinality, EntityType, FieldDef, Relation, ScalarKind, ValueSpec};
 use super::store::{EntityStore, Record, counted_relation, is_membership};
 use crate::fake_data;
 
-/// How many instances of one entity a check reads before it has enough.
+/// How many instances of one entity the value checks read before they have
+/// enough.
 ///
 /// The doctor is offline, so the cap is about not walking a million-record
-/// world rather than about the request path.
-const SAMPLE_CAP: usize = 2_000;
+/// world rather than about the request path. Every check below settles well
+/// under this: the hungriest wants ninety draws.
+const SAMPLE_CAP: usize = 600;
+
+/// How many *parents* a relation check walks.
+///
+/// Its own cap, and a much smaller one, because each parent costs a whole
+/// collection: reading one parent's children materialises them. Walking every
+/// record of every entity made the doctor quadratic in the size of the world,
+/// which on a real schema — three hundred entities, fifty thousand records —
+/// is the difference between a lint someone runs and one they do not. These
+/// checks report a rate over what they walked, and they say so.
+const RELATION_SAMPLE: usize = 40;
+
+/// How many records of a collection a contiguity check reads.
+///
+/// A page, because a page is the unit the tell lives in: the number of runs of
+/// the parent key down *one unsorted response* equals the number of distinct
+/// parents on it. Reading the whole entity to see that is answering a
+/// different question more slowly.
+const CONTIGUITY_PAGE: usize = 400;
 
 /// The bound `kind_value` draws every unconstrained number inside.
 const DEFAULT_NUMBER_BOUND: f64 = 1000.0;
@@ -629,17 +649,27 @@ fn check_id_time_order(entity: &EntityType, records: &[Record], report: &mut Rep
     }
 }
 
+/// The first field of an entity that reads as an instant.
+///
+/// Probed over a handful of records rather than parsed over all of them for
+/// every field: whether a field holds a timestamp is a fact about the field,
+/// and the first few records settle it.
 fn newest_timestamp_field(entity: &EntityType, records: &[Record]) -> Option<String> {
+    const PROBE: usize = 4;
+
+    let probe = &records[..records.len().min(PROBE)];
     entity
         .value_fields()
         .map(|field| field.name.to_string())
         .find(|name| {
-            records
-                .iter()
-                .filter_map(|record| record.get(name).and_then(JsonValue::as_str))
-                .filter_map(fake_data::instant_of)
-                .count()
-                >= records.len().min(2)
+            !probe.is_empty()
+                && probe.iter().all(|record| {
+                    record
+                        .get(name)
+                        .and_then(JsonValue::as_str)
+                        .and_then(fake_data::instant_of)
+                        .is_some()
+                })
         })
 }
 
@@ -697,7 +727,8 @@ fn check_self_parent(
         return;
     }
     let mut fixed = 0usize;
-    for record in records {
+    let walked = records.len().min(RELATION_SAMPLE);
+    for record in records.iter().take(RELATION_SAMPLE) {
         let resolved = store.relation_target(
             entity.name.as_str(),
             &record.key,
@@ -713,9 +744,8 @@ fn check_self_parent(
             Check::SelfParent,
             subject.to_string(),
             format!(
-                "{fixed} of {} record(s) are their own parent ({:.0}%)",
-                records.len(),
-                ratio_of(fixed, records.len()) * 100.0
+                "{fixed} of {walked} record(s) are their own parent ({:.0}%)",
+                ratio_of(fixed, walked) * 100.0
             ),
         );
     }
@@ -734,7 +764,7 @@ fn check_agreement(
     let mut disagreed = 0usize;
     let mut walked = 0usize;
 
-    for record in records {
+    for record in records.iter().take(RELATION_SAMPLE) {
         let Ok(children) = store.related(
             entity.name.as_str(),
             &record.key,
@@ -820,7 +850,8 @@ fn check_counts(store: &EntityStore, entity: &EntityType, records: &[Record], re
             continue;
         };
         let mut disagreed = 0usize;
-        for record in records {
+        let walked = records.len().min(RELATION_SAMPLE);
+        for record in records.iter().take(RELATION_SAMPLE) {
             let Some(stated) = record.get(field.name.as_str()).and_then(JsonValue::as_u64) else {
                 continue;
             };
@@ -841,8 +872,7 @@ fn check_counts(store: &EntityStore, entity: &EntityType, records: &[Record], re
                 Check::CountDisagreement,
                 format!("{}.{}", entity.name, field.name),
                 format!(
-                    "{disagreed} of {} record(s) disagree with `{}`",
-                    records.len(),
+                    "{disagreed} of {walked} record(s) disagree with `{}`",
                     counted.name
                 ),
             );
@@ -874,7 +904,13 @@ fn check_contiguity(
         return;
     };
 
-    let Ok(page) = store.list(member, &Selection::new()) else {
+    let Ok(page) = store.list(
+        member,
+        &Selection::new().paged(Page::Offset {
+            skip: 0,
+            take: CONTIGUITY_PAGE,
+        }),
+    ) else {
         return;
     };
     let owners: Vec<String> = page
@@ -940,6 +976,7 @@ fn check_degree(
     }
     let mut degrees: Vec<usize> = records
         .iter()
+        .take(RELATION_SAMPLE)
         .filter_map(|record| {
             store
                 .related(
