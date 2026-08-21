@@ -159,6 +159,13 @@ fn bind_one(
         _ => None,
     };
 
+    // Only where the operation answers with a stored entity: the unclassified
+    // rung already answers from its declared shape and has nothing to project.
+    let projection = match (&plan, response.and_then(|r| r.schema.as_ref())) {
+        (RootPlan::Unclassified, _) | (_, None) => None,
+        (plan, Some(schema)) => declared_properties(table, schema, plan.payload_field()),
+    };
+
     let filterable = match (&plan, plan.entity()) {
         (RootPlan::List { .. }, Some(entity)) => {
             let declared: FxHashSet<&str> = operation
@@ -192,6 +199,7 @@ fn bind_one(
         world: Arc::clone(world),
         coverage: Arc::clone(coverage),
         declared,
+        projection,
         envelope,
         parent,
         pagination: pagination.clone(),
@@ -246,6 +254,54 @@ fn is_named(name: &LeanString, candidates: &[&str]) -> bool {
     candidates
         .iter()
         .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+/// The properties this operation's own response schema declares for the entity.
+///
+/// Two schemas describing one `User` merge into one entity, because a store
+/// serving both has to hold every field. What the *document* declares is a
+/// narrower thing, and answering with the union means a response carrying
+/// properties its own schema never mentioned — which a client validating
+/// against that document rejects, and `additionalProperties: false` rejects
+/// outright. GraphQL never had this problem: a selection set already projects.
+///
+/// `None` where the document did not describe an object, which is where there
+/// is nothing to project onto and the whole record is the honest answer.
+fn declared_properties(
+    table: &OperationTable,
+    schema: &SchemaRef,
+    payload_field: Option<&LeanString>,
+) -> Option<FxHashSet<LeanString>> {
+    let node = table.schemas.effective(schema)?;
+
+    let entity = match node.effective_kind() {
+        SchemaKind::Array => table.schemas.effective(node.items.as_ref()?)?,
+        SchemaKind::Object => match payload_field {
+            Some(field) => {
+                let property = node.properties.iter().find(|p| p.name == *field)?;
+                let held = table.schemas.effective(&property.schema)?;
+                match held.effective_kind() {
+                    SchemaKind::Array => table.schemas.effective(held.items.as_ref()?)?,
+                    _ => held,
+                }
+            }
+            None => node,
+        },
+        _ => return None,
+    };
+
+    // A schema that names no properties describes an open object — `{}` or a
+    // free-form map — and projecting onto nothing would empty every response.
+    if entity.properties.is_empty() {
+        return None;
+    }
+    Some(
+        entity
+            .properties
+            .iter()
+            .map(|property| property.name.clone())
+            .collect(),
+    )
 }
 
 /// The parent a nested list hangs off, when the graph says one does.

@@ -104,4 +104,16 @@ impl RootPlan {
             RootPlan::Unclassified => None,
         }
     }
+
+    /// The wrapper property the entity had to be dug out of, if any.
+    #[must_use]
+    pub fn payload_field(&self) -> Option<&LeanString> {
+        match self {
+            RootPlan::List { payload_field, .. }
+            | RootPlan::Create { payload_field, .. }
+            | RootPlan::Update { payload_field, .. }
+            | RootPlan::Delete { payload_field, .. } => payload_field.as_ref(),
+            RootPlan::Get { .. } | RootPlan::Viewer { .. } | RootPlan::Unclassified => None,
+        }
+    }
 }

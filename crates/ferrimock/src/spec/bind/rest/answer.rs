@@ -171,6 +171,12 @@ pub struct BoundOperation {
     pub(super) coverage: Arc<Coverage>,
     /// The response shape, for the rung that answers from it alone.
     pub(super) declared: Option<Arc<ValueSpec>>,
+    /// The properties this operation's own response schema declares.
+    ///
+    /// Entities merge across schemas so the store holds every field; a
+    /// response carries only what its own document described. `None` where the
+    /// document described no object to project onto.
+    pub(super) projection: Option<rustc_hash::FxHashSet<LeanString>>,
     /// Property name to what it holds, when a list response is wrapped.
     pub(super) envelope: Vec<(LeanString, EnvelopeSlot)>,
     pub(super) parent: Option<ParentLink>,
@@ -736,6 +742,15 @@ impl BoundOperation {
         let JsonValue::Object(mut fields) = record else {
             return record;
         };
+        // The record holds every field the merged entity has; the response
+        // carries what this document declared. Only the answer itself is
+        // narrowed — an expansion below it answers to its own schema, which
+        // this operation never described.
+        if depth == 0
+            && let Some(declared) = &self.projection
+        {
+            fields.retain(|name, _| declared.contains(name.as_str()));
+        }
         let graph = store.graph();
         let Some(definition) = graph.get(entity) else {
             return JsonValue::Object(fields);
