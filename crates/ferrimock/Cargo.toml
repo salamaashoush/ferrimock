@@ -27,7 +27,12 @@ engine = [
 ]
 
 # Fake data generators (images, PDFs, identity, etc.)
+#
+# Needs `type-detector` because a generator is told which *shape* to produce in
+# its terms -- a timestamp format, a boolean's spelling -- so the two are one
+# feature in practice however they are spelled.
 fake-data = [
+  "type-detector",
   "dep:fake",
   "dep:rand",
   "dep:rust-embed",
