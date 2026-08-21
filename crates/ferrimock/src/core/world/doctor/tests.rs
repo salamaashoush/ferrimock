@@ -167,6 +167,38 @@ fn a_closed_vocabulary_is_named_and_an_open_one_is_not() {
     );
 }
 
+/// A key is written on every record whatever the schema said, so it is not a
+/// field that is never absent — it is a field that cannot be. Every other
+/// optional field still is.
+#[test]
+fn a_key_is_not_reported_for_always_being_there() {
+    fn always_present(entity: &EntityType, field: &FieldDef) -> Report {
+        let mut report = Report::default();
+        let stats = FieldStats {
+            present: 200,
+            ..FieldStats::default()
+        };
+        check_nullability(entity, field, &stats, "Doc.field", &mut report);
+        report
+    }
+
+    let key = optional("id", ScalarKind::Id);
+    let ordinary = optional("subtitle", ScalarKind::String);
+    let doc = entity("Doc")
+        .with_field(key.clone())
+        .with_field(ordinary.clone());
+
+    assert!(
+        failed(&always_present(&doc, &key), Check::NeverAbsent).is_empty(),
+        "the key it is addressed by has to be on every record"
+    );
+    assert_eq!(
+        failed(&always_present(&doc, &ordinary), Check::NeverAbsent).len(),
+        1,
+        "an optional field that is always there is still a tell"
+    );
+}
+
 /// Closed tells. Each of these read as a flat line, a constant, or a support
 /// that stopped at a round number, and each is now a distribution.
 #[test]

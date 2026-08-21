@@ -309,7 +309,7 @@ fn check_values(entity: &EntityType, records: &[Record], report: &mut Report) {
             stats.observe(record.get(field.name.as_str()));
         }
         let subject = format!("{}.{}", entity.name, field.name);
-        check_nullability(field, &stats, &subject, report);
+        check_nullability(entity, field, &stats, &subject, report);
         check_list_length(field, &stats, &subject, report);
         check_enum(field, &stats, &subject, report);
         check_boolean(&stats, &subject, report);
@@ -319,10 +319,23 @@ fn check_values(entity: &EntityType, records: &[Record], report: &mut Report) {
 }
 
 /// A field the schema said may be absent, that never is.
-fn check_nullability(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut Report) {
+fn check_nullability(
+    entity: &EntityType,
+    field: &FieldDef,
+    stats: &FieldStats,
+    subject: &str,
+    report: &mut Report,
+) {
     const ENOUGH: usize = 10;
 
     if !field.may_be_missing() {
+        return;
+    }
+    // A key is written on every record whatever the schema said about it: a
+    // record that does not carry the value it is addressed by cannot be
+    // fetched, listed or linked to. Reporting that as a field which is never
+    // absent is reporting the store for keeping its own promise.
+    if entity.key.iter().any(|part| part.field == field.name) {
         return;
     }
     if stats.seen() < ENOUGH {
