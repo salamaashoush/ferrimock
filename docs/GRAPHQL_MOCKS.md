@@ -14,8 +14,8 @@ Auto-generate mocks from GraphQL schema introspection with type-aware fake data.
 # Generate from schema
 ferrimock graphql mock /graphql --no-auth -o mocks.yaml
 
-# Use with proxy
-ferrimock proxy --mock --mock-file mocks.yaml
+# Serve them
+ferrimock mock serve --mock-file mocks.yaml
 ```
 
 Generated mock example:
@@ -278,13 +278,9 @@ ferrimock graphql mock https://api.example.com/graphql \
 ferrimock graphql mock https://api.example.com/graphql --no-auth -o mocks.yaml
 ```
 
-### Via Proxy
+### Through a gateway that handles auth
 
 ```bash
-# Start proxy first
-ferrimock proxy --mock
-
-# Generate via proxy (proxy handles auth)
 ferrimock graphql mock http://localhost:3000/graphql \
   --proxied \
   -o mocks.yaml
@@ -296,11 +292,11 @@ ferrimock graphql mock http://localhost:3000/graphql \
 
 ```bash
 # Direct file
-ferrimock proxy --mock --mock-file graphql-mocks.yaml
+ferrimock mock serve --mock-file graphql-mocks.yaml
 
-# Auto-load from collections/
+# Auto-load from a directory
 mv graphql-mocks.yaml mocks/collections/
-ferrimock proxy --mock
+ferrimock mock serve mocks/collections/
 ```
 
 ### Combine with Other Mocks
@@ -323,8 +319,8 @@ mocks:
 ### Test Generated Mocks
 
 ```bash
-# Start proxy
-ferrimock proxy --mock --mock-file graphql-mocks.yaml
+# Start the server
+ferrimock mock serve --mock-file graphql-mocks.yaml
 
 # Test query
 curl http://localhost:3000/graphql \
@@ -490,7 +486,7 @@ ferrimock graphql mock [ENDPOINT] [OPTIONS]
 | `--include-deprecated`   | false      | Include deprecated fields        |
 | `--generate-variants`    | false      | Generate multiple variants       |
 | `--no-auth`              | -          | Skip authentication              |
-| `--proxied`              | -          | Endpoint is a ferrimock proxy      |
+| `--proxied`              | -          | Endpoint sits behind a gateway     |
 | `-H, --header <HEADER>`  | -          | Custom headers (repeatable)      |
 
 ## Common Issues
