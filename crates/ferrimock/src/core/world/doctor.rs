@@ -388,6 +388,58 @@ fn check_list_length(field: &FieldDef, stats: &FieldStats, subject: &str, report
     }
 }
 
+/// How many draws it takes before "indistinguishable from uniform" means
+/// anything.
+///
+/// An expected count of five per member is what makes the chi-square
+/// approximation valid; it is not what makes it *able to see* the skew the
+/// generator draws. Below that the test fails to reject uniformity because it
+/// has too little to go on, and reporting that as a flat enum reports the
+/// sample size — a three-member enum on a forty-record entity failed here while
+/// the same field over eight hundred draws scores a chi-square of nearly three
+/// hundred.
+///
+/// So the floor is the number of draws that would detect the distribution the
+/// generator actually uses: a Zipf ranking over the members, at roughly the
+/// conventional four-in-five chance of noticing. That is the non-centrality
+/// the statistic needs, divided by how far Zipf sits from flat for this many
+/// members — which for two members lands on ninety, the same place the
+/// even-split check independently arrived at.
+fn draws_to_see_a_skew(members: usize) -> usize {
+    /// Non-centrality for about a four-in-five chance at the usual threshold.
+    const NOTICEABLE: f64 = 10.0;
+    /// The chi-square approximation is not one below five expected per member.
+    const VALID_PER_MEMBER: usize = 5;
+
+    if members < 2 {
+        return usize::MAX;
+    }
+    // A member count, and a rank inside it: both far below where an f64 stops
+    // counting exactly.
+    let rank_of = |rank: usize| f64::from(u32::try_from(rank).unwrap_or(u32::MAX));
+    let k = rank_of(members);
+    let harmonic: f64 = (1..=members).map(|rank| 1.0 / rank_of(rank)).sum();
+    let flat = 1.0 / k;
+    let spread: f64 = (1..=members)
+        .map(|rank| {
+            let share = 1.0 / (rank_of(rank) * harmonic);
+            (share - flat).powi(2)
+        })
+        .sum::<f64>()
+        * k;
+
+    if spread <= 0.0 {
+        return members * VALID_PER_MEMBER;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a count of records, bounded by the world"
+    )]
+    let needed = (NOTICEABLE / spread).ceil() as usize;
+    needed.max(members * VALID_PER_MEMBER)
+}
+
 fn check_enum(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut Report) {
     let ValueSpec::Enum(members) = &field.value else {
         return;
@@ -400,15 +452,13 @@ fn check_enum(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut 
         .map(|member| stats.enum_counts.get(member.as_str()).copied().unwrap_or(0))
         .collect();
     let observed: usize = counts.iter().sum();
-    // Below an expected count of five per member the chi-square approximation
-    // is not one, and the world simply cannot express the difference.
-    let enough = members.len() * 5;
+    let enough = draws_to_see_a_skew(members.len());
     if observed < enough {
         report.skip(
             Check::UniformEnum,
             subject.to_string(),
             format!(
-                "{enough} records for a {}-member enum, world has {observed}",
+                "{enough} records to see a skew in a {}-member enum, world has {observed}",
                 members.len()
             ),
         );
