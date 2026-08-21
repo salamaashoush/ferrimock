@@ -1,6 +1,6 @@
 {
   "name": "@ferrimock/playwright",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Playwright adapter for ferrimock -- fixtures that wire the mock engine into page.route()",
   "type": "module",
   "main": "./dist/index.mjs",
