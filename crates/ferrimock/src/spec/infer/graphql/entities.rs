@@ -13,7 +13,9 @@ use crate::core::world::model::{
     Cardinality, Carrier, CompositeKey, Confidence, ConnectionShape, EntityGraph, EntityType,
     FieldDef, Provenance, Relation, Rule, Scalar, ScalarKind, ValueSpec,
 };
-use crate::graphql::introspection::{ParsedSchema, TypeDefinition, TypeKind, TypeRef};
+use crate::graphql::introspection::{
+    FieldDefinition, ParsedSchema, TypeDefinition, TypeKind, TypeRef,
+};
 use crate::spec::infer::descriptions::{DescriptionHint, hint};
 use crate::spec::infer::semantics::{semantic_of, text_shape_of};
 
@@ -112,7 +114,7 @@ fn root_names(schema: &ParsedSchema) -> FxHashSet<&str> {
     .collect()
 }
 
-/// An object type has identity when it carries an `ID`-typed key field, or
+/// An object type has identity when it carries an `ID`-typed field, or
 /// implements `Node`. Everything else is a value the owner inlines.
 fn is_entity(
     definition: &TypeDefinition,
@@ -126,28 +128,55 @@ fn is_entity(
     {
         return false;
     }
-    key_field(definition).is_some()
+    identifies(definition)
+}
+
+/// Whether a type carries identity at all, which is a different question from
+/// which field addresses one of it.
+///
+/// A field spelled `id` or typed `ID`, in any shape, answers this one — the
+/// spelling on its own counts, because `id: Int` is an identifier a schema
+/// simply declined to type as one. A type whose only such field is a *list*
+/// still has identity: a root field returning a collection of it needs a
+/// census to page. It just has no field that can name a member of that census.
+fn identifies(definition: &TypeDefinition) -> bool {
+    definition.interfaces.iter().any(|i| i.name() == "Node")
+        || definition
+            .fields
+            .iter()
+            .any(|f| f.name == "id" || f.field_type.name() == "ID")
 }
 
 /// The field addressing an instance: an explicit `id`, else the first
 /// `ID`-typed field, which is how schemas that spell it `sid` or `slug` are
 /// still addressable.
+///
+/// A list is never one of those, and `TypeRef::name` strips every wrapper, so
+/// `restrictedToPageIds: [ID!]` answered `ID` exactly as a bare `ID` does and
+/// a type carrying no scalar id was addressed by the list beside it. The store
+/// writes a key on every record whatever the schema said, so keying on a list
+/// wrote one string where the schema promised an array — and the field stopped
+/// being served at all, omitted from all 360 objects a client selected it on.
+///
+/// Answering nothing is the ordinary outcome for a type with no identifier of
+/// its own. The caller keys those on a synthetic `id`, which the store writes
+/// and no schema declares, so no client ever sees it.
 fn key_field(definition: &TypeDefinition) -> Option<&str> {
-    let implements_node = definition.interfaces.iter().any(|i| i.name() == "Node");
+    let addresses_one = |field: &&FieldDefinition| !field.field_type.is_list();
 
-    if let Some(field) = definition.fields.iter().find(|f| f.name == "id") {
-        return Some(field.name.as_str());
-    }
-    let id_typed = definition
+    definition
         .fields
         .iter()
-        .find(|f| f.field_type.name() == "ID")
-        .map(|f| f.name.as_str());
-    if implements_node {
-        // `implements Node` promises an id even if it is spelled unusually.
-        return id_typed.or(Some("id"));
-    }
-    id_typed
+        .find(|f| f.name == "id")
+        .filter(addresses_one)
+        .or_else(|| {
+            definition
+                .fields
+                .iter()
+                .filter(addresses_one)
+                .find(|f| f.field_type.name() == "ID")
+        })
+        .map(|f| f.name.as_str())
 }
 
 /// What is currently being inlined, so a cycle among value objects ends.
@@ -621,6 +650,49 @@ mod tests {
             !graph.contains("Address"),
             "a type with no identity is a value, not an entity"
         );
+    }
+
+    /// A key addresses one instance, so a list is never one — and a type whose
+    /// only `ID`-typed field is a list still has to be an entity, because a
+    /// root field returning a collection of it needs a census to page.
+    ///
+    /// Keying on the list is what the store then serves in place of the array:
+    /// a key is written on every record whatever the schema said, so
+    /// `pageIds` came back as one string, and a client selecting it got it
+    /// omitted from every object instead.
+    #[test]
+    fn a_list_of_ids_is_not_the_field_that_addresses_one_record() {
+        const SCHEMA: &str = r"
+            type Grant {
+              pageIds: [ID!]
+              role: String!
+            }
+
+            type Sized { id: Int!, label: String! }
+
+            type Query { grants: [Grant!]! }
+        ";
+        let graph = to_entity_graph(&parse_sdl(SCHEMA).unwrap());
+
+        let grant = graph.get("Grant").expect("a collection needs a census");
+        assert_eq!(
+            grant.key.as_single().map(LeanString::as_str),
+            Some("id"),
+            "no field addresses one Grant, so the store gets a synthetic key"
+        );
+        assert!(
+            matches!(
+                grant.field("pageIds").map(|field| &field.value),
+                Some(ValueSpec::List(_))
+            ),
+            "the schema promised an array and it stays one: {:?}",
+            grant.field("pageIds").map(|field| &field.value)
+        );
+
+        // And a field merely *spelled* `id` still identifies its type and still
+        // addresses it, whatever the schema typed it as.
+        let sized = graph.get("Sized").expect("`id: Int` is an identifier");
+        assert_eq!(sized.key.as_single().map(LeanString::as_str), Some("id"));
     }
 
     #[test]

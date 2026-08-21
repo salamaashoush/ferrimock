@@ -29,7 +29,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
 use super::document::{
-    Operation, OperationTable, SchemaBook, SchemaKind, SchemaNode, SchemaRef, Segment,
+    Operation, OperationTable, Property, SchemaBook, SchemaKind, SchemaNode, SchemaRef, Segment,
 };
 use super::schema::{Lens, fields_of};
 use crate::core::world::model::{
@@ -430,12 +430,21 @@ fn key_property(node: &SchemaNode, param: &str, resource: Option<&str>) -> Optio
 
 /// The property that identifies an instance when no path parameter says.
 fn identifier_property(node: &SchemaNode) -> Option<LeanString> {
+    // A key addresses one instance, so an `id` the document declares as an
+    // array is not one. Keying on it would write a single value where the
+    // document promised a list.
+    let addresses_one = |property: &&Property| {
+        !matches!(&property.schema, SchemaRef::Inline(inner)
+            if inner.kind == Some(SchemaKind::Array))
+    };
     node.properties
         .iter()
+        .filter(addresses_one)
         .find(|property| property.name == "id")
         .or_else(|| {
             node.properties
                 .iter()
+                .filter(addresses_one)
                 .find(|property| property.name.eq_ignore_ascii_case("id"))
         })
         .map(|property| property.name.clone())
