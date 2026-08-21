@@ -110,16 +110,60 @@ fn skipped(report: &Report, check: Check) -> Vec<&Unmeasured> {
         .collect()
 }
 
+/// The measure itself, on two corpora, because that is the claim: it has to
+/// separate text drawn from a handful of words from text that is merely long.
+/// The default generators no longer leave this tell, which is the point — but
+/// a check that cannot fail is not a check.
 #[test]
-fn the_doctor_names_the_tells_the_generators_leave() {
-    let report = examine(&wide_world(3, 400));
+fn a_closed_vocabulary_is_named_and_an_open_one_is_not() {
+    fn measured(strings: Vec<String>) -> Report {
+        let mut report = Report::default();
+        let stats = FieldStats {
+            strings,
+            ..FieldStats::default()
+        };
+        check_vocabulary(&stats, "Note.body", &mut report);
+        report
+    }
 
-    let check = Check::SmallVocabulary;
+    let words = ["alpha", "beta", "gamma"];
+    let closed: Vec<String> = (0..200)
+        .map(|i| {
+            format!(
+                "{} {} {}",
+                words[i % 3],
+                words[(i / 3) % 3],
+                words[(i / 9) % 3]
+            )
+        })
+        .collect();
+    let report = measured(closed);
+    assert_eq!(
+        failed(&report, Check::SmallVocabulary).len(),
+        1,
+        "three words over six hundred draws is a closed vocabulary"
+    );
+
+    // Composed the way the generators compose: a phrase per record, drawn from
+    // pools deep enough that a hundred words do not exhaust them.
+    let open: Vec<String> = (0..200)
+        .map(|i| {
+            format!(
+                "{} {} {}",
+                crate::fake_data::fake_headline(),
+                crate::fake_data::fake_label(),
+                i
+            )
+        })
+        .collect();
+    let report = measured(open);
     assert!(
-        !failed(&report, check).is_empty(),
-        "`{}` should fire on the world as it stands: {}",
-        check.name(),
-        check.tell()
+        failed(&report, Check::SmallVocabulary).is_empty(),
+        "composed prose reads as closed: {:?}",
+        failed(&report, Check::SmallVocabulary)
+            .iter()
+            .map(|f| f.measured.clone())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -309,10 +353,18 @@ fn a_many_to_many_has_more_than_two_degrees_on_either_side() {
     }
 }
 
+/// A finding has to say what it measured, or it cannot be argued with and it
+/// cannot be watched for a regression.
+///
+/// Measured on a world small enough to trip several checks at once — the wide
+/// one no longer trips any, which is the outcome the other tests assert.
 #[test]
 fn every_check_reports_a_number_that_can_move() {
-    let report = examine(&wide_world(3, 400));
-    assert!(!report.findings.is_empty());
+    let report = examine(&wide_world(3, 12));
+    assert!(
+        !report.findings.is_empty(),
+        "a twelve-record world trips at least the size check"
+    );
     for finding in &report.findings {
         assert!(
             finding.measured.chars().any(|c| c.is_ascii_digit()),
@@ -322,7 +374,10 @@ fn every_check_reports_a_number_that_can_move() {
             finding.measured
         );
     }
-    assert!(report.sampled >= 400);
+
+    // And a world large enough to measure is read in full rather than sampled
+    // down to whatever the first check wanted.
+    assert!(examine(&wide_world(3, 400)).sampled >= 400);
 }
 
 #[test]

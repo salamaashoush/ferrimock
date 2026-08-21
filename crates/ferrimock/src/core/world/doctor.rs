@@ -17,9 +17,10 @@ use chrono::Datelike;
 use serde_json::Value as JsonValue;
 
 use super::algebra::{DEFAULT_PAGE_SIZE, Page, Selection};
-use super::model::{Cardinality, EntityType, FieldDef, Relation, ScalarKind, ValueSpec};
+use super::model::{Cardinality, EntityType, FieldDef, Relation, ScalarKind, TextShape, ValueSpec};
 use super::store::{EntityStore, Record, counted_relation, is_membership};
 use crate::fake_data;
+use crate::type_detector::FieldType;
 
 /// How many instances of one entity the value checks read before they have
 /// enough.
@@ -486,8 +487,34 @@ fn check_text(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut 
     check_clock(stats, subject, report);
     // A declared enum is a closed set by definition and a written date is a
     // calendar rather than a vocabulary; both are already measured above.
-    if !matches!(field.value, ValueSpec::Enum(_)) && !reads_as_dates(stats) {
+    if reads_as_prose(field) && !reads_as_dates(stats) {
         check_vocabulary(stats, subject, report);
+    }
+}
+
+/// Whether a field holds prose, which is the only thing a vocabulary measures.
+///
+/// A closed set of words is the *right* answer for most string fields. A
+/// `status` holds one of a handful of tokens, a slug is assembled from stems,
+/// a MIME type comes from a registry — reporting those as a small vocabulary
+/// is reporting the generator for doing its job, and it buries the fields
+/// where the tell is real under fields where it is not.
+fn reads_as_prose(field: &FieldDef) -> bool {
+    let ValueSpec::Scalar(scalar) = &field.value else {
+        return false;
+    };
+    if scalar.shape != TextShape::Prose {
+        return false;
+    }
+    match &scalar.semantic {
+        // Free text, whether the detector named it or declined to.
+        None
+        | Some(
+            FieldType::Sentence | FieldType::Paragraph | FieldType::Name | FieldType::RandomString,
+        ) => true,
+        // Everything else is drawn from a format, a registry or an alphabet,
+        // and its vocabulary is a property of that rather than of the writing.
+        Some(_) => false,
     }
 }
 
@@ -556,39 +583,61 @@ fn check_clock(stats: &FieldStats, subject: &str, report: &mut Report) {
 /// How much of a field's text is the same words over again.
 ///
 /// A closed vocabulary collides fast — the birthday bound puts an even chance
-/// of a repeat at seven draws from thirty-five — so the type-token ratio
+/// of a repeat at seven draws from thirty-five — so the rate of new words
 /// separates a generator from prose on a single page.
+///
+/// Measured in fixed-size segments and averaged, not over the whole corpus at
+/// once. A plain type-token ratio falls as the sample grows, because the words
+/// available run out while the tokens keep coming — Heaps' law puts the
+/// distinct count near the square root of the total, so *real* English scores
+/// about 0.15 over six thousand words. Comparing that against a constant
+/// measures how much text an entity has rather than how varied it is, and a
+/// field flags for being popular.
 fn check_vocabulary(stats: &FieldStats, subject: &str, report: &mut Report) {
-    const ENOUGH: usize = 40;
-    const CLOSED_BELOW: f64 = 0.35;
+    /// Tokens per segment. Every segment is scored over the same number of
+    /// draws, so the threshold means one thing at any corpus size.
+    const SEGMENT: usize = 100;
+    /// One full segment, so the number reported was actually measured.
+    const ENOUGH: usize = SEGMENT;
+    /// Prose over a hundred words repeats function words and little else.
+    /// A generator drawing from a closed set lands far below this.
+    const CLOSED_BELOW: f64 = 0.55;
 
-    let mut total = 0usize;
-    let mut distinct: BTreeSet<String> = BTreeSet::new();
-    for text in &stats.strings {
-        for word in words(text) {
-            total += 1;
-            distinct.insert(word);
-        }
-    }
-    if total == 0 {
+    let tokens: Vec<String> = stats.strings.iter().flat_map(|text| words(text)).collect();
+    if tokens.is_empty() {
         return;
     }
-    if total < ENOUGH {
+    if tokens.len() < ENOUGH {
         report.skip(
             Check::SmallVocabulary,
             subject.to_string(),
-            format!("{ENOUGH} words, world has {total}"),
+            format!("{ENOUGH} words, world has {}", tokens.len()),
         );
         return;
     }
-    let ratio = ratio_of(distinct.len(), total);
-    if ratio < CLOSED_BELOW {
+
+    // A trailing partial segment is dropped rather than scored: fewer draws
+    // score higher, and averaging that in would reward a short tail.
+    let segments: Vec<f64> = tokens
+        .chunks(SEGMENT)
+        .filter(|segment| segment.len() == SEGMENT)
+        .map(|segment| {
+            let distinct: BTreeSet<&String> = segment.iter().collect();
+            ratio_of(distinct.len(), segment.len())
+        })
+        .collect();
+    let Some(count) = u32::try_from(segments.len()).ok().filter(|n| *n > 0) else {
+        return;
+    };
+    let mean = segments.iter().sum::<f64>() / f64::from(count);
+
+    if mean < CLOSED_BELOW {
         report.fail(
             Check::SmallVocabulary,
             subject.to_string(),
             format!(
-                "{} distinct word(s) in {total}, ratio {ratio:.2}",
-                distinct.len()
+                "{mean:.2} new words per {SEGMENT}, over {count} segment(s) of {} word(s)",
+                tokens.len()
             ),
         );
     }
