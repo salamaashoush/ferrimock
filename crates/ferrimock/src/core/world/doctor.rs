@@ -607,33 +607,134 @@ fn reads_as_dates(stats: &FieldStats) -> bool {
     ratio_of(dated, stats.strings.len()) > 0.5
 }
 
+/// Whether a field's dates ever land on a day the shortest month does not
+/// have.
+///
+/// Counted over *distinct* dates rather than over values, because repeats are
+/// not draws on the calendar. Arrivals are recency-weighted by design — a
+/// service whose volume grew — so a field of six hundred timestamps can hold
+/// sixteen distinct dates, four hundred of them today, and asking whether a
+/// 29th appears among sixteen draws is asking a question sixteen draws cannot
+/// answer. Four fields were reported for exactly that.
+///
+/// And the floor comes from the window the dates actually cover, not from a
+/// constant: over a February there is no 29th to miss, and over any short
+/// enough span the days past the 28th were never on offer. Missing what was
+/// never available is the calendar, not the generator.
 fn check_day_of_month(stats: &FieldStats, subject: &str, report: &mut Report) {
-    const ENOUGH: usize = 20;
-
-    let days: Vec<u32> = stats
+    let dates: BTreeSet<chrono::NaiveDate> = stats
         .strings
         .iter()
-        .filter_map(|text| day_of_month(text))
+        .filter_map(|text| calendar_of(text))
+        .filter_map(|(year, month, day)| chrono::NaiveDate::from_ymd_opt(year, month, day))
         .collect();
-    if days.is_empty() {
+    let (Some(first), Some(last)) = (dates.first().copied(), dates.last().copied()) else {
         return;
-    }
-    if days.len() < ENOUGH {
+    };
+
+    let (span, beyond) = long_days_in(first, last);
+    if beyond == 0 {
         report.skip(
             Check::DayOfMonth,
             subject.to_string(),
-            format!("{ENOUGH} dates, world has {}", days.len()),
+            format!(
+                "a span holding a day past the {}; these {} date(s) cover {span} day(s) that hold none",
+                ordinal(SHORTEST_MONTH),
+                dates.len()
+            ),
         );
         return;
     }
-    let latest = days.iter().copied().max().unwrap_or(0);
+    let enough = dates_to_see_a_long_month(span, beyond);
+    if dates.len() < enough {
+        report.skip(
+            Check::DayOfMonth,
+            subject.to_string(),
+            format!(
+                "{enough} distinct date(s) over the {span} day(s) they span, world has {}",
+                dates.len()
+            ),
+        );
+        return;
+    }
+    let latest = dates.iter().map(chrono::Datelike::day).max().unwrap_or(0);
     if latest <= SHORTEST_MONTH {
         report.fail(
             Check::DayOfMonth,
             subject.to_string(),
-            format!("latest of {} date(s) is the {latest}th", days.len()),
+            format!(
+                "latest of {} distinct date(s) is the {}",
+                dates.len(),
+                ordinal(latest)
+            ),
         );
     }
+}
+
+/// How wide a range is, and how much of it the shortest month cannot reach.
+///
+/// Walked a month at a time rather than a day at a time: a stale value can
+/// put the first date a century before the last, and the answer is the same
+/// either way.
+fn long_days_in(first: chrono::NaiveDate, last: chrono::NaiveDate) -> (u32, u32) {
+    let span = u32::try_from(
+        (last - first)
+            .num_days()
+            .saturating_add(1)
+            .clamp(1, i64::from(u32::MAX)),
+    )
+    .unwrap_or(u32::MAX);
+
+    let mut beyond = 0u32;
+    let mut month = first.with_day(1);
+    while let Some(start) = month.filter(|start| *start <= last) {
+        beyond += ((SHORTEST_MONTH + 1)..=31)
+            .filter_map(|day| start.with_day(day))
+            .filter(|date| *date >= first && *date <= last)
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        month = start.checked_add_months(chrono::Months::new(1));
+    }
+    (span, beyond)
+}
+
+/// How many distinct dates it takes before never landing past the 28th is the
+/// generator rather than a coincidence.
+///
+/// The chance a date drawn anywhere in the range misses every long-month day
+/// is `1 - beyond/span`; the floor is where that chance, compounded over the
+/// dates observed, drops under one in twenty.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a count of dates, bounded by the range they span"
+)]
+fn dates_to_see_a_long_month(span: u32, beyond: u32) -> usize {
+    /// How often the check is willing to name a real calendar as a truncated
+    /// one.
+    const BY_CHANCE: f64 = 0.05;
+
+    if beyond == 0 || span == 0 {
+        return usize::MAX;
+    }
+    let missed = 1.0 - f64::from(beyond) / f64::from(span);
+    if missed <= 0.0 {
+        return 1;
+    }
+    BY_CHANCE.log(missed).ceil().max(1.0) as usize
+}
+
+/// A day of the month, written the way it is read aloud.
+fn ordinal(day: u32) -> String {
+    let suffix = match (day % 10, day % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{day}{suffix}")
 }
 
 fn check_clock(stats: &FieldStats, subject: &str, report: &mut Report) {
@@ -1279,42 +1380,73 @@ fn char_at(text: &str, at: usize) -> Option<char> {
     text.chars().nth(at)
 }
 
-/// The day of the month a written date names, in any format the generators
-/// emit.
-fn day_of_month(text: &str) -> Option<u32> {
-    let day = if char_at(text, 4) == Some('-') && char_at(text, 7) == Some('-') {
-        digits_at(text, 8, 2)?
-    } else if matches!(char_at(text, 2), Some('/' | '.')) {
-        digits_at(text, 0, 2)?
-    } else if char_at(text, 3) == Some(',') {
-        // `Tue, 07 Mar 2024 …`
-        digits_at(text, 5, 2)?
-    } else if text.chars().count() == 8 && digits_at(text, 0, 8).is_some() {
-        digits_at(text, 6, 2)?
-    } else {
-        return None;
-    };
-    (1..=31).contains(&day).then_some(day)
+/// The month a three-letter name at `from` stands for.
+fn month_named(text: &str, from: usize) -> Option<u32> {
+    const NAMES: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let name: String = text
+        .chars()
+        .skip(from)
+        .take(3)
+        .collect::<String>()
+        .to_lowercase();
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a position in a twelve-element table"
+    )]
+    NAMES
+        .iter()
+        .position(|known| *known == name)
+        .map(|at| at as u32 + 1)
 }
 
-/// The year a written date names.
+/// The calendar date a written date names, in any format the generators emit.
+///
+/// One parser rather than one per field, because a day is only a day once the
+/// month it belongs to is known: the same `29` is a real date in March and an
+/// impossible one in February, and the span a set of dates covers cannot be
+/// read off the days alone.
 #[allow(
     clippy::cast_possible_wrap,
     reason = "a four-digit year is inside i32 by construction"
 )]
-fn year_of(text: &str) -> Option<i32> {
-    let year = if char_at(text, 4) == Some('-') && char_at(text, 7) == Some('-') {
-        digits_at(text, 0, 4)?
+fn calendar_of(text: &str) -> Option<(i32, u32, u32)> {
+    let (year, month, day) = if char_at(text, 4) == Some('-') && char_at(text, 7) == Some('-') {
+        (
+            digits_at(text, 0, 4)?,
+            digits_at(text, 5, 2)?,
+            digits_at(text, 8, 2)?,
+        )
     } else if matches!(char_at(text, 2), Some('/' | '.')) {
-        digits_at(text, 6, 4)?
+        (
+            digits_at(text, 6, 4)?,
+            digits_at(text, 3, 2)?,
+            digits_at(text, 0, 2)?,
+        )
     } else if char_at(text, 3) == Some(',') {
-        digits_at(text, 12, 4)?
-    } else if text.chars().count() == 8 {
-        digits_at(text, 0, 4)?
+        // `Tue, 07 Mar 2024 …`
+        (
+            digits_at(text, 12, 4)?,
+            month_named(text, 8)?,
+            digits_at(text, 5, 2)?,
+        )
+    } else if text.chars().count() == 8 && digits_at(text, 0, 8).is_some() {
+        (
+            digits_at(text, 0, 4)?,
+            digits_at(text, 4, 2)?,
+            digits_at(text, 6, 2)?,
+        )
     } else {
         return None;
     };
-    (1900..=2200).contains(&year).then_some(year as i32)
+    ((1900..=2200).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day))
+        .then_some((year as i32, month, day))
+}
+
+/// The year a written date names.
+fn year_of(text: &str) -> Option<i32> {
+    calendar_of(text).map(|(year, _, _)| year)
 }
 
 /// The year a number names, when the number is plausibly epoch seconds.

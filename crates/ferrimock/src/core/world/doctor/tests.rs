@@ -467,16 +467,78 @@ fn every_check_reports_a_number_that_can_move() {
 
 #[test]
 fn a_date_is_read_out_of_whatever_format_wrote_it() {
-    assert_eq!(day_of_month("2024-03-17T05:00:00Z"), Some(17));
-    assert_eq!(day_of_month("17/03/2024"), Some(17));
-    assert_eq!(day_of_month("17.03.2024"), Some(17));
-    assert_eq!(day_of_month("20240317"), Some(17));
-    assert_eq!(day_of_month("Tue, 17 Mar 2024 05:00:00 GMT"), Some(17));
-    assert_eq!(day_of_month("not a date at all"), None);
+    assert_eq!(calendar_of("2024-03-17T05:00:00Z"), Some((2024, 3, 17)));
+    assert_eq!(calendar_of("17/03/2024"), Some((2024, 3, 17)));
+    assert_eq!(calendar_of("17.03.2024"), Some((2024, 3, 17)));
+    assert_eq!(calendar_of("20240317"), Some((2024, 3, 17)));
+    assert_eq!(
+        calendar_of("Tue, 17 Mar 2024 05:00:00 GMT"),
+        Some((2024, 3, 17))
+    );
+    assert_eq!(calendar_of("not a date at all"), None);
+    // The month is read as a name here, not as digits, so a value that is the
+    // right shape and names no month is not a date.
+    assert_eq!(calendar_of("Tue, 17 Zzz 2024 05:00:00 GMT"), None);
 
     assert_eq!(year_of("2024-03-17T05:00:00Z"), Some(2024));
     assert_eq!(year_of("17/03/2024"), Some(2024));
     assert_eq!(year_of("Tue, 17 Mar 2024 05:00:00 GMT"), Some(2024));
+}
+
+/// The day check counts distinct dates, not values, and asks for as many as
+/// the window it is looking at can answer with.
+///
+/// A generator drawing `1..=28` is what it is for, and it has to keep saying
+/// so. What it must not do is read a field whose values pile onto a handful of
+/// days — which is what a recency-weighted arrival looks like — as a truncated
+/// calendar because there were six hundred of them.
+#[test]
+fn a_truncated_calendar_is_named_and_a_repeated_one_is_not() {
+    fn measured(dates: Vec<String>) -> Report {
+        let mut report = Report::default();
+        let stats = FieldStats {
+            strings: dates,
+            ..FieldStats::default()
+        };
+        check_day_of_month(&stats, "Doc.at", &mut report);
+        report
+    }
+
+    fn written(year: i32, month: u32, day: u32) -> String {
+        format!("{year:04}-{month:02}-{day:02}T00:00:00Z")
+    }
+
+    // A year of a day drawn out of `1..=28`. The window holds twenty-nine days
+    // the draw can never reach, and never reaching one of them over three
+    // hundred and thirty-six distinct dates is not a coincidence.
+    let truncated: Vec<String> = (1..=12)
+        .flat_map(|month| (1..=28).map(move |day| written(2024, month, day)))
+        .collect();
+    assert_eq!(
+        failed(&measured(truncated), Check::DayOfMonth).len(),
+        1,
+        "a day drawn out of one to twenty-eight is the tell this check is for"
+    );
+
+    // The same window, the same six hundred values, sixteen distinct dates.
+    // Nothing about sixteen draws says whether a 29th was reachable.
+    let repeated: Vec<String> = (0..600)
+        .map(|i: u32| written(2024, 3, i % 16 + 1))
+        .collect();
+    let report = measured(repeated);
+    assert!(
+        failed(&report, Check::DayOfMonth).is_empty(),
+        "sixteen distinct dates cannot answer this, however often they repeat"
+    );
+    assert_eq!(skipped(&report, Check::DayOfMonth).len(), 1);
+
+    // A window with no long-month day in it at all. February has no 29th to
+    // find in 2023, so not finding one is the calendar.
+    let february: Vec<String> = (1..=28).map(|day| written(2023, 2, day)).collect();
+    assert!(
+        failed(&measured(february), Check::DayOfMonth).is_empty(),
+        "a February holds no day past the 28th to miss"
+    );
 }
 
 /// A number that counts is not a number that was drawn, so the bound the draw
