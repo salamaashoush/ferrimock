@@ -100,10 +100,23 @@ const fn splitmix64(mut x: u64) -> u64 {
 /// releases: FNV-1a over the stream name mixed into `SplitMix64`.
 #[must_use]
 pub fn derive_seed(seed: u64, stream: &str, ordinal: u64) -> u64 {
+    derive_seed_parts(seed, &[stream], ordinal)
+}
+
+/// The same seed, from a stream name spelled in pieces.
+///
+/// FNV-1a folds one byte at a time, so hashing `["a", "#", "b"]` and hashing
+/// `"a#b"` are the same arithmetic — which is the point. A stream name is
+/// built per field of per record, and formatting one only to hash it and drop
+/// it was the single hottest allocation in the store.
+#[must_use]
+pub fn derive_seed_parts(seed: u64, parts: &[&str], ordinal: u64) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in stream.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    for part in parts {
+        for byte in part.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
     }
     splitmix64(seed ^ hash ^ splitmix64(ordinal))
 }

@@ -107,8 +107,7 @@ impl<'a> ValueSeed<'a> {
     /// The stream for one field path, so two fields of the same record never
     /// draw the same bytes.
     fn stream_for(&self, path: &str) -> u64 {
-        let stream = format!("{}#{}", self.entity, path);
-        rng::derive_seed(self.seed, &stream, self.ordinal)
+        rng::derive_seed_parts(self.seed, &[self.entity, "#", path], self.ordinal)
     }
 
     /// A stream beside the value's, for something else about the same field.
@@ -117,21 +116,26 @@ impl<'a> ValueSeed<'a> {
     /// from the value's own bytes would tie the two together — a record whose
     /// `bio` happened to hash low would also be the record missing it.
     fn per_record(&self, path: &str, aspect: &str) -> u64 {
-        let stream = format!("{}#{path}#{aspect}", self.entity);
-        rng::derive_seed(self.seed, &stream, self.ordinal)
+        rng::derive_seed_parts(
+            self.seed,
+            &[self.entity, "#", path, "#", aspect],
+            self.ordinal,
+        )
     }
 
     /// A stream for a fact about the field rather than about one record, so
     /// every instance reads the same answer.
     fn per_field(&self, path: &str, aspect: &str) -> u64 {
-        let stream = format!("{}#{path}#{aspect}#field", self.entity);
-        rng::derive_seed(self.seed, &stream, 0)
+        rng::derive_seed_parts(
+            self.seed,
+            &[self.entity, "#", path, "#", aspect, "#field"],
+            0,
+        )
     }
 }
 
 fn place_of(seed: u64, entity: &str, ordinal: u64) -> &'static fake_data::Place {
-    let stream = format!("{entity}#place");
-    fake_data::place_of(rng::derive_seed(seed, &stream, ordinal))
+    fake_data::place_of(rng::derive_seed_parts(seed, &[entity, "#place"], ordinal))
 }
 
 /// Whether one field of one record carries a value at all.
@@ -204,21 +208,26 @@ pub fn generate(spec: &ValueSpec, path: &str, seed: ValueSeed<'_>) -> JsonValue 
 }
 
 /// Generate a whole record's value fields.
+///
+/// A record's field paths share one buffer, appended and unwound per field
+/// rather than formatted fresh: the path is the stream name every value
+/// derives from, so it was allocated once per field of every record built.
 pub fn generate_fields(
     fields: &[FieldDef],
     prefix: &str,
     seed: ValueSeed<'_>,
 ) -> JsonMap<String, JsonValue> {
     let mut record = JsonMap::new();
+    let mut path = String::from(prefix);
+    let mark = path.len();
     for field in fields {
         if field.relation().is_some() {
             continue;
         }
-        let path = if prefix.is_empty() {
-            field.name.to_string()
-        } else {
-            format!("{prefix}.{}", field.name)
-        };
+        if mark > 0 {
+            path.push('.');
+        }
+        path.push_str(field.name.as_str());
         match presence_of(field, &path, seed) {
             // The key is simply not there, which is what optional means.
             Presence::Absent => {}
@@ -229,6 +238,7 @@ pub fn generate_fields(
                 record.insert(field.name.to_string(), generate(&field.value, &path, seed));
             }
         }
+        path.truncate(mark);
     }
     wire(fields, &mut record, &[]);
     record
