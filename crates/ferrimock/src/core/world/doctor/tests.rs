@@ -199,6 +199,59 @@ fn a_key_is_not_reported_for_always_being_there() {
     );
 }
 
+/// Sorting by id orders by *creation*. Every other instant on a record moves
+/// independently of it — an update rewrites a timestamp and leaves the id
+/// alone — so the check reads the creation field or none at all.
+#[test]
+fn id_order_is_judged_against_creation_and_nothing_else() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Article")
+            .with_field(semantic(
+                "created_at",
+                FieldType::Timestamp {
+                    format: TimestampFormat::Rfc3339Utc,
+                },
+            ))
+            .with_field(semantic(
+                "updated_at",
+                FieldType::Timestamp {
+                    format: TimestampFormat::Rfc3339Utc,
+                },
+            )),
+    );
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(3).with_count("Article", 400),
+    );
+    let report = examine(&store);
+
+    assert!(
+        failed(&report, Check::IdTimeOrder).is_empty(),
+        "ids order by creation: {:?}",
+        failed(&report, Check::IdTimeOrder)
+    );
+    // And it read the creation field rather than settling on whichever
+    // timestamp came first — whether it passed, failed or could not measure.
+    let judged: Vec<&str> = report
+        .findings
+        .iter()
+        .filter(|f| f.check == Check::IdTimeOrder)
+        .map(|f| f.subject.as_str())
+        .chain(
+            report
+                .unmeasured
+                .iter()
+                .filter(|u| u.check == Check::IdTimeOrder)
+                .map(|u| u.subject.as_str()),
+        )
+        .collect();
+    assert!(
+        !judged.iter().any(|subject| subject.contains("updated_at")),
+        "`updated_at` is not what an id is expected to track: {judged:?}"
+    );
+}
+
 /// Closed tells. Each of these read as a flat line, a constant, or a support
 /// that stopped at a round number, and each is now a distribution.
 #[test]

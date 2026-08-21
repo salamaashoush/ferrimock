@@ -662,7 +662,10 @@ fn check_id_time_order(entity: &EntityType, records: &[Record], report: &mut Rep
     const ENOUGH: usize = 20;
     const AGREES_ABOVE: f64 = 0.5;
 
-    let Some(field) = newest_timestamp_field(entity, records) else {
+    // Only against the moment a record came into being. An id that sorts with
+    // `updatedAt` would be the surprising thing: an update moves a timestamp
+    // and leaves the id alone, on every real API there is.
+    let Some(field) = creation_field(entity, records) else {
         return;
     };
     let mut pairs: Vec<(String, i64)> = records
@@ -716,8 +719,21 @@ fn check_id_time_order(entity: &EntityType, records: &[Record], report: &mut Rep
 /// Probed over a handful of records rather than parsed over all of them for
 /// every field: whether a field holds a timestamp is a fact about the field,
 /// and the first few records settle it.
-fn newest_timestamp_field(entity: &EntityType, records: &[Record]) -> Option<String> {
-    const PROBE: usize = 4;
+fn creation_field(entity: &EntityType, records: &[Record]) -> Option<String> {
+    /// Enough records to tell an instant from a string that happens to parse.
+    const PROBE: usize = 8;
+    /// What a field is called when it holds the moment a record came into
+    /// being. Sorting by id orders by *creation*; every other instant on a
+    /// record — updated, deleted, expires — moves independently of it, and a
+    /// real API's ids do not track them either.
+    const CREATED: [&str; 6] = [
+        "created",
+        "added",
+        "registered",
+        "opened",
+        "issued",
+        "since",
+    ];
 
     // Emptiness is a fact about the records, not about each field: `all` over
     // nothing is true, so without this every field would read as an instant.
@@ -727,14 +743,23 @@ fn newest_timestamp_field(entity: &EntityType, records: &[Record]) -> Option<Str
     entity
         .value_fields()
         .map(|field| field.name.to_string())
+        .filter(|name| {
+            let lowered = name.to_ascii_lowercase().replace(['_', '-'], "");
+            CREATED.iter().any(|stem| lowered.contains(stem))
+        })
         .find(|name| {
-            records.iter().take(PROBE).all(|record| {
-                record
-                    .get(name)
-                    .and_then(JsonValue::as_str)
-                    .and_then(fake_data::instant_of)
-                    .is_some()
-            })
+            // Read on the records that carry it, not on all of them: an
+            // optional timestamp is absent from some by design, and requiring
+            // it everywhere settles on whichever field happens to be required.
+            let mut seen = 0usize;
+            for record in records.iter().take(PROBE) {
+                match record.get(name).and_then(JsonValue::as_str) {
+                    Some(text) if fake_data::instant_of(text).is_some() => seen += 1,
+                    Some(_) => return false,
+                    None => {}
+                }
+            }
+            seen > 0
         })
 }
 
