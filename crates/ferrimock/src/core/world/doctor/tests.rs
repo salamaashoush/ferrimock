@@ -295,6 +295,58 @@ fn a_check_the_world_is_too_small_for_is_not_a_pass() {
     );
 }
 
+/// The distribution checks read a world of their own.
+///
+/// Forty records is what a mount serves, not what a check needs, and a lint
+/// has no reason to borrow that number: the generator draws the same shape
+/// whatever the census size, so the checks that measure a shape are given a
+/// census wide enough to see one. What the mount asked for is still what the
+/// size check reports.
+#[test]
+fn a_lint_reads_a_wider_world_than_the_one_it_is_handed() {
+    let mut graph = EntityGraph::new();
+    graph.insert(
+        entity("Article")
+            .with_field(scalar("featured", ScalarKind::Boolean))
+            .with_field(enumeration("status", &["draft", "review", "live"])),
+    );
+    let graph = Arc::new(graph);
+
+    // A world the caller sized by hand is left alone: it is a fact about a
+    // world someone wanted.
+    let stated = EntityStore::new(
+        Arc::clone(&graph),
+        StoreConfig::seeded(3).with_count("Article", 8),
+    );
+    let report = examine(&stated);
+    assert_eq!(report.sampled, 8);
+    assert!(
+        !skipped(&report, Check::FairCoin).is_empty(),
+        "eight records is what was asked for, and it is not enough to measure"
+    );
+
+    // A world that merely defaulted to its size is not.
+    let defaulted = EntityStore::new(Arc::clone(&graph), StoreConfig::seeded(3));
+    let report = examine(&defaulted);
+    assert!(
+        report.sampled > defaulted.count("Article"),
+        "the value checks read more than the {} record(s) served",
+        defaulted.count("Article")
+    );
+    assert!(
+        skipped(&report, Check::FairCoin).is_empty()
+            && skipped(&report, Check::UniformEnum).is_empty(),
+        "a defaulted world is widened until both can be measured: {:?}",
+        report.unmeasured
+    );
+    // And the size of the world as served is still the size of the world as
+    // served.
+    assert_eq!(
+        failed(&report, Check::WorldSize).len(),
+        usize::from(defaulted.count("Article") <= DEFAULT_PAGE_SIZE)
+    );
+}
+
 #[test]
 fn a_world_larger_than_a_page_stops_reporting_its_size() {
     let report = examine(&wide_world(3, 400));

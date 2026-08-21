@@ -818,6 +818,23 @@ impl EntityStore {
         &self.graph
     }
 
+    /// The same world, with every entity nobody sized by name grown to
+    /// `count` instances.
+    ///
+    /// For a reader that needs more evidence than the served census carries
+    /// without changing what is served — a lint measuring a distribution can
+    /// draw six hundred records of an entity the mount only ever hands out
+    /// forty of. A count stated per entity stays where the caller put it, and
+    /// no persistence is inherited: this store is read and thrown away.
+    #[must_use]
+    pub fn resized(&self, count: usize) -> Self {
+        let mut config = self.config.clone();
+        config.default_count = Some(count);
+        config.scale = 1.0;
+        config.persist = None;
+        Self::new(Arc::clone(&self.graph), config)
+    }
+
     #[must_use]
     pub fn seed(&self) -> u64 {
         self.config.seed

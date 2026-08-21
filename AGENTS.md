@@ -574,9 +574,22 @@ runs with no corpus, because the case a mock exists for is the one where no
 corpus of real responses exists; each check fails independently and reports the
 measurement that failed it, so a change either moves a check or it does not. Two
 outcomes are not a pass: a **defect** is a behaviour no real API has, and a
-check the world is **too small to measure** — a five-member enum needs about
-forty draws, which a twelve-record entity cannot supply — is reported as its own
-outcome rather than silently as a clean bill.
+check the world is **too small to measure** is reported as its own outcome
+rather than silently as a clean bill.
+
+The checks that measure a *distribution* read a census of their own rather than
+the one the mount serves — `EntityStore::resized`, sized to `SAMPLE_CAP` — since
+nothing about a lint requires the served counts and forty records cannot tell a
+boolean from a fair coin. A count someone stated by name is left where they put
+it, and the checks that are about the world *as served* (its page size, its
+partitions, its counts) keep reading the store they were handed.
+
+Every sample floor is derived from the **flattest** thing the generator can
+draw, not its typical one: `LEAST_SKEW` for an enum's ranking and
+`FLATTEST_FLAG` for a boolean's chance. A floor set at the middle of a
+generator's range is by construction too small for half of what it draws, and
+reports the half it cannot see as flat. Failing to reject uniformity is never
+evidence of it.
 
 `World::reset()` drops every write and leaves exactly what the seed derives —
 call it between tests, or state leaks from one into the next.

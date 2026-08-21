@@ -24,12 +24,14 @@ use crate::fake_data;
 use crate::type_detector::FieldType;
 
 /// How many instances of one entity the value checks read before they have
-/// enough.
+/// enough, and how wide a census [`examine`] builds itself to read them from.
 ///
 /// The doctor is offline, so the cap is about not walking a million-record
-/// world rather than about the request path. Every check below settles well
-/// under this: the hungriest wants ninety draws.
-const SAMPLE_CAP: usize = 600;
+/// world rather than about the request path. It is set by the hungriest check
+/// plus the room a nullable field needs: separating a 0.42 coin from a fair
+/// one takes 391 draws, and a boolean that is null half the time only offers
+/// a draw on half the records it appears on.
+const SAMPLE_CAP: usize = 1000;
 
 /// How many *parents* a relation check walks.
 ///
@@ -211,19 +213,46 @@ impl Report {
 }
 
 /// Read the world and report what a client could tell about it.
+///
+/// Two worlds, because the checks ask two kinds of question. Whether a
+/// collection fits inside one page, whether a link resolves back, whether a
+/// `*_count` agrees with what it counts — those are facts about the world as
+/// served, and they are measured on the store handed in.
+///
+/// Whether an enum is flat, whether a boolean is a coin, whether a
+/// vocabulary is closed are facts about the *generator*, and it draws the same
+/// way whatever the census size. What the served counts decide there is only
+/// how much evidence there is, and at the default forty records a boolean
+/// cannot be told from a fair coin at all — which is how a real schema came to
+/// answer three hundred and eight checks with "the world is too small" instead
+/// of a result. Nothing about a lint requires the counts a mount asked to
+/// serve, so those checks read a census of their own, sized to [`SAMPLE_CAP`].
+///
+/// A count someone stated by name is left where they put it. It is a fact
+/// about a world that was wanted, and [`Check::WorldSize`] still has to be
+/// able to report it.
 #[must_use]
 pub fn examine(store: &EntityStore) -> Report {
     let mut report = Report::default();
     let graph = store.graph();
+    let wide = store.resized(SAMPLE_CAP);
 
     for entity in graph.entities() {
-        let records = sample(store, entity);
-        report.sampled += records.len();
+        let served = sample(store, entity);
+        report.sampled += served.len();
 
         check_world_size(store, entity, &mut report);
-        check_values(entity, &records, &mut report);
-        check_relations(store, entity, &records, &mut report);
-        check_id_time_order(entity, &records, &mut report);
+        check_relations(store, entity, &served, &mut report);
+
+        let drawn = if wide.count(entity.name.as_str()).min(SAMPLE_CAP) > served.len() {
+            let drawn = sample(&wide, entity);
+            report.sampled += drawn.len();
+            drawn
+        } else {
+            served
+        };
+        check_values(entity, &drawn, &mut report);
+        check_id_time_order(entity, &drawn, &mut report);
     }
 
     report.findings.sort_by(|a, b| {
