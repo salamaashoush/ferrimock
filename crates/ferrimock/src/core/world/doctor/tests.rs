@@ -479,6 +479,41 @@ fn a_date_is_read_out_of_whatever_format_wrote_it() {
     assert_eq!(year_of("Tue, 17 Mar 2024 05:00:00 GMT"), Some(2024));
 }
 
+/// A number that counts is not a number that was drawn, so the bound the draw
+/// would have stopped at says nothing about it.
+#[test]
+fn a_numeric_key_is_not_reported_for_staying_inside_a_bound_it_never_used() {
+    fn bounded(entity: &EntityType, field: &FieldDef) -> Report {
+        let mut report = Report::default();
+        let stats = FieldStats {
+            numbers: (1..=40).map(f64::from).collect(),
+            ..FieldStats::default()
+        };
+        check_numbers(entity, field, &stats, "Row.field", &mut report);
+        report
+    }
+
+    let key = scalar("id", ScalarKind::Int);
+    let ordinary = scalar("weight", ScalarKind::Int);
+    let row = EntityType::new(
+        "Row",
+        CompositeKey::single("id"),
+        Provenance::new(Rule::GraphQLSchema, "Row"),
+    )
+    .with_field(key.clone())
+    .with_field(ordinary.clone());
+
+    assert!(
+        failed(&bounded(&row, &key), Check::NumberSupport).is_empty(),
+        "a key numbers the census; its largest value is the world's size"
+    );
+    assert_eq!(
+        failed(&bounded(&row, &ordinary), Check::NumberSupport).len(),
+        1,
+        "a drawn number that never leaves the default bound is still a tell"
+    );
+}
+
 #[test]
 fn concordance_separates_an_order_from_a_shuffle() {
     assert!((concordance(&[1, 2, 3, 4, 5]) - 1.0).abs() < f64::EPSILON);

@@ -313,7 +313,7 @@ fn check_values(entity: &EntityType, records: &[Record], report: &mut Report) {
         check_list_length(field, &stats, &subject, report);
         check_enum(field, &stats, &subject, report);
         check_boolean(&stats, &subject, report);
-        check_numbers(field, &stats, &subject, report);
+        check_numbers(entity, field, &stats, &subject, report);
         check_text(field, &stats, &subject, report);
     }
 }
@@ -509,7 +509,13 @@ fn check_boolean(stats: &FieldStats, subject: &str, report: &mut Report) {
     }
 }
 
-fn check_numbers(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut Report) {
+fn check_numbers(
+    entity: &EntityType,
+    field: &FieldDef,
+    stats: &FieldStats,
+    subject: &str,
+    report: &mut Report,
+) {
     const ENOUGH: usize = 10;
 
     let ValueSpec::Scalar(scalar) = &field.value else {
@@ -520,6 +526,13 @@ fn check_numbers(field: &FieldDef, stats: &FieldStats, subject: &str, report: &m
     }
     // A declared bound is the spec's answer, not the generator's default.
     if scalar.constraints.max.is_some() {
+        return;
+    }
+    // A numeric key counts rather than draws. Its largest value is the size of
+    // the census — forty records key 1 through 40 — so reading that as a
+    // support that stopped short of a thousand reports the world's size under
+    // the name of a bound that was never applied to it.
+    if entity.key.iter().any(|part| part.field == field.name) {
         return;
     }
     if stats.numbers.len() < ENOUGH {
