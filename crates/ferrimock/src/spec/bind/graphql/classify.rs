@@ -39,14 +39,41 @@ pub fn classify(
     graph: &EntityGraph,
     facts: &SchemaFacts<'_>,
 ) -> RootPlan {
-    let Some(target) = payload_target(field, schema, graph, facts) else {
+    let target = payload_target(field, schema, graph, facts).or_else(|| {
+        (kind == RootKind::Mutation)
+            .then(|| named_target(field, graph))
+            .flatten()
+    });
+    let Some(target) = target else {
         return RootPlan::Unclassified;
     };
 
     match kind {
-        RootKind::Query => classify_query(field, &target, graph),
-        RootKind::Mutation => classify_mutation(field, &target, graph),
+        RootKind::Query => classify_query(field, &target, graph, schema),
+        RootKind::Mutation => classify_mutation(field, &target, graph, schema),
     }
+}
+
+/// The entity a mutation names, when its payload does not carry one.
+///
+/// A delete has nothing to hand back, so its payload is routinely just
+/// `errors` — and read only through the payload, such a mutation has no
+/// entity, classifies as unclassified, and answers with an invented response
+/// while deleting nothing. The name is the remaining evidence: strip the verb
+/// off `deleteAiStudioAgent` and what is left names the entity outright.
+fn named_target(field: &FieldDefinition, graph: &EntityGraph) -> Option<Target> {
+    let rest = leading_verb_span(&field.name)?;
+    let entity = graph
+        .entities()
+        .find(|held| held.name.eq_ignore_ascii_case(rest))?;
+
+    Some(Target {
+        entity: entity.name.clone(),
+        members: Vec::new(),
+        is_list: false,
+        connection: None,
+        payload_field: None,
+    })
 }
 
 /// What a root field ultimately yields: which entity, whether it is a list,
@@ -144,7 +171,12 @@ fn connection_target(
     })
 }
 
-fn classify_query(field: &FieldDefinition, target: &Target, graph: &EntityGraph) -> RootPlan {
+fn classify_query(
+    field: &FieldDefinition,
+    target: &Target,
+    graph: &EntityGraph,
+    schema: &ParsedSchema,
+) -> RootPlan {
     if target.is_list {
         return RootPlan::List {
             entity: target.entity.clone(),
@@ -154,7 +186,7 @@ fn classify_query(field: &FieldDefinition, target: &Target, graph: &EntityGraph)
         };
     }
 
-    match key_argument(field, target, graph) {
+    match key_argument(field, target, graph, schema) {
         Some(key_arg) => RootPlan::Get {
             entity: target.entity.clone(),
             members: target.members.clone(),
@@ -173,10 +205,15 @@ fn classify_query(field: &FieldDefinition, target: &Target, graph: &EntityGraph)
     }
 }
 
-fn classify_mutation(field: &FieldDefinition, target: &Target, graph: &EntityGraph) -> RootPlan {
+fn classify_mutation(
+    field: &FieldDefinition,
+    target: &Target,
+    graph: &EntityGraph,
+    schema: &ParsedSchema,
+) -> RootPlan {
     let verb = leading_verb(&field.name);
-    let key_arg = key_argument(field, target, graph);
-    let input_arg = input_argument(field, graph, target);
+    let key_arg = key_argument(field, target, graph, schema);
+    let input_arg = input_argument(field, graph, target, schema);
 
     match verb {
         Verb::Create => RootPlan::Create {
@@ -227,41 +264,109 @@ fn leading_verb(name: &str) -> Verb {
     }
 }
 
-/// The argument naming which instance to act on: the entity's own key field,
-/// `id`, or `<entity>Id`.
-fn key_argument(
-    field: &FieldDefinition,
-    target: &Target,
-    graph: &EntityGraph,
-) -> Option<LeanString> {
+/// What follows the verb a mutation name starts with.
+fn leading_verb_span(name: &str) -> Option<&str> {
+    const VERBS: [&str; 13] = [
+        "create", "add", "new", "insert", "update", "edit", "modify", "patch", "set", "delete",
+        "remove", "destroy", "archive",
+    ];
+    let lowered = name.to_ascii_lowercase();
+    VERBS
+        .iter()
+        .find(|verb| lowered.starts_with(*verb))
+        .and_then(|verb| name.get(verb.len()..))
+        .filter(|rest| !rest.is_empty())
+}
+
+/// The names an argument may use to say which instance is meant.
+fn key_names(target: &Target, graph: &EntityGraph) -> [LeanString; 3] {
     let key_field = graph
         .get(target.entity.as_str())
         .and_then(|entity| entity.key.as_single().cloned())
         .unwrap_or_else(|| LeanString::from("id"));
+    [
+        key_field,
+        LeanString::from("id"),
+        LeanString::from(format!("{}Id", lower_first(target.entity.as_str())).as_str()),
+    ]
+}
 
-    let entity_id = format!("{}Id", lower_first(target.entity.as_str()));
-    let candidates = [key_field.as_str(), "id", entity_id.as_str()];
+/// The field of an input object naming which instance is meant.
+///
+/// Only consulted when no argument does, which is what the Relay convention
+/// looks like: `deleteUser(input: DeleteUserInput!)` with the key a field of
+/// the input rather than an argument beside it. Left unread, every write
+/// against such a schema classified as unclassified and answered from its
+/// declared shape — a mutation that returns a well-formed payload and changes
+/// nothing, which is worse than one that refuses.
+pub(super) fn nested_key_field(
+    schema: &ParsedSchema,
+    input_type: &str,
+    names: &[LeanString],
+) -> Option<LeanString> {
+    let declared = schema.types.get(input_type)?;
+    if declared.kind != TypeKind::InputObject {
+        return None;
+    }
+    declared
+        .input_fields
+        .iter()
+        .find(|f| names.iter().any(|name| f.name.eq_ignore_ascii_case(name)))
+        .map(|f| LeanString::from(f.name.as_str()))
+}
+
+/// The argument naming which instance to act on: the entity's own key field,
+/// `id`, or `<entity>Id` — either as an argument, or as a field of the one
+/// input object the arguments carry.
+fn key_argument(
+    field: &FieldDefinition,
+    target: &Target,
+    graph: &EntityGraph,
+    schema: &ParsedSchema,
+) -> Option<LeanString> {
+    let names = key_names(target, graph);
+
+    if let Some(arg) = field
+        .args
+        .iter()
+        .find(|arg| names.iter().any(|n| arg.name.eq_ignore_ascii_case(n)))
+    {
+        return Some(LeanString::from(arg.name.as_str()));
+    }
 
     field
         .args
         .iter()
-        .find(|arg| candidates.iter().any(|c| arg.name.eq_ignore_ascii_case(c)))
+        .find(|arg| nested_key_field(schema, arg.value_type.name(), &names).is_some())
         .map(|arg| LeanString::from(arg.name.as_str()))
 }
 
 /// The argument carrying the values to write: an input object, or the first
 /// argument that is neither the key nor pagination.
+///
+/// The key and the values are the same argument when the key is a field of the
+/// input object, so that one is not excluded from itself.
 fn input_argument(
     field: &FieldDefinition,
     graph: &EntityGraph,
     target: &Target,
+    schema: &ParsedSchema,
 ) -> Option<LeanString> {
-    let key = key_argument(field, target, graph);
+    let key = key_argument(field, target, graph, schema);
+    let names = key_names(target, graph);
+    let carries_key = key.as_ref().is_some_and(|name| {
+        field
+            .args
+            .iter()
+            .find(|arg| arg.name.as_str() == name.as_str())
+            .is_some_and(|arg| nested_key_field(schema, arg.value_type.name(), &names).is_some())
+    });
+
     field
         .args
         .iter()
         .find(|arg| {
-            Some(arg.name.as_str()) != key.as_deref()
+            (carries_key || Some(arg.name.as_str()) != key.as_deref())
                 && !PAGINATION_ARGS.contains(&arg.name.as_str())
                 && !ORDER_ARGS.contains(&arg.name.as_str())
         })

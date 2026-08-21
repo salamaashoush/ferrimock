@@ -758,7 +758,7 @@ fn resolve_root(
             key_arg,
         } => {
             let targets = concrete_or(entity, members);
-            let record = argument_string(ctx, key_arg)
+            let record = key_string(ctx, &store, entity.as_str(), key_arg)
                 .and_then(|key| store.get_any(&targets, &EntityKey::single(key)));
             Ok(record.map(|record| wrap_payload(shape, Parent::Entity(record))))
         }
@@ -835,7 +835,7 @@ fn resolve_root(
             input_arg,
             ..
         } => {
-            let key = argument_string(ctx, key_arg)
+            let key = key_string(ctx, &store, entity.as_str(), key_arg)
                 .ok_or_else(|| async_graphql::Error::new(format!("`{key_arg}` is required")))?;
             let values = input_values(ctx, input_arg.as_deref());
             let written = store
@@ -853,7 +853,7 @@ fn resolve_root(
         RootPlan::Delete {
             entity, key_arg, ..
         } => {
-            let key = argument_string(ctx, key_arg)
+            let key = key_string(ctx, &store, entity.as_str(), key_arg)
                 .ok_or_else(|| async_graphql::Error::new(format!("`{key_arg}` is required")))?;
             let entity_key = EntityKey::single(key);
             // The deleted record is the useful answer, so read it before it
@@ -992,6 +992,54 @@ fn argument_string(ctx: &ResolverContext<'_>, name: &str) -> Option<String> {
         GqlValue::Enum(name) => Some(name.to_string()),
         _ => None,
     }
+}
+
+/// The key naming the instance a write acts on.
+///
+/// Usually the argument itself. A schema following the Relay convention wraps
+/// it — `deleteUser(input: { id })` — so the argument is an object and the key
+/// is a field inside it; the classifier accepts that shape, and this is the
+/// other half of reading it.
+fn key_string(
+    ctx: &ResolverContext<'_>,
+    store: &EntityStore,
+    entity: &str,
+    key_arg: &str,
+) -> Option<String> {
+    if let Some(direct) = argument_string(ctx, key_arg) {
+        return Some(direct);
+    }
+
+    let accessor = ctx.args.get(key_arg)?;
+    let object = to_json(accessor.as_value());
+    let object = object.as_object()?;
+
+    let declared = store
+        .graph()
+        .get(entity)
+        .and_then(|held| held.key.as_single().cloned());
+    let entity_id = format!("{}Id", lower_first(entity));
+    let names = [
+        declared.as_deref().unwrap_or("id"),
+        "id",
+        entity_id.as_str(),
+    ];
+
+    object
+        .iter()
+        .find(|(name, _)| names.iter().any(|want| name.eq_ignore_ascii_case(want)))
+        .and_then(|(_, value)| match value {
+            JsonValue::String(s) => Some(s.clone()),
+            JsonValue::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+}
+
+fn lower_first(name: &str) -> String {
+    let mut chars = name.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_lowercase().collect::<String>() + chars.as_str()
+    })
 }
 
 fn input_values(ctx: &ResolverContext<'_>, input_arg: Option<&str>) -> JsonValue {
