@@ -12,6 +12,7 @@
 
 pub mod bind;
 pub mod emit;
+pub mod fit;
 pub mod infer;
 pub mod source;
 

@@ -555,6 +555,19 @@ hands a client the whole population in a single request, and a five-member enum
 needs about forty draws before anything can tell its distribution from uniform,
 so a world too small to sample is a world whose statistics cannot be tested.
 
+`ferrimock world fit recordings/*.har --dir mocks/ -o world.fit.yaml` measures a
+recording and writes the world that would have produced it. Realism is agreement
+with an empirical distribution, so the highest-fidelity world is one whose
+parameters were measured rather than guessed: every default in the value layer
+is a defensible prior and none of them knows what this API's `status` field
+actually holds or how many folders a real account has. What comes out is an
+ordinary overrides file -- reviewable, diffable, committable, applied through
+the same `FieldRules` a hand-written one is, never a private path back into the
+store. The lifecycle inference is the part worth knowing about: a `status` is
+read as one when *other fields go empty conditional on it*, and the order comes
+out of the same evidence, since a state that empties more of the record is
+earlier in the life of one.
+
 `ferrimock world doctor` lints the generated world for the things that give a
 mock away, and it is the number any change to the world is judged against. It
 runs with no corpus, because the case a mock exists for is the one where no

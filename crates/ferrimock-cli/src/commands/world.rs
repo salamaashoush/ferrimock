@@ -34,6 +34,21 @@ pub enum WorldAction {
         verbose: bool,
     },
 
+    /// Measure a recording and write the world it implies
+    Fit {
+        /// Recordings to read — a session file or a HAR
+        #[arg(required = true)]
+        recordings: Vec<PathBuf>,
+
+        /// Directory holding the schema the recording is of
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+
+        /// Where to write the fitted `world:` block (stdout when absent)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+
     /// Lint the generated world for the things that give a mock away
     Doctor {
         /// Directory of mocks and schemas (defaults to the configured one)
@@ -62,6 +77,29 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
             explain(world, verbose);
             Ok(())
         }
+        WorldAction::Fit {
+            recordings,
+            dir,
+            out,
+        } => {
+            let registry = MockRegistry::new();
+            let dir = dir.unwrap_or_else(|| PathBuf::from(crate::config::mocks_dir()));
+            registry
+                .load_from_directory(&dir)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let world = registry.world();
+            if world.is_empty() {
+                anyhow::bail!(
+                    "no schemas in {} — a fit measures a recording against a world, and there \
+                     is no world here",
+                    dir.display()
+                );
+            }
+            fit(world, &recordings, out.as_deref()).await
+        }
+
         WorldAction::Doctor { dir, strict } => {
             let registry = MockRegistry::new();
             let dir = dir.unwrap_or_else(|| PathBuf::from(crate::config::mocks_dir()));
@@ -85,6 +123,84 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
             diagnose(&world.store(), strict)
         }
     }
+}
+
+/// Measure a recording and write the world that would have produced it.
+///
+/// Every default in the value layer is a defensible prior and none of them
+/// knows what this API's `status` field actually holds. What comes out is an
+/// ordinary overrides file — reviewable, diffable, committable — rather than
+/// anything the engine applies behind the caller's back.
+async fn fit(
+    world: &Arc<World>,
+    recordings: &[PathBuf],
+    out: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
+    use ferrimock::spec::fit;
+
+    let mut interactions = Vec::new();
+    for recording in recordings {
+        let held = ferrimock::recorder::load_interactions(recording)
+            .await
+            .map_err(|e| anyhow::anyhow!("could not read {}: {e}", recording.display()))?;
+        interactions.extend(held);
+    }
+
+    crate::say!("{}", ui::header("World fit"));
+    crate::say!();
+    let fitted = fit::fit(&world.graph(), &interactions);
+    crate::say!(
+        "{}",
+        ui::info(&format!(
+            "{} interaction(s) read · {} response(s) parsed · {} record(s) recognised",
+            interactions.len(),
+            fitted.read,
+            fitted.recognised
+        ))
+    );
+
+    if fitted.recognised == 0 {
+        crate::say!(
+            "{}",
+            ui::warning(
+                "nothing in the recording looked like an entity this world knows — check that \
+                 the schema and the recording are of the same API"
+            )
+        );
+    }
+
+    // Measured and reported rather than emitted: no override can say how often
+    // a field was absent or null, so saying it here is better than dropping it.
+    let mut missing: Vec<(&String, &(usize, usize))> = fitted
+        .missing
+        .iter()
+        .filter(|(_, (absent, nulled))| *absent > 0 || *nulled > 0)
+        .collect();
+    missing.sort_by_key(|(_, (absent, nulled))| std::cmp::Reverse(absent + nulled));
+    if !missing.is_empty() {
+        crate::say!();
+        crate::say!("{}", ui::header("Measured, with nowhere to put it yet"));
+        for (target, (absent, nulled)) in missing.iter().take(10) {
+            crate::say!(
+                "{}",
+                ui::dim(&format!("  {target} — absent {absent}, null {nulled}"))
+            );
+        }
+    }
+
+    let written = fit::to_yaml(&fitted);
+    if let Some(path) = out {
+        std::fs::write(path, &written)?;
+        crate::say!();
+        crate::say!(
+            "{}",
+            ui::success(&format!("wrote {}", ui::path(&path.display().to_string())))
+        );
+    } else {
+        crate::say!();
+        crate::say!("{written}");
+    }
+    Ok(())
 }
 
 /// Print what a client could tell about this world, worst first.
