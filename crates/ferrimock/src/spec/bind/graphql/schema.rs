@@ -713,6 +713,9 @@ struct ReturnShape {
     /// How to build a value of the declared return type when nothing about
     /// the field says where a real one would come from.
     declared: Arc<ValueSpec>,
+    /// Whether the field declared its answer non-null, so a miss is an error
+    /// the schema asked for rather than a null the caller can read.
+    required: bool,
 }
 
 impl ReturnShape {
@@ -732,6 +735,7 @@ impl ReturnShape {
             is_list: field_def.field_type.is_list(),
             is_connection: connection_node(parsed, graph, named).is_some(),
             is_abstract: is_abstract_type(parsed, named),
+            required: matches!(field_def.field_type, TypeRef::NonNull(_)),
             payload,
             declared: Arc::new(value_spec_of(
                 parsed,
@@ -758,8 +762,21 @@ fn resolve_root(
             key_arg,
         } => {
             let targets = concrete_or(entity, members);
-            let record = key_string(ctx, &store, entity.as_str(), key_arg)
-                .and_then(|key| store.get_any(&targets, &EntityKey::single(key)));
+            let key = key_string(ctx, &store, entity.as_str(), key_arg);
+            let record = key
+                .as_ref()
+                .and_then(|key| store.get_any(&targets, &EntityKey::single(key.clone())));
+
+            // A field that declared its answer non-null cannot be told there
+            // is no record by being handed null: the executor turns that into
+            // `internal: non-null types require a return value`, which reads
+            // like the mock broke rather than like the record is gone.
+            if record.is_none() && shape.required {
+                return Err(async_graphql::Error::new(match key {
+                    Some(key) => format!("no `{entity}` with {key_arg} `{key}`"),
+                    None => format!("`{key_arg}` is required"),
+                }));
+            }
             Ok(record.map(|record| wrap_payload(shape, Parent::Entity(record))))
         }
 
