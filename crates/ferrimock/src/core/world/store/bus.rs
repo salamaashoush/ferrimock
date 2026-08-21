@@ -91,11 +91,15 @@ pub fn wire(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>, stated
         }
         // A pass reads what the ones before it settled — a name written out of
         // its parts, before the handle derived from that name — so each pass's
-        // results land before the next one looks.
-        for (written, normalised, text) in settled.drain(..) {
-            available.text.insert(normalised.to_string(), text.clone());
-            record.insert(written.to_string(), JsonValue::String(text));
+        // results land before the next one looks. Cleared rather than consumed,
+        // because the next pass writes into the same allocation.
+        for (written, normalised, text) in &settled {
+            available
+                .text
+                .insert((*normalised).to_string(), text.clone());
+            record.insert((*written).to_string(), JsonValue::String(text.clone()));
         }
+        settled.clear();
     }
 }
 

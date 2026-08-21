@@ -657,19 +657,22 @@ fn check_id_time_order(entity: &EntityType, records: &[Record], report: &mut Rep
 fn newest_timestamp_field(entity: &EntityType, records: &[Record]) -> Option<String> {
     const PROBE: usize = 4;
 
-    let probe = &records[..records.len().min(PROBE)];
+    // Emptiness is a fact about the records, not about each field: `all` over
+    // nothing is true, so without this every field would read as an instant.
+    if records.is_empty() {
+        return None;
+    }
     entity
         .value_fields()
         .map(|field| field.name.to_string())
         .find(|name| {
-            !probe.is_empty()
-                && probe.iter().all(|record| {
-                    record
-                        .get(name)
-                        .and_then(JsonValue::as_str)
-                        .and_then(fake_data::instant_of)
-                        .is_some()
-                })
+            records.iter().take(PROBE).all(|record| {
+                record
+                    .get(name)
+                    .and_then(JsonValue::as_str)
+                    .and_then(fake_data::instant_of)
+                    .is_some()
+            })
         })
 }
 
