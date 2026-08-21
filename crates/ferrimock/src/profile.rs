@@ -7,7 +7,7 @@
 //! defaults, but the answers belong to whoever owns the API -- and that
 //! knowledge is frequently not something its owner can publish.
 //!
-//! A [`ConsolidationProfile`] carries it. Pass one on
+//! A [`crate::profile::ConsolidationProfile`] carries it. Pass one on
 //! [`crate::consolidator::ConsolidatorOptions`] and it is consulted ahead of the
 //! built-in heuristics; pass none and the built-ins are all there is.
 //!

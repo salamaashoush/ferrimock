@@ -1,6 +1,7 @@
 //! What a field means, when all you have is its name and declared type.
 //!
-//! [`detect_from_semantic_context`] is built for recordings: most of its rules
+//! [`crate::type_detector::semantic::detect_from_semantic_context`] is built
+//! for recordings: most of its rules
 //! confirm a guess about the name against the values that were actually seen,
 //! so with no samples they cannot fire. A spec has no samples — it has
 //! something the recording path never gets instead, a declared type name and a

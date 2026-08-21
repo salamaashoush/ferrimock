@@ -1,6 +1,7 @@
 //! Reading a GraphQL schema.
 //!
-//! Introspection over the wire, the response parsed into a [`ParsedSchema`],
+//! Introspection over the wire, the response parsed into a
+//! [`crate::graphql::introspection::ParsedSchema`],
 //! and SDL written back out of one. What a schema *means* — which types have
 //! identity, how they link — is [`crate::spec::infer::graphql`]; what it
 //! *serves* is [`crate::spec::bind::graphql`]. This module only reads.
