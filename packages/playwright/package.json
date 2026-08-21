@@ -22,7 +22,7 @@
     "build": "tsdown"
   },
   "peerDependencies": {
-    "ferrimock": "0.2.0",
+    "ferrimock": "0.3.0",
     "@playwright/test": ">=1.40.0"
   },
   "peerDependenciesMeta": {
