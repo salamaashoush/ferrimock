@@ -13,6 +13,7 @@ use crate::core::world::model::{
     Relation, Rule, Scalar, ScalarKind, ValueSpec,
 };
 use crate::core::world::store::StoreConfig;
+use crate::core::world::store::distribution::FLATTEST_FLAG;
 use crate::type_detector::{FieldType, TimestampFormat};
 
 fn scalar(name: &str, kind: ScalarKind) -> FieldDef {
@@ -286,7 +287,7 @@ fn a_check_the_world_is_too_small_for_is_not_a_pass() {
     assert!(failed(&report, Check::UniformEnum).is_empty());
     assert!(
         !skipped(&report, Check::UniformEnum).is_empty(),
-        "a three-member enum needs fifteen draws and the world holds eight"
+        "a three-member enum needs far more than the eight draws this holds"
     );
     assert!(
         !failed(&report, Check::WorldSize).is_empty(),
@@ -538,6 +539,78 @@ fn a_truncated_calendar_is_named_and_a_repeated_one_is_not() {
     assert!(
         failed(&measured(february), Check::DayOfMonth).is_empty(),
         "a February holds no day past the 28th to miss"
+    );
+}
+
+/// The floors are what the *generator* needs to be seen, so they follow the
+/// flattest thing it draws rather than its average one.
+#[test]
+fn a_sample_floor_follows_the_flattest_draw_the_generator_makes() {
+    // A flat ranking spread over five members needs more draws than the same
+    // ranking at the middle of `LEAST_SKEW..=MOST_SKEW`, and forty is short of
+    // it — which is what three five-member enums were reported for.
+    let flattest = draws_to_notice(&flattest_ranking(5));
+    let middling: Vec<f64> = {
+        let weight = |rank: usize| 1.0 / as_f64(rank + 1);
+        let total: f64 = (0..5).map(weight).sum();
+        (0..5).map(|rank| weight(rank) / total).collect()
+    };
+    assert!(
+        flattest > draws_to_notice(&middling),
+        "a flatter ranking takes more draws to separate from flat"
+    );
+    assert!(
+        flattest > 40,
+        "forty draws of a five-member enum is short of it: {flattest}"
+    );
+
+    // And the coin floor follows `lopsided_chance`, whose flattest draw is
+    // further from the middle than a two-member ranking's is.
+    let coin = draws_to_notice(&[FLATTEST_FLAG, 1.0 - FLATTEST_FLAG]);
+    assert!(
+        coin > draws_to_notice(&flattest_ranking(2)),
+        "a 0.42 coin is flatter than a two-member ranking: {coin}"
+    );
+    assert!(
+        coin > 120,
+        "a 67-of-120 split is not evidence of an even one: {coin}"
+    );
+}
+
+/// A boolean that really is a coin is still reported, once there is enough of
+/// it to say so.
+#[test]
+fn an_even_split_is_named_once_there_are_enough_draws_to_see_one() {
+    fn measured(trues: usize, falses: usize) -> Report {
+        let mut report = Report::default();
+        let stats = FieldStats {
+            trues,
+            falses,
+            ..FieldStats::default()
+        };
+        check_boolean(&stats, "Doc.flag", &mut report);
+        report
+    }
+
+    let enough = draws_to_notice(&[FLATTEST_FLAG, 1.0 - FLATTEST_FLAG]);
+    let half = enough / 2 + 1;
+    assert_eq!(
+        failed(&measured(half, enough + 1 - half), Check::FairCoin).len(),
+        1,
+        "an even split over enough draws is the tell"
+    );
+    // The split the generator's flattest coin makes, over the same draws, is
+    // not — it clears the threshold the floor was chosen to clear.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let lopsided = (as_f64(enough + 1) * FLATTEST_FLAG).round() as usize;
+    assert!(
+        failed(&measured(lopsided, enough + 1 - lopsided), Check::FairCoin).is_empty(),
+        "0.42 of enough draws is what the floor was sized to catch"
+    );
+    assert_eq!(
+        skipped(&measured(half - 1, enough - half), Check::FairCoin).len(),
+        1,
+        "one draw short of the floor is unmeasurable, not even"
     );
 }
 

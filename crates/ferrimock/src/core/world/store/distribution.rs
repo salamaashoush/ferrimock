@@ -98,7 +98,12 @@ pub struct Ranking {
 
 /// How skewed a set of members is, drawn per field so two enums of a schema
 /// do not share one shape.
-const LEAST_SKEW: f64 = 0.7;
+///
+/// [`LEAST_SKEW`] is public because a check asking whether an enum reads as
+/// uniform has to know how flat the flattest ranking here actually is: a
+/// sample floor set at the *typical* skew is too small to see half the
+/// rankings this draws, and reports the ones it cannot see as flat.
+pub const LEAST_SKEW: f64 = 0.7;
 const MOST_SKEW: f64 = 1.6;
 
 impl Ranking {
@@ -189,6 +194,15 @@ impl Preference {
     }
 }
 
+/// How far from certain a flag's chance is ever drawn.
+///
+/// [`FLATTEST_FLAG`] is the closest [`lopsided_chance`] ever lands to an even
+/// split, and is public for the same reason [`LEAST_SKEW`] is: a check that
+/// cannot separate a 0.42 coin from a 0.5 one is measuring its own sample
+/// size, not the coin.
+pub const FLATTEST_FLAG: f64 = 0.42;
+const STARKEST_FLAG: f64 = 0.02;
+
 /// How often a flag is set.
 ///
 /// Never a fair coin. A real boolean is lopsided in one direction or the
@@ -197,13 +211,10 @@ impl Preference {
 /// field's own word and pushed away from the middle.
 #[must_use]
 pub fn lopsided_chance(derived: u64) -> f64 {
-    const NEAREST: f64 = 0.02;
-    const FURTHEST: f64 = 0.42;
-
     let drawn = unit(derived);
     let toward_zero = drawn < 0.5;
     let distance = if toward_zero { drawn } else { 1.0 - drawn } * 2.0;
-    let magnitude = (FURTHEST - NEAREST).mul_add(distance * distance, NEAREST);
+    let magnitude = (FLATTEST_FLAG - STARKEST_FLAG).mul_add(distance * distance, STARKEST_FLAG);
     if toward_zero {
         magnitude
     } else {

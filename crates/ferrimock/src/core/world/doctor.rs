@@ -18,6 +18,7 @@ use serde_json::Value as JsonValue;
 
 use super::algebra::{DEFAULT_PAGE_SIZE, Page, Selection};
 use super::model::{Cardinality, EntityType, FieldDef, Relation, ScalarKind, TextShape, ValueSpec};
+use super::store::distribution::{FLATTEST_FLAG, LEAST_SKEW};
 use super::store::{EntityStore, Record, counted_relation, is_membership};
 use crate::fake_data;
 use crate::type_detector::FieldType;
@@ -388,6 +389,13 @@ fn check_list_length(field: &FieldDef, stats: &FieldStats, subject: &str, report
     }
 }
 
+/// A count, as the float the arithmetic below needs. Every caller passes a
+/// member count or a rank inside one, both far below where an f64 stops
+/// counting exactly.
+fn as_f64(count: usize) -> f64 {
+    f64::from(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
 /// How many draws it takes before "indistinguishable from uniform" means
 /// anything.
 ///
@@ -400,33 +408,31 @@ fn check_list_length(field: &FieldDef, stats: &FieldStats, subject: &str, report
 /// hundred.
 ///
 /// So the floor is the number of draws that would detect the distribution the
-/// generator actually uses: a Zipf ranking over the members, at roughly the
-/// conventional four-in-five chance of noticing. That is the non-centrality
-/// the statistic needs, divided by how far Zipf sits from flat for this many
-/// members — which for two members lands on ninety, the same place the
-/// even-split check independently arrived at.
-fn draws_to_see_a_skew(members: usize) -> usize {
+/// generator actually draws, at roughly the conventional four-in-five chance
+/// of noticing. `shares` is that distribution, and the sum below is the
+/// chi-square non-centrality one draw of it carries; dividing the
+/// non-centrality the statistic needs by that gives the draws.
+///
+/// The shares a caller passes are the *flattest* it can produce, not its
+/// typical one. A floor set at the middle of the generator's range is by
+/// construction too small for half of what it draws, which is where three
+/// five-member enums came to be reported for the crime of landing on a
+/// [`LEAST_SKEW`] exponent.
+fn draws_to_notice(shares: &[f64]) -> usize {
     /// Non-centrality for about a four-in-five chance at the usual threshold.
     const NOTICEABLE: f64 = 10.0;
     /// The chi-square approximation is not one below five expected per member.
     const VALID_PER_MEMBER: usize = 5;
 
+    let members = shares.len();
     if members < 2 {
         return usize::MAX;
     }
-    // A member count, and a rank inside it: both far below where an f64 stops
-    // counting exactly.
-    let rank_of = |rank: usize| f64::from(u32::try_from(rank).unwrap_or(u32::MAX));
-    let k = rank_of(members);
-    let harmonic: f64 = (1..=members).map(|rank| 1.0 / rank_of(rank)).sum();
-    let flat = 1.0 / k;
-    let spread: f64 = (1..=members)
-        .map(|rank| {
-            let share = 1.0 / (rank_of(rank) * harmonic);
-            (share - flat).powi(2)
-        })
-        .sum::<f64>()
-        * k;
+    let flat = 1.0 / as_f64(members);
+    let spread: f64 = shares
+        .iter()
+        .map(|share| (share - flat).powi(2) / flat)
+        .sum();
 
     if spread <= 0.0 {
         return members * VALID_PER_MEMBER;
@@ -438,6 +444,19 @@ fn draws_to_see_a_skew(members: usize) -> usize {
     )]
     let needed = (NOTICEABLE / spread).ceil() as usize;
     needed.max(members * VALID_PER_MEMBER)
+}
+
+/// The shares a [`Ranking`] hands out at the flattest exponent it draws.
+///
+/// Which member gets which share is permuted per field and does not matter
+/// here — [`draws_to_notice`] reads the multiset.
+fn flattest_ranking(members: usize) -> Vec<f64> {
+    let weight = |rank: usize| as_f64(rank + 1).powf(-LEAST_SKEW);
+    let total: f64 = (0..members).map(weight).sum();
+    if total <= 0.0 {
+        return vec![1.0 / as_f64(members.max(1)); members];
+    }
+    (0..members).map(|rank| weight(rank) / total).collect()
 }
 
 fn check_enum(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut Report) {
@@ -452,7 +471,7 @@ fn check_enum(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut 
         .map(|member| stats.enum_counts.get(member.as_str()).copied().unwrap_or(0))
         .collect();
     let observed: usize = counts.iter().sum();
-    let enough = draws_to_see_a_skew(members.len());
+    let enough = draws_to_notice(&flattest_ranking(members.len()));
     if observed < enough {
         report.skip(
             Check::UniformEnum,
@@ -478,23 +497,27 @@ fn check_enum(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut 
 /// Whether a boolean reads as a fair coin.
 ///
 /// The sample size is set by the power the test needs, not by what is
-/// convenient. At thirty draws a genuinely lopsided field — two in three —
-/// fails to reject fairness about half the time, so the check would fire on
-/// exactly the worlds it was supposed to pass. Ninety is where a coin that far
-/// off the middle is caught reliably, and a smaller world is reported as
-/// unmeasurable rather than as broken.
+/// convenient. Failing to reject fairness is not evidence of it, so the floor
+/// has to be the point where the *flattest* coin the generator can draw would
+/// have been caught — and [`lopsided_chance`] draws no further from certainty
+/// than [`FLATTEST_FLAG`], which is 0.42 against 0.58 rather than the two in
+/// three an earlier floor of ninety was calibrated for. At a hundred and
+/// twenty draws that coin clears 1.96 barely two times in five, which is how
+/// one boolean of six hundred and seventeen came to be reported as even on a
+/// 67-of-120 split.
+///
+/// [`lopsided_chance`]: super::store::distribution::lopsided_chance
 fn check_boolean(stats: &FieldStats, subject: &str, report: &mut Report) {
-    const ENOUGH: usize = 90;
-
     let n = stats.trues + stats.falses;
     if n == 0 {
         return;
     }
-    if n < ENOUGH {
+    let enough = draws_to_notice(&[FLATTEST_FLAG, 1.0 - FLATTEST_FLAG]);
+    if n < enough {
         report.skip(
             Check::FairCoin,
             subject.to_string(),
-            format!("{ENOUGH} records, world has {n}"),
+            format!("{enough} draw(s) to see a {FLATTEST_FLAG} coin, world has {n}"),
         );
         return;
     }
