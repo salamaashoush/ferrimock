@@ -224,6 +224,16 @@ impl WorldConfig {
                 resolve(declared, stated)?,
             );
         }
+        for name in machines.iter().flat_map(|declared| declared.keys()) {
+            // An instance is addressed as `machine#key`, so a name carrying the
+            // separator would make that split ambiguous.
+            if name.contains('#') {
+                return Err(crate::mp_err!(
+                    "machine `{name}` cannot have `#` in its name: an instance is addressed as \
+                     `machine#key`"
+                ));
+            }
+        }
         for (target, stated) in self.states.iter().flatten() {
             let states = match stated {
                 StatesConfig::Inline(states) => states.as_slice(),
