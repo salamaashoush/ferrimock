@@ -54,10 +54,6 @@ pub struct MockCollectionConfig {
     /// machine is not an entity's idea: the same declaration is what a
     /// `world.states` entry names and what a route will read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
-    )]
     pub machines: Option<std::collections::BTreeMap<String, MachineConfig>>,
 }
 
@@ -155,10 +151,6 @@ pub struct WorldConfig {
     /// a record moves to a later state and never to an earlier one, and a YAML
     /// mapping does not promise to keep the order it was written in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
-    )]
     pub states: Option<std::collections::BTreeMap<String, StatesConfig>>,
 }
 
@@ -279,10 +271,6 @@ pub struct StateConfig {
     /// keeps the ordering, which is what every `states:` block written before
     /// this meant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
-    )]
     pub on: Option<std::collections::BTreeMap<String, EdgeConfig>>,
 }
 
@@ -337,6 +325,7 @@ pub struct MachineConfig {
 /// What a `states:` entry says: a machine's name, or the states themselves.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum StatesConfig {
     /// `Order.status: order`, naming an entry under `machines:`.
     Named(String),
