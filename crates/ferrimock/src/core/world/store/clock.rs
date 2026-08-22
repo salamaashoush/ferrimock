@@ -12,7 +12,7 @@
 //! already existed. Nothing reports that: a delta conflict is only raised when
 //! an ordinal *disappears*.
 
-use crate::core::world::store::distribution::unit;
+use crate::fake_data::distribution::unit;
 use crate::fake_data::{datetime, rng};
 
 /// How far back the first instance of an entity sits.

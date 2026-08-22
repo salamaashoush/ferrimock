@@ -13,7 +13,7 @@ use crate::core::world::model::{
     Relation, Rule, Scalar, ScalarKind, ValueSpec,
 };
 use crate::core::world::store::StoreConfig;
-use crate::core::world::store::distribution::FLATTEST_FLAG;
+use crate::fake_data::distribution::FLATTEST_FLAG;
 use crate::type_detector::{FieldType, TimestampFormat};
 
 fn scalar(name: &str, kind: ScalarKind) -> FieldDef {

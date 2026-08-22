@@ -1,6 +1,6 @@
 //! Web-specific generators (files, MIME types, etc.)
 
-use super::rng::rng;
+use super::rng::{self, rng};
 use fake::Fake;
 use fake::faker::lorem::en::Word;
 use rand::RngExt;
@@ -16,8 +16,26 @@ pub fn fake_boolean_spelled(spelling: crate::type_detector::BooleanSpelling) -> 
     if fake_boolean() { truthy } else { falsy }.to_string()
 }
 
+/// A flag, drawn the way a real one falls.
+///
+/// Never an even split. Half of an API's users are not administrators and half
+/// of its files are not archived, so a field that comes back 50/50 over a
+/// thousand records is one of the plainest tells there is — which is why the
+/// entity world stopped drawing them that way, and why `world doctor` has a
+/// check that fires on it. A template calling this got the fair coin the world
+/// had already abandoned.
+///
+/// Which way it leans is a fact about the run rather than about the call site:
+/// a template has no field identity to derive one from, and "in this world,
+/// most sessions are expired" is the shape being modelled anyway. So the chance
+/// comes from the seed and the draw comes from the stream, which keeps a seeded
+/// run reproducible without caching anything across a `set_global_seed`.
 pub fn fake_boolean() -> bool {
-    rng().random_bool(0.5)
+    use super::distribution::{falls_within, lopsided_chance};
+
+    let seed = rng::global_seed().unwrap_or(0);
+    let chance = lopsided_chance(rng::derive_seed(seed, "fake_boolean#chance", 0));
+    falls_within(chance, rng().random::<u64>())
 }
 
 /// Generate a random filename with extension
@@ -250,9 +268,37 @@ pub fn fake_float(min: f64, max: f64) -> f64 {
 mod tests {
     use super::*;
 
+    /// The check `world doctor` runs on a boolean, run on the generator a
+    /// template calls. It has to fail against a fair coin and pass against
+    /// this one, or it is not measuring anything.
     #[test]
-    fn test_fake_boolean() {
-        let _value = fake_boolean();
+    fn a_template_flag_is_not_a_fair_coin_either() {
+        const DRAWS: usize = 4000;
+
+        fn z_against_fair(trues: usize, total: usize) -> f64 {
+            #[allow(clippy::cast_precision_loss)]
+            let n = total as f64;
+            #[allow(clippy::cast_precision_loss)]
+            let seen = trues as f64;
+            (seen - n / 2.0) / (n.sqrt() / 2.0)
+        }
+
+        rng::set_global_seed(Some(42));
+        let drawn = (0..DRAWS).filter(|_| fake_boolean()).count();
+        let z = z_against_fair(drawn, DRAWS);
+        assert!(
+            z.abs() > 1.96,
+            "{drawn} true of {DRAWS} is an even split, z = {z:.2}"
+        );
+
+        // A real coin over the same draws is what the assertion above would
+        // have passed on before, so it is what proves the assertion can fail.
+        let fair = (0..DRAWS).filter(|_| rng().random_bool(0.5)).count();
+        assert!(
+            z_against_fair(fair, DRAWS).abs() <= 1.96,
+            "a fair coin should read as one: {fair} of {DRAWS}"
+        );
+        rng::set_global_seed(None);
     }
 
     #[test]

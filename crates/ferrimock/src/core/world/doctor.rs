@@ -18,9 +18,9 @@ use serde_json::Value as JsonValue;
 
 use super::algebra::{DEFAULT_PAGE_SIZE, Page, Selection};
 use super::model::{Cardinality, EntityType, FieldDef, Relation, ScalarKind, TextShape, ValueSpec};
-use super::store::distribution::{FLATTEST_FLAG, LEAST_SKEW};
 use super::store::{EntityStore, Record, counted_relation, is_membership};
 use crate::fake_data;
+use crate::fake_data::distribution::{FLATTEST_FLAG, LEAST_SKEW};
 use crate::type_detector::FieldType;
 
 /// How many instances of one entity the value checks read before they have
@@ -535,7 +535,7 @@ fn check_enum(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut 
 /// one boolean of six hundred and seventeen came to be reported as even on a
 /// 67-of-120 split.
 ///
-/// [`lopsided_chance`]: super::store::distribution::lopsided_chance
+/// [`lopsided_chance`]: crate::fake_data::distribution::lopsided_chance
 fn check_boolean(stats: &FieldStats, subject: &str, report: &mut Report) {
     let n = stats.trues + stats.falses;
     if n == 0 {

@@ -12,6 +12,11 @@
 //! - Text data (lorem ipsum, descriptions)
 //! - Location data (cities, countries, coordinates)
 //! - Web data (HTML, JSON, XML responses)
+//!
+//! `distribution` is the shape a value takes over its support. It lives here
+//! rather than beside the entity world because a template calling `fake_*` draws
+//! values too, and the world reaches down for its generators rather than the
+//! other way round.
 
 // Image generation involves intentional precision loss for graphics operations
 #![allow(clippy::cast_precision_loss)]
@@ -22,6 +27,7 @@
 pub mod company;
 pub mod contact;
 pub mod datetime;
+pub mod distribution;
 pub mod files;
 pub mod finance;
 pub mod identifiers;

@@ -12,10 +12,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use crate::core::world::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
 use crate::core::world::store::bus;
 use crate::core::world::store::clock;
-use crate::core::world::store::distribution::{
-    self, Ranking, Spread, falls_within, lopsided_chance,
-};
 use crate::core::world::store::pattern;
+use crate::fake_data::distribution::{self, Ranking, Spread, falls_within, lopsided_chance};
 use crate::fake_data::{self, rng};
 use crate::type_detector::FieldType;
 

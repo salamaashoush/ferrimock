@@ -16,7 +16,7 @@
 
 use lean_string::LeanString;
 
-use crate::core::world::store::distribution;
+use crate::fake_data::distribution;
 
 /// A set of named states, and the moves between them.
 #[derive(Debug, Clone, PartialEq)]

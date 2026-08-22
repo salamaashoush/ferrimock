@@ -17,7 +17,11 @@
 
 pub mod bus;
 pub mod clock;
-pub mod distribution;
+/// Where a value's spread used to live.
+///
+/// It never belonged to the store: `fake_data` draws values too, and reaching
+/// up into the entity world to find out how is backwards.
+pub use crate::fake_data::distribution;
 pub mod pattern;
 pub mod persist;
 pub mod values;
@@ -36,8 +40,8 @@ use super::model::{
     ScalarKind, ValueSpec,
 };
 use crate::core::machine::Move;
+use crate::fake_data::distribution::Preference;
 use crate::fake_data::{self, rng};
-use distribution::Preference;
 use values::{Arrival, ValueSeed};
 
 /// How many instances an entity at the top of the graph gets when neither it
