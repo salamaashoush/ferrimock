@@ -1,0 +1,23 @@
+world:
+  schemas:
+    - schema.graphql
+  seed: 42
+  states:
+    Folder.status: folder
+
+machines:
+  folder:
+    on: { purge: DELETED }
+    states:
+      - name: DRAFT
+        on: { publish: ACTIVE }
+      - name: ACTIVE
+        on: { archive: ARCHIVED, revise: DRAFT }
+      - name: ARCHIVED
+        on: { restore: ACTIVE }
+      - name: DELETED
+
+mocks:
+  - id: graphql
+    match: { POST: "/graphql" }
+    serve: graphql

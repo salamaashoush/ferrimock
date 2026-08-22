@@ -792,3 +792,205 @@ fn the_chi_square_cutoff_matches_the_published_table() {
         );
     }
 }
+
+/// Every check has to have been *seen* to fail.
+///
+/// Four checks in this file were measuring the wrong thing at once — a floor
+/// calibrated to a distribution the generator does not draw, a count of values
+/// where distinct dates were meant — and each passed its own tests, because
+/// each was only ever pointed at output that was fine. A check nothing has
+/// tripped is a check nobody knows the meaning of.
+///
+/// So this exists to be annoying: `Check::ALL` is exhaustive, the match below
+/// has to name every variant, and naming one means either supplying input that
+/// trips it or writing down why it cannot be tripped here. A new check does not
+/// compile until somebody has done one or the other.
+#[test]
+fn every_check_has_been_seen_to_fail() {
+    /// Where the case that trips a check lives, when it is not here.
+    struct Elsewhere(&'static str);
+
+    fn trips(check: Check) -> Result<bool, Elsewhere> {
+        let fired = |report: &Report| !failed(report, check).is_empty();
+        Ok(match check {
+            // A twelve-record world fits inside one default page.
+            Check::WorldSize => fired(&examine(&wide_world(3, 12))),
+            // Needs a parent with children to lay out, which `wide_world` has
+            // none of.
+            Check::ContiguousChildren => {
+                return Err(Elsewhere("children_do_not_arrive_in_one_run_per_parent"));
+            }
+            // Measured directly, in both directions, by the tests above.
+            Check::SmallVocabulary => {
+                let mut report = Report::default();
+                let stats = FieldStats {
+                    strings: (0..200).map(|_| "alpha beta gamma".to_string()).collect(),
+                    ..FieldStats::default()
+                };
+                check_vocabulary(&stats, "Note.body", &mut report);
+                fired(&report)
+            }
+            Check::DayOfMonth => {
+                let mut report = Report::default();
+                let stats = FieldStats {
+                    strings: (1..=12)
+                        .flat_map(|month| {
+                            (1..=28).map(move |day| format!("2024-{month:02}-{day:02}T00:00:00Z"))
+                        })
+                        .collect(),
+                    ..FieldStats::default()
+                };
+                check_day_of_month(&stats, "Doc.at", &mut report);
+                fired(&report)
+            }
+            Check::StaleClock => {
+                let mut report = Report::default();
+                let stats = FieldStats {
+                    strings: vec!["2019-03-17T05:00:00Z".to_string()],
+                    ..FieldStats::default()
+                };
+                check_clock(&stats, "Doc.at", &mut report);
+                fired(&report)
+            }
+            Check::FairCoin => {
+                let mut report = Report::default();
+                let enough = draws_to_notice(&[FLATTEST_FLAG, 1.0 - FLATTEST_FLAG]);
+                let stats = FieldStats {
+                    trues: enough,
+                    falses: enough,
+                    ..FieldStats::default()
+                };
+                check_boolean(&stats, "Doc.flag", &mut report);
+                fired(&report)
+            }
+            Check::UniformEnum => {
+                let mut report = Report::default();
+                let members = ["a", "b", "c"];
+                let enough = draws_to_notice(&flattest_ranking(members.len()));
+                let field = enumeration("status", &members);
+                let stats = FieldStats {
+                    enum_counts: members
+                        .iter()
+                        .map(|member| ((*member).to_string(), enough))
+                        .collect(),
+                    ..FieldStats::default()
+                };
+                check_enum(&field, &stats, "Doc.status", &mut report);
+                fired(&report)
+            }
+            Check::NumberSupport => {
+                let mut report = Report::default();
+                let row = entity("Row").with_field(scalar("weight", ScalarKind::Int));
+                let field = scalar("weight", ScalarKind::Int);
+                let stats = FieldStats {
+                    numbers: (1..=40).map(f64::from).collect(),
+                    ..FieldStats::default()
+                };
+                check_numbers(&row, &field, &stats, "Row.weight", &mut report);
+                fired(&report)
+            }
+            Check::ConstantListLength => {
+                let mut report = Report::default();
+                let field = list_of("tags", ScalarKind::String);
+                let stats = FieldStats {
+                    list_lengths: vec![3; 20],
+                    ..FieldStats::default()
+                };
+                check_list_length(&field, &stats, "Doc.tags", &mut report);
+                fired(&report)
+            }
+            Check::NeverAbsent => {
+                let mut report = Report::default();
+                let field = optional("subtitle", ScalarKind::String);
+                let doc = entity("Doc").with_field(field.clone());
+                let stats = FieldStats {
+                    present: 200,
+                    ..FieldStats::default()
+                };
+                check_nullability(&doc, &field, &stats, "Doc.subtitle", &mut report);
+                fired(&report)
+            }
+            Check::UnreachableState => {
+                let mut report = Report::default();
+                let stranded = crate::core::machine::Machine::new(vec![
+                    crate::core::machine::State {
+                        name: "created".into(),
+                        weight: 1.0,
+                        empty: Vec::new(),
+                        on: vec![crate::core::machine::Edge {
+                            event: "pay".into(),
+                            target: "paid".into(),
+                            guard: None,
+                        }],
+                        after: Vec::new(),
+                    },
+                    crate::core::machine::State {
+                        name: "paid".into(),
+                        weight: 1.0,
+                        empty: Vec::new(),
+                        on: Vec::new(),
+                        after: Vec::new(),
+                    },
+                    crate::core::machine::State {
+                        name: "refunded".into(),
+                        weight: 1.0,
+                        empty: Vec::new(),
+                        on: Vec::new(),
+                        after: Vec::new(),
+                    },
+                ]);
+                let field =
+                    FieldDef::new("status", ValueSpec::Lifecycle(Box::new(stranded)), false);
+                check_reachable(&field, "Order.status", &mut report);
+                fired(&report)
+            }
+            Check::ShapeDisagreement => {
+                let mut report = Report::default();
+                let field = FieldDef::new(
+                    "flag",
+                    ValueSpec::Scalar(Scalar::new(ScalarKind::Boolean)),
+                    false,
+                );
+                let stats = FieldStats {
+                    strings: vec!["https://example.io".to_string()],
+                    ..FieldStats::default()
+                };
+                check_shape(&field, &stats, "Doc.flag", &mut report);
+                fired(&report)
+            }
+            // These three need a world built to contradict itself, which the
+            // store refuses to do — nothing here can hand a relation a target
+            // that does not resolve. They are covered by the tests that assert
+            // a seeded world never trips them, which is the claim that matters.
+            Check::RelationDisagreement | Check::CountDisagreement | Check::SelfParent => {
+                return Err(Elsewhere("nothing_in_a_seeded_world_disagrees_with_itself"));
+            }
+            Check::MembershipDegree => {
+                return Err(Elsewhere(
+                    "a_many_to_many_has_more_than_two_degrees_on_either_side",
+                ));
+            }
+            Check::IdTimeOrder => {
+                return Err(Elsewhere(
+                    "id_order_is_judged_against_creation_and_nothing_else",
+                ));
+            }
+        })
+    }
+
+    for check in Check::ALL {
+        match trips(check) {
+            Ok(true) => {}
+            Ok(false) => panic!(
+                "`{}` did not fire on input built to trip it — either the check or the case is \
+                 wrong, and both are worth knowing",
+                check.name()
+            ),
+            Err(Elsewhere(covered_by)) => assert!(
+                !covered_by.is_empty(),
+                "`{}` claims to be covered elsewhere and does not say where",
+                check.name()
+            ),
+        }
+    }
+}

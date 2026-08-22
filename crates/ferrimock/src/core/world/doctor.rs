@@ -89,6 +89,31 @@ pub enum Check {
 }
 
 impl Check {
+    /// Every check there is.
+    ///
+    /// Exhaustive by construction: the test that pairs each with a world it
+    /// fires on matches over this, so a new variant does not compile until
+    /// somebody has shown it can fail.
+    pub const ALL: [Self; 17] = [
+        Self::RelationDisagreement,
+        Self::CountDisagreement,
+        Self::SelfParent,
+        Self::WorldSize,
+        Self::ContiguousChildren,
+        Self::DayOfMonth,
+        Self::SmallVocabulary,
+        Self::NumberSupport,
+        Self::ConstantListLength,
+        Self::NeverAbsent,
+        Self::FairCoin,
+        Self::UniformEnum,
+        Self::MembershipDegree,
+        Self::StaleClock,
+        Self::IdTimeOrder,
+        Self::UnreachableState,
+        Self::ShapeDisagreement,
+    ];
+
     /// The stable name a report is diffed on.
     #[must_use]
     pub const fn name(self) -> &'static str {

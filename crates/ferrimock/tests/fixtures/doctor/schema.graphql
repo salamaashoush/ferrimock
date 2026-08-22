@@ -1,0 +1,61 @@
+"""
+A schema shaped to exercise the doctor, not to model anything.
+
+Every field here is a check waiting to fail: a list of ids that a key chooser
+once swallowed, booleans named like URLs and tokens that a semantic detector
+once overrode, a lifecycle with a branch an ordering cannot express, prose,
+enums, numbers and both directions of a relation.
+"""
+type User {
+  id: ID!
+  name: String!
+  bio: String!
+  email: String!
+  isAdmin: Boolean!
+  loginCount: Int!
+  createdAt: String!
+  folders: [Folder!]!
+}
+
+type Folder {
+  id: ID!
+  name: String!
+  description: String!
+  status: FolderStatus!
+  sizeBytes: Int!
+  isPathSkipped: Boolean!
+  canGenerateUserToken: Boolean!
+  restrictedToPageIds: [ID!]
+  owner: User!
+  items: [Item!]!
+}
+
+type Item {
+  id: ID!
+  title: String!
+  kind: ItemKind!
+  folder: Folder!
+}
+
+enum FolderStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
+enum ItemKind {
+  FILE
+  LINK
+  NOTE
+  IMAGE
+  VIDEO
+}
+
+type Query {
+  users: [User!]!
+  user(id: ID!): User
+  folders: [Folder!]!
+  folder(id: ID!): Folder
+  items: [Item!]!
+}
