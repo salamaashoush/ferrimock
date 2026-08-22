@@ -140,6 +140,7 @@ mod tests {
                     guard: None,
                 })
                 .collect(),
+            after: Vec::new(),
         };
         set_global_machines(Arc::new(Machines::new([(
             LeanString::from("order"),

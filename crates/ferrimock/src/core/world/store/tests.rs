@@ -2064,6 +2064,7 @@ fn ordered_store(seed: u64, orders: usize) -> EntityStore {
         weight,
         empty: empty.iter().map(|held| (*held).into()).collect(),
         on: Vec::new(),
+        after: Vec::new(),
     };
     let lifecycle = Lifecycle::new(vec![
         state("draft", 5.0, &["paid_at", "shipped_at", "delivered_at"]),
@@ -2232,6 +2233,7 @@ fn a_declared_edge_decides_the_move_rather_than_the_order() {
                 guard: None,
             })
             .collect(),
+        after: Vec::new(),
     };
     let mut graph = EntityGraph::new();
     graph.insert(entity("Order").with_field(FieldDef::new(

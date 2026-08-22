@@ -227,8 +227,8 @@ impl WorldConfig {
             }
         }
         for (target, stated) in self.states.iter().flatten() {
-            let states = match stated {
-                StatesConfig::Inline(states) => states.as_slice(),
+            let (states, global) = match stated {
+                StatesConfig::Inline(states) => (states.as_slice(), None),
                 StatesConfig::Named(name) => {
                     let declared = machines
                         .and_then(|declared| declared.get(name))
@@ -238,10 +238,10 @@ impl WorldConfig {
                                  declares one"
                             )
                         })?;
-                    declared.states.as_slice()
+                    (declared.states.as_slice(), declared.on.as_ref())
                 }
             };
-            rules.insert(parse_target(target), lifecycle_of(target, states)?);
+            rules.insert(parse_target(target), lifecycle_of(target, states, global)?);
         }
         Ok(rules)
     }
@@ -272,6 +272,15 @@ pub struct StateConfig {
     /// this meant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<std::collections::BTreeMap<String, EdgeConfig>>,
+
+    /// Moves that happen on their own, keyed by how long an instance sits here
+    /// first: `{ "5s": done }`.
+    ///
+    /// A job that finishes after five seconds is closer to what a real one does
+    /// than a job that finishes after three polls, and a poll count is what a
+    /// mock is reduced to without this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// Where one event leads, and what has to hold for it to.
@@ -320,6 +329,14 @@ impl EdgeConfig {
 pub struct MachineConfig {
     /// In order, because a machine that names no edge *is* its order.
     pub states: Vec<StateConfig>,
+
+    /// Moves available from every state unless a state names the same event.
+    ///
+    /// `cancel` working from anywhere active is what nesting is usually reached
+    /// for, and this buys the concision without the transition resolution and
+    /// entry/exit ordering that make coverage hard to answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<std::collections::BTreeMap<String, EdgeConfig>>,
 }
 
 /// What a `states:` entry says: a machine's name, or the states themselves.
@@ -357,7 +374,7 @@ fn parse_target(target: &str) -> crate::core::world::overrides::RuleKey {
 /// engine installs machines for routes to read and must not grow a second
 /// version of this.
 pub fn machine_of(declared: &MachineConfig) -> crate::Result<crate::core::machine::Machine> {
-    match lifecycle_of("machine", &declared.states)? {
+    match lifecycle_of("machine", &declared.states, declared.on.as_ref())? {
         crate::core::world::overrides::FieldRule::Lifecycle(machine) => Ok(machine),
         _ => Err(crate::mp_err!("a machine is states")),
     }
@@ -366,8 +383,9 @@ pub fn machine_of(declared: &MachineConfig) -> crate::Result<crate::core::machin
 fn lifecycle_of(
     target: &str,
     states: &[StateConfig],
+    global: Option<&std::collections::BTreeMap<String, EdgeConfig>>,
 ) -> crate::Result<crate::core::world::overrides::FieldRule> {
-    use crate::core::machine::{Edge, Machine, State};
+    use crate::core::machine::{Edge, Machine, State, Timer};
     use crate::core::world::overrides::FieldRule;
 
     if states.len() < 2 {
@@ -378,24 +396,48 @@ fn lifecycle_of(
     let machine = Machine::new(
         states
             .iter()
-            .map(|state| State {
-                name: LeanString::from(state.name.as_str()),
-                weight: state.weight,
-                empty: state
-                    .empty
-                    .iter()
-                    .map(|name| LeanString::from(name.as_str()))
-                    .collect(),
-                on: state
-                    .on
-                    .iter()
-                    .flatten()
-                    .map(|(event, edge)| Edge {
-                        event: LeanString::from(event.as_str()),
-                        target: LeanString::from(edge.target()),
-                        guard: edge.guard().map(LeanString::from),
-                    })
-                    .collect(),
+            .map(|state| -> crate::Result<State> {
+                Ok(State {
+                    name: LeanString::from(state.name.as_str()),
+                    weight: state.weight,
+                    empty: state
+                        .empty
+                        .iter()
+                        .map(|name| LeanString::from(name.as_str()))
+                        .collect(),
+                    on: state
+                        .on
+                        .iter()
+                        .flatten()
+                        .map(|(event, edge)| Edge {
+                            event: LeanString::from(event.as_str()),
+                            target: LeanString::from(edge.target()),
+                            guard: edge.guard().map(LeanString::from),
+                        })
+                        .collect(),
+                    after: state
+                        .after
+                        .iter()
+                        .flatten()
+                        .map(|(delay, target)| {
+                            crate::config::response::parse_duration(delay).map(|after| Timer {
+                                after,
+                                target: LeanString::from(target.as_str()),
+                            })
+                        })
+                        .collect::<crate::Result<Vec<_>>>()?,
+                })
+            })
+            .collect::<crate::Result<Vec<_>>>()?,
+    )
+    .with_global(
+        global
+            .into_iter()
+            .flat_map(|declared| declared.iter())
+            .map(|(event, edge)| Edge {
+                event: LeanString::from(event.as_str()),
+                target: LeanString::from(edge.target()),
+                guard: edge.guard().map(LeanString::from),
             })
             .collect(),
     );

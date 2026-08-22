@@ -26,6 +26,16 @@ use crate::fake_data::distribution;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Machine {
     states: Vec<State>,
+    /// Moves available from every state, unless a state names the same event
+    /// itself.
+    ///
+    /// This is what hierarchy is usually reached for: `cancel` working from
+    /// anywhere active, without repeating the edge on every state. Nesting buys
+    /// the same concision at the cost of transition resolution up a tree and
+    /// entry/exit ordering, which is also what makes "which states were never
+    /// reached" hard to answer — and answering that is the reason the edges are
+    /// declared at all.
+    on: Vec<Edge>,
 }
 
 /// One state, and what being in it means for everything else.
@@ -44,6 +54,17 @@ pub struct State {
     /// The moves this state names. Empty everywhere means the machine is
     /// ordered rather than drawn.
     pub on: Vec<Edge>,
+    /// Moves that happen on their own once an instance has sat here long
+    /// enough. A job that finishes after five seconds is closer to what a real
+    /// one does than a job that finishes after three polls.
+    pub after: Vec<Timer>,
+}
+
+/// A move that needs no event, only time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Timer {
+    pub after: std::time::Duration,
+    pub target: LeanString,
 }
 
 /// One named move out of a state.
@@ -72,7 +93,22 @@ pub enum Move {
 impl Machine {
     #[must_use]
     pub fn new(states: Vec<State>) -> Self {
-        Self { states }
+        Self {
+            states,
+            on: Vec::new(),
+        }
+    }
+
+    /// The same machine, with moves available from anywhere.
+    #[must_use]
+    pub fn with_global(mut self, on: Vec<Edge>) -> Self {
+        self.on = on;
+        self
+    }
+
+    #[must_use]
+    pub fn global(&self) -> &[Edge] {
+        &self.on
     }
 
     #[must_use]
@@ -107,16 +143,39 @@ impl Machine {
     }
 
     /// The edge one event takes out of one state.
+    ///
+    /// A state's own edge wins over a machine-wide one of the same name, so a
+    /// state that has to handle `cancel` differently just says so.
     #[must_use]
     pub fn edge(&self, from: &str, event: &str) -> Option<&Edge> {
-        self.get(from)?.on.iter().find(|edge| edge.event == event)
+        let state = self.get(from)?;
+        state
+            .on
+            .iter()
+            .find(|edge| edge.event == event)
+            .or_else(|| self.on.iter().find(|edge| edge.event == event))
     }
 
-    /// Whether any state names an edge, which is what separates a graph from
-    /// an ordering.
+    /// Every move out of a state: its own, plus the machine-wide ones it does
+    /// not shadow. This is what coverage counts.
+    pub fn edges_from<'a>(&'a self, from: &'a str) -> impl Iterator<Item = &'a Edge> + 'a {
+        let own = self.get(from).map_or(&[][..], |state| state.on.as_slice());
+        own.iter().chain(
+            self.on
+                .iter()
+                .filter(move |wide| !own.iter().any(|edge| edge.event == wide.event)),
+        )
+    }
+
+    /// Whether anything names an edge, which is what separates a graph from an
+    /// ordering.
     #[must_use]
     pub fn is_drawn(&self) -> bool {
-        self.states.iter().any(|state| !state.on.is_empty())
+        !self.on.is_empty()
+            || self
+                .states
+                .iter()
+                .any(|state| !state.on.is_empty() || !state.after.is_empty())
     }
 
     /// Whether moving to `to` is allowed, from `from` or from nowhere.
@@ -137,7 +196,13 @@ impl Machine {
         if self.is_drawn() {
             let declared = self
                 .state(from_at)
-                .is_some_and(|state| state.on.iter().any(|edge| edge.target == to));
+                .map(|state| state.name.clone())
+                .is_some_and(|name| {
+                    self.edges_from(name.as_str()).any(|edge| edge.target == to)
+                        || self
+                            .get(name.as_str())
+                            .is_some_and(|state| state.after.iter().any(|t| t.target == to))
+                });
             return if declared {
                 Move::Allowed
             } else {
@@ -188,6 +253,7 @@ mod tests {
                     weight: 1.0,
                     empty: Vec::new(),
                     on: Vec::new(),
+                    after: Vec::new(),
                 })
                 .collect(),
         )
@@ -238,6 +304,7 @@ mod tests {
             weight: 1.0,
             empty: Vec::new(),
             on: on.iter().map(|(e, t)| edge(e, t)).collect(),
+            after: Vec::new(),
         };
         Machines::new([(
             "order".into(),
@@ -299,12 +366,14 @@ mod tests {
                         target: "wide".into(),
                         guard: Some("has_key".into()),
                     }],
+                    after: Vec::new(),
                 },
                 State {
                     name: "wide".into(),
                     weight: 1.0,
                     empty: Vec::new(),
                     on: Vec::new(),
+                    after: Vec::new(),
                 },
             ]),
         )]);
@@ -353,6 +422,119 @@ mod tests {
         );
     }
 
+    /// The concision hierarchy is usually reached for, without the hierarchy:
+    /// `cancel` works from anywhere, and a state that needs it to mean
+    /// something else just says so.
+    #[test]
+    fn a_machine_wide_edge_works_from_anywhere_and_a_state_can_shadow_it() {
+        let plain = |name: &str, on: &[(&str, &str)]| State {
+            name: name.into(),
+            weight: 1.0,
+            empty: Vec::new(),
+            on: on.iter().map(|(e, t)| edge(e, t)).collect(),
+            after: Vec::new(),
+        };
+        let machine = Machine::new(vec![
+            plain("created", &[("pay", "paid")]),
+            plain("paid", &[("ship", "shipped")]),
+            // Shipping is past the point of a plain cancel.
+            plain("shipped", &[("cancel", "returned")]),
+            plain("cancelled", &[]),
+            plain("returned", &[]),
+        ])
+        .with_global(vec![edge("cancel", "cancelled")]);
+
+        assert_eq!(
+            machine.edge("created", "cancel").map(|e| e.target.as_str()),
+            Some("cancelled")
+        );
+        assert_eq!(
+            machine.edge("paid", "cancel").map(|e| e.target.as_str()),
+            Some("cancelled")
+        );
+        assert_eq!(
+            machine.edge("shipped", "cancel").map(|e| e.target.as_str()),
+            Some("returned"),
+            "a state's own edge wins"
+        );
+        // And coverage counts a state's own edges plus the wide ones it does
+        // not shadow, never both spellings of the same event.
+        let from_shipped: Vec<&str> = machine
+            .edges_from("shipped")
+            .map(|e| e.event.as_str())
+            .collect();
+        assert_eq!(from_shipped, vec!["cancel"]);
+        let from_paid: Vec<&str> = machine
+            .edges_from("paid")
+            .map(|e| e.event.as_str())
+            .collect();
+        assert_eq!(from_paid, vec!["ship", "cancel"]);
+    }
+
+    /// A job that finishes after five seconds, rather than after three polls.
+    #[test]
+    fn a_timer_moves_an_instance_without_anything_asking_it_to() {
+        let timed = |name: &str, after: &[(u64, &str)]| State {
+            name: name.into(),
+            weight: 1.0,
+            empty: Vec::new(),
+            on: Vec::new(),
+            after: after
+                .iter()
+                .map(|(secs, target)| Timer {
+                    after: std::time::Duration::from_secs(*secs),
+                    target: (*target).into(),
+                })
+                .collect(),
+        };
+        let machines = Machines::new([(
+            "job".into(),
+            Machine::new(vec![
+                timed("queued", &[(5, "running")]),
+                timed("running", &[(10, "done")]),
+                timed("done", &[]),
+            ]),
+        )]);
+
+        // The first read starts the clock; nothing has elapsed yet.
+        assert_eq!(machines.state_at("job", "1", 0).as_deref(), Some("queued"));
+        assert_eq!(
+            machines.state_at("job", "1", 4_999).as_deref(),
+            Some("queued"),
+            "a second short is still queued"
+        );
+        assert_eq!(
+            machines.state_at("job", "1", 5_000).as_deref(),
+            Some("running")
+        );
+        assert_eq!(
+            machines.state_at("job", "1", 9_000).as_deref(),
+            Some("running"),
+            "the second timer runs from when it arrived, not from zero"
+        );
+        assert_eq!(
+            machines.state_at("job", "1", 15_000).as_deref(),
+            Some("done")
+        );
+
+        // A read long after everything walks the whole chain at once.
+        assert_eq!(machines.state_at("job", "2", 0).as_deref(), Some("queued"));
+        assert_eq!(
+            machines.state_at("job", "2", 1_000_000).as_deref(),
+            Some("done")
+        );
+
+        // Waiting is counted like any other move, so a timer nothing waited for
+        // is a gap coverage can report.
+        let missing = machines.unreached();
+        assert!(
+            !missing
+                .edges
+                .contains(&("job".into(), "queued".into(), WAITED.into())),
+            "that timer fired: {missing:?}"
+        );
+    }
+
     #[test]
     fn weights_decide_where_a_draw_lands() {
         let machine = Machine::new(vec![
@@ -361,12 +543,14 @@ mod tests {
                 weight: 1.0,
                 empty: Vec::new(),
                 on: Vec::new(),
+                after: Vec::new(),
             },
             State {
                 name: "common".into(),
                 weight: 99.0,
                 empty: Vec::new(),
                 on: Vec::new(),
+                after: Vec::new(),
             },
         ]);
         let common = (0..1000_u64)
@@ -457,15 +641,76 @@ impl Machines {
     /// declaration is the truth and the store is a cache of where things got to.
     #[must_use]
     pub fn state_of(&self, machine: &str, key: &str) -> Option<LeanString> {
+        self.state_at(machine, key, now_millis())
+    }
+
+    /// [`Self::state_of`] against a stated clock.
+    ///
+    /// Public because a timer that only fires against wall-clock time is a
+    /// timer nothing can test, and because replaying a recording wants the
+    /// recording's clock rather than this one.
+    #[must_use]
+    pub fn state_at(&self, machine: &str, key: &str, now: u64) -> Option<LeanString> {
+        /// A chain of timers can fire on one read; this stops a cycle of them
+        /// from spinning.
+        const CHAIN: usize = 32;
+
         let declared = self.declared.get(machine)?;
-        let held = self
-            .instances
-            .get(&Self::slot(machine, key))
-            .and_then(|value| value.as_str().map(LeanString::from))
-            .filter(|held| declared.get(held.as_str()).is_some());
-        let at = held.or_else(|| declared.initial().map(|state| state.name.clone()))?;
+        let (held, arrived) = self.held(machine, key);
+        let mut at = held
+            .filter(|held| declared.get(held.as_str()).is_some())
+            .or_else(|| declared.initial().map(|state| state.name.clone()))?;
+        // An instance that has never been observed starts its clock now, and
+        // that has to be written down: a timer measured from a fresh `now` on
+        // every read is a timer that never elapses.
+        let mut since = arrived.unwrap_or_else(|| {
+            self.remember(machine, key, &at, now);
+            now
+        });
+
+        for _ in 0..CHAIN {
+            let waited = now.saturating_sub(since);
+            let Some(timer) = declared.get(at.as_str()).and_then(|state| {
+                state
+                    .after
+                    .iter()
+                    .filter(|timer| millis_of(timer.after) <= waited)
+                    // The soonest, because a state naming two means the earlier
+                    // one already happened.
+                    .min_by_key(|timer| timer.after)
+            }) else {
+                break;
+            };
+            let to = timer.target.clone();
+            since = since.saturating_add(millis_of(timer.after));
+            self.remember(machine, key, &to, since);
+            self.took(machine, &at, &LeanString::from(WAITED));
+            at = to;
+        }
+
         self.saw_state(machine, &at);
         Some(at)
+    }
+
+    fn held(&self, machine: &str, key: &str) -> (Option<LeanString>, Option<u64>) {
+        match self.instances.get(&Self::slot(machine, key)) {
+            // A bare string is an instance stored before timers existed.
+            Some(JsonValue::String(state)) => (Some(LeanString::from(state.as_str())), None),
+            Some(JsonValue::Object(held)) => (
+                held.get("state")
+                    .and_then(JsonValue::as_str)
+                    .map(LeanString::from),
+                held.get("since").and_then(JsonValue::as_u64),
+            ),
+            _ => (None, None),
+        }
+    }
+
+    fn remember(&self, machine: &str, key: &str, state: &LeanString, since: u64) {
+        self.instances.set(
+            Self::slot(machine, key),
+            serde_json::json!({ "state": state.as_str(), "since": since }),
+        );
     }
 
     /// Move one instance along the edge an event names.
@@ -498,14 +743,9 @@ impl Machines {
             };
         }
         let to = edge.target.clone();
-        self.instances
-            .set(Self::slot(machine, key), JsonValue::String(to.to_string()));
-        {
-            let mut seen = self.seen.write();
-            seen.edges
-                .insert((LeanString::from(machine), from.clone(), edge.event.clone()));
-            seen.states.insert((LeanString::from(machine), to.clone()));
-        }
+        self.remember(machine, key, &to, now_millis());
+        self.took(machine, &from, &edge.event);
+        self.saw_state(machine, &to);
         Fired::Moved { from, to }
     }
 
@@ -531,15 +771,28 @@ impl Machines {
                 if !seen.states.contains(&(name.clone(), state.name.clone())) {
                     missing.states.insert((name.clone(), state.name.clone()));
                 }
-                for edge in &state.on {
+                for edge in machine.edges_from(state.name.as_str()) {
                     let taken = (name.clone(), state.name.clone(), edge.event.clone());
                     if !seen.edges.contains(&taken) {
                         missing.edges.insert(taken);
                     }
                 }
+                if !state.after.is_empty() {
+                    let waited = (name.clone(), state.name.clone(), LeanString::from(WAITED));
+                    if !seen.edges.contains(&waited) {
+                        missing.edges.insert(waited);
+                    }
+                }
             }
         }
         missing
+    }
+
+    fn took(&self, machine: &str, from: &LeanString, event: &LeanString) {
+        self.seen
+            .write()
+            .edges
+            .insert((LeanString::from(machine), from.clone(), event.clone()));
     }
 
     fn saw_state(&self, machine: &str, state: &LeanString) {
@@ -548,4 +801,21 @@ impl Machines {
             .states
             .insert((LeanString::from(machine), state.clone()));
     }
+}
+
+/// The event name a timed move is counted under, so waiting is coverable the
+/// same way an event is.
+pub const WAITED: &str = "<after>";
+
+fn millis_of(span: std::time::Duration) -> u64 {
+    u64::try_from(span.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Wall-clock milliseconds, or zero before the epoch, which cannot happen.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
