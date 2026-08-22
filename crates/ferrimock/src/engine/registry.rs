@@ -293,6 +293,17 @@ pub struct CoverageReport {
     pub unused: Vec<MockCoverage>,
     /// Requests served across every listed mock.
     pub total_matches: u64,
+    /// States a declared machine has and nothing reached, as
+    /// `machine.state`.
+    ///
+    /// A mock that never ran is one question; a *branch* of a mock that never
+    /// ran is another, and template branching cannot answer it because the
+    /// branches are not data. Declared edges are, which is the whole reason
+    /// for declaring them.
+    pub unreached_states: Vec<String>,
+    /// Moves a declared machine has and nothing took, as
+    /// `machine.state --event->`. Waiting is spelled `<after>`.
+    pub untaken_edges: Vec<String>,
 }
 
 impl CoverageReport {
@@ -1601,6 +1612,19 @@ impl MockRegistry {
     pub fn coverage(&self) -> CoverageReport {
         let mut served = Vec::new();
         let mut unused = Vec::new();
+        let missing = crate::template::get_global_machines().unreached();
+        let mut unreached_states: Vec<String> = missing
+            .states
+            .iter()
+            .map(|(machine, state)| format!("{machine}.{state}"))
+            .collect();
+        let mut untaken_edges: Vec<String> = missing
+            .edges
+            .iter()
+            .map(|(machine, state, event)| format!("{machine}.{state} --{event}->"))
+            .collect();
+        unreached_states.sort_unstable();
+        untaken_edges.sort_unstable();
 
         for mock in self.get_all_mocks() {
             let entry = MockCoverage {
@@ -1633,6 +1657,8 @@ impl MockRegistry {
             served,
             unused,
             total_matches,
+            unreached_states,
+            untaken_edges,
         }
     }
 

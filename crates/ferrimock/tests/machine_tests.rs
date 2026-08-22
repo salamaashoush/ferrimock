@@ -116,22 +116,37 @@ async fn a_machine_declared_in_yaml_drives_routes_without_a_schema() {
     let (_, body) = served(&matcher, "GET", "/api/order/8").await;
     assert!(body.contains("created"), "{body}");
 
-    // And what the run never exercised is a question with an answer, which is
-    // the entire reason the edges are declared rather than implied.
-    let machines = ferrimock::template::get_global_machines();
-    let missing = machines.unreached();
+    // And what the run never exercised is a question with an answer, reported
+    // beside which mocks never ran. A mock that never fired is one question; a
+    // branch of a mock that never fired is another, and template branching
+    // cannot answer it because the branches are not data.
+    let coverage = registry.coverage();
     assert!(
-        missing
-            .states
-            .iter()
-            .any(|(machine, state)| machine == "order" && state == "cancelled"),
-        "nothing cancelled anything: {missing:?}"
+        coverage
+            .unreached_states
+            .contains(&"order.cancelled".to_string()),
+        "nothing cancelled anything: {:?}",
+        coverage.unreached_states
     );
     assert!(
-        !missing
-            .states
-            .iter()
-            .any(|(machine, state)| machine == "order" && state == "paid"),
-        "`paid` was reached: {missing:?}"
+        !coverage
+            .unreached_states
+            .contains(&"order.paid".to_string()),
+        "`paid` was reached: {:?}",
+        coverage.unreached_states
+    );
+    assert!(
+        coverage
+            .untaken_edges
+            .contains(&"order.shipped --deliver->".to_string()),
+        "nothing delivered: {:?}",
+        coverage.untaken_edges
+    );
+    assert!(
+        !coverage
+            .untaken_edges
+            .contains(&"order.created --pay->".to_string()),
+        "`pay` was taken: {:?}",
+        coverage.untaken_edges
     );
 }

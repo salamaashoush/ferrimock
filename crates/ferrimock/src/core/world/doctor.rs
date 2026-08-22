@@ -84,6 +84,7 @@ pub enum Check {
     MembershipDegree,
     StaleClock,
     IdTimeOrder,
+    UnreachableState,
 }
 
 impl Check {
@@ -106,15 +107,17 @@ impl Check {
             Self::MembershipDegree => "membership-degree",
             Self::StaleClock => "stale-clock",
             Self::IdTimeOrder => "id-time-order",
+            Self::UnreachableState => "unreachable-state",
         }
     }
 
     #[must_use]
     pub const fn severity(self) -> Severity {
         match self {
-            Self::RelationDisagreement | Self::CountDisagreement | Self::SelfParent => {
-                Severity::Broken
-            }
+            Self::RelationDisagreement
+            | Self::CountDisagreement
+            | Self::SelfParent
+            | Self::UnreachableState => Severity::Broken,
             _ => Severity::Tell,
         }
     }
@@ -138,6 +141,7 @@ impl Check {
             Self::MembershipDegree => "a many-to-many has only two degrees",
             Self::StaleClock => "the newest timestamp is older than today",
             Self::IdTimeOrder => "sorting by id does not order by time",
+            Self::UnreachableState => "a state nothing can move into",
         }
     }
 }
@@ -339,12 +343,49 @@ fn check_values(entity: &EntityType, records: &[Record], report: &mut Report) {
             stats.observe(record.get(field.name.as_str()));
         }
         let subject = format!("{}.{}", entity.name, field.name);
+        check_reachable(field, &subject, report);
         check_nullability(entity, field, &stats, &subject, report);
         check_list_length(field, &stats, &subject, report);
         check_enum(field, &stats, &subject, report);
         check_boolean(&stats, &subject, report);
         check_numbers(entity, field, &stats, &subject, report);
         check_text(field, &stats, &subject, report);
+    }
+}
+
+/// A state a machine declares that no edge leads to.
+///
+/// A defect rather than a tell, because it is a fact about the declaration
+/// rather than about the data: a state nothing can reach is either a typo in a
+/// target or a move somebody forgot to write, and no amount of traffic will
+/// ever produce it. Only a machine that *draws* its edges can say this — an
+/// ordering reaches every state by construction, which is exactly the
+/// expressiveness it trades away.
+fn check_reachable(field: &FieldDef, subject: &str, report: &mut Report) {
+    let ValueSpec::Lifecycle(machine) = &field.value else {
+        return;
+    };
+    if !machine.is_drawn() {
+        return;
+    }
+    let initial = machine.initial().map(|state| state.name.clone());
+    for state in machine.states() {
+        if Some(&state.name) == initial.as_ref() {
+            continue;
+        }
+        let reached = machine.states().iter().any(|from| {
+            machine
+                .edges_from(from.name.as_str())
+                .any(|edge| edge.target == state.name)
+                || from.after.iter().any(|timer| timer.target == state.name)
+        });
+        if !reached {
+            report.fail(
+                Check::UnreachableState,
+                format!("{subject}.{}", state.name),
+                format!("no move leads to `{}`", state.name),
+            );
+        }
     }
 }
 

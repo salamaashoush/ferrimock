@@ -533,6 +533,8 @@ async fn coverage_handler(State(state): State<Arc<MockServerState>>) -> Response
         "served": report.served,
         "unused": report.unused,
         "totalMatches": report.total_matches,
+        "unreachedStates": report.unreached_states,
+        "untakenEdges": report.untaken_edges,
     }))
 }
 

@@ -347,6 +347,80 @@ fn a_lint_reads_a_wider_world_than_the_one_it_is_handed() {
     );
 }
 
+/// A state no move leads to is a typo or a forgotten edge, and no amount of
+/// traffic will ever produce it — so it is the declaration that is wrong, which
+/// makes it a defect rather than a tell.
+///
+/// Only a machine that draws its edges can be wrong this way. An ordering
+/// reaches every state by construction, which is the expressiveness it trades
+/// away, so it must never be reported.
+#[test]
+fn a_state_no_move_reaches_is_a_defect_and_an_ordering_never_is() {
+    use crate::core::machine::{Edge, Machine, State as MachineState};
+
+    fn state(name: &str, on: &[(&str, &str)]) -> MachineState {
+        MachineState {
+            name: name.into(),
+            weight: 1.0,
+            empty: Vec::new(),
+            on: on
+                .iter()
+                .map(|(event, target)| Edge {
+                    event: (*event).into(),
+                    target: (*target).into(),
+                    guard: None,
+                })
+                .collect(),
+            after: Vec::new(),
+        }
+    }
+
+    fn measured(machine: Machine) -> Report {
+        let mut report = Report::default();
+        let field = FieldDef::new("status", ValueSpec::Lifecycle(Box::new(machine)), false);
+        check_reachable(&field, "Order.status", &mut report);
+        report
+    }
+
+    // `refunded` is declared and nothing moves into it.
+    let stranded = measured(Machine::new(vec![
+        state("created", &[("pay", "paid")]),
+        state("paid", &[("ship", "shipped")]),
+        state("shipped", &[]),
+        state("refunded", &[]),
+    ]));
+    assert_eq!(failed(&stranded, Check::UnreachableState).len(), 1);
+    assert!(
+        failed(&stranded, Check::UnreachableState)[0]
+            .subject
+            .contains("refunded"),
+        "the finding names the state"
+    );
+
+    // Give it the edge it was missing and the finding goes away.
+    let joined = measured(Machine::new(vec![
+        state("created", &[("pay", "paid")]),
+        state("paid", &[("ship", "shipped"), ("refund", "refunded")]),
+        state("shipped", &[]),
+        state("refunded", &[]),
+    ]));
+    assert!(failed(&joined, Check::UnreachableState).is_empty());
+
+    // The same states as an ordering: every one of them is reachable by
+    // position, so there is nothing to report.
+    let ordered = measured(Machine::new(vec![
+        state("created", &[]),
+        state("paid", &[]),
+        state("shipped", &[]),
+        state("refunded", &[]),
+    ]));
+    assert!(
+        failed(&ordered, Check::UnreachableState).is_empty(),
+        "an ordering reaches everything: {:?}",
+        failed(&ordered, Check::UnreachableState)
+    );
+}
+
 #[test]
 fn a_world_larger_than_a_page_stops_reporting_its_size() {
     let report = examine(&wide_world(3, 400));
