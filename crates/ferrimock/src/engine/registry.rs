@@ -632,6 +632,7 @@ impl MockRegistry {
         // `world.counts` is in force before anything seeds, then the schemas
         // dropped bare in the directory.
         for (file, collection) in &collections {
+            Self::apply_collection_machines(collection);
             if let Err(e) = self.apply_collection_world(collection, file).await {
                 tracing::warn!(file = %file.display(), error = %e, "failed to build the world");
             }
@@ -819,8 +820,28 @@ impl MockRegistry {
             return Ok(0);
         }
 
+        Self::apply_collection_machines(&collection);
         self.apply_collection_world(&collection, path).await?;
         self.register_collection(collection, path).await
+    }
+
+    /// Install the machines a collection declares, for templates to read.
+    ///
+    /// Beside the world rather than inside it: a machine is not an entity's
+    /// idea, and a collection with no `world:` block at all can still declare
+    /// one and drive routes with it.
+    fn apply_collection_machines(collection: &crate::config::MockCollectionConfig) {
+        let Some(declared) = &collection.machines else {
+            return;
+        };
+        let built = declared.iter().filter_map(|(name, machine)| {
+            crate::config::machine_of(machine)
+                .ok()
+                .map(|built| (LeanString::from(name.as_str()), built))
+        });
+        crate::template::set_global_machines(std::sync::Arc::new(
+            crate::core::machine::Machines::new(built),
+        ));
     }
 
     /// Populate the world from a collection's `world:` block.

@@ -351,6 +351,18 @@ fn parse_target(target: &str) -> crate::core::world::overrides::RuleKey {
     }
 }
 
+/// Build the machine a `machines:` entry describes.
+///
+/// The same construction a `states:` block goes through, exposed because the
+/// engine installs machines for routes to read and must not grow a second
+/// version of this.
+pub fn machine_of(declared: &MachineConfig) -> crate::Result<crate::core::machine::Machine> {
+    match lifecycle_of("machine", &declared.states)? {
+        crate::core::world::overrides::FieldRule::Lifecycle(machine) => Ok(machine),
+        _ => Err(crate::mp_err!("a machine is states")),
+    }
+}
+
 fn lifecycle_of(
     target: &str,
     states: &[StateConfig],

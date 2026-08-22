@@ -13,6 +13,7 @@
 //! - `fake_data` - Engine-neutral fake data generator registry
 //! - `filters` - Custom Tera filters
 //! - `store` - Persistence store and Tera functions
+//! - `machine` - Reading and moving the machines a collection declared
 //! - `graphql_helpers` - GraphQL-specific template helpers
 
 // Re-export the unified RequestContext from types
@@ -30,12 +31,14 @@ pub mod fake_data;
 mod filters;
 pub(crate) mod functions;
 pub mod graphql_helpers;
+pub mod machine;
 pub mod plugin;
 pub mod store;
 
 // Re-export public APIs
 pub use engine::hash_template;
 pub use error::TemplateError;
+pub use machine::{get_global_machines, set_global_machines};
 pub use plugin::{TemplateFunction, register_template_function};
 pub use renderer::{
     render_patch_template, render_template, render_template_with_hash, render_template_with_id,
