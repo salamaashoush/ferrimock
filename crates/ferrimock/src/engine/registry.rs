@@ -856,7 +856,7 @@ impl MockRegistry {
                     .unwrap_or_else(|| std::path::Path::new("."))
                     .join(name)
             }),
-            overrides: config.field_rules()?,
+            overrides: config.field_rules(collection.machines.as_ref())?,
         };
         self.world.configure(&settings, path)?;
 

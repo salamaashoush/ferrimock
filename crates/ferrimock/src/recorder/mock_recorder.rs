@@ -1001,6 +1001,7 @@ impl MockRecorder {
             vars: None,
             mocks,
             world: None,
+            machines: None,
         }
     }
 

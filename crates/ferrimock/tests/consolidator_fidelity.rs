@@ -140,6 +140,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
         vars: None,
         mocks,
         world: None,
+        machines: None,
     }
 }
 
@@ -245,6 +246,7 @@ async fn run_through_har(recorded: Vec<Recorded>) -> (usize, FidelityReport) {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let fidelity = FidelityOptions {

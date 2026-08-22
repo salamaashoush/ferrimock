@@ -247,6 +247,7 @@ impl MockConsolidator {
             vars: None,
             mocks: consolidated_mocks,
             world: None,
+            machines: None,
         })
     }
 

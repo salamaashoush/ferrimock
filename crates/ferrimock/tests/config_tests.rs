@@ -273,6 +273,7 @@ async fn test_into_mock_definitions_empty() {
         vars: None,
         mocks: vec![],
         world: None,
+        machines: None,
     };
 
     let result = config.into_mock_definitions().await;
@@ -326,6 +327,7 @@ async fn test_into_mock_definitions_with_dir() {
             serve: None,
         }],
         world: None,
+        machines: None,
     };
 
     let result = config

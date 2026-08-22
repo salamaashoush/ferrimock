@@ -381,6 +381,7 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
         vars: None,
         mocks,
         world: None,
+        machines: None,
     }
 }
 

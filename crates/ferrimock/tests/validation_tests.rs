@@ -607,6 +607,7 @@ async fn test_validate_config_directly() {
             serve: None,
         }],
         world: None,
+        machines: None,
     };
 
     let validator = MockValidator::new();
@@ -1329,6 +1330,7 @@ async fn test_validate_config_directly_with_errors() {
             serve: None,
         }],
         world: None,
+        machines: None,
     };
 
     let validator = MockValidator::new();
@@ -1424,6 +1426,7 @@ async fn test_validate_config_with_warnings() {
             },
         ],
         world: None,
+        machines: None,
     };
 
     let validator = MockValidator::new();

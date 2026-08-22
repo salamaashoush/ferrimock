@@ -34,8 +34,8 @@ pub use matcher::{
     BodyMatcherConfig, GraphQLMatchConfig, HeaderMatchConfig, MatchConfig, RequestConfig,
 };
 pub use parser::{
-    DEFAULT_PRIORITY, FieldOverride, MockCollectionConfig, MockConfig, NumberRange, ServeConfig,
-    ShapedOverride, WorldConfig,
+    DEFAULT_PRIORITY, EdgeConfig, FieldOverride, MachineConfig, MockCollectionConfig, MockConfig,
+    NumberRange, ServeConfig, ShapedOverride, StateConfig, StatesConfig, WorldConfig,
 };
 pub use patches::{HeaderPatchesConfig, JsonPatchConfig, RegexReplaceConfig};
 pub use patterns::{convert_express_to_regex, is_valid_http_method, parse_url_pattern};

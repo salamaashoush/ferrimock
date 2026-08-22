@@ -101,6 +101,7 @@ async fn test_pagination_pattern_detection() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -186,6 +187,7 @@ async fn test_id_based_pattern_detection() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -261,6 +263,7 @@ async fn test_uuid_pattern_detection() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -314,6 +317,7 @@ async fn test_search_query_pattern() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -349,6 +353,7 @@ async fn test_duplicate_removal() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -392,6 +397,7 @@ async fn test_variable_response_template() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -453,6 +459,7 @@ async fn test_mixed_patterns() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -498,6 +505,7 @@ async fn test_no_consolidation_for_single_mock() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -533,6 +541,7 @@ async fn test_min_pattern_threshold() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     // With threshold of 3, should NOT consolidate (only 2 mocks)
@@ -579,6 +588,7 @@ async fn test_disable_consolidation() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let options = ConsolidatorOptions {
@@ -628,6 +638,7 @@ async fn test_consolidation_stats() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -725,6 +736,7 @@ async fn test_complex_real_world_scenario() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -783,6 +795,7 @@ async fn test_preserves_different_methods() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -819,6 +832,7 @@ async fn test_path_normalization_via_grouping() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -868,6 +882,7 @@ async fn test_cursor_based_pagination() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -926,6 +941,7 @@ async fn test_complex_query_params() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();
@@ -1010,6 +1026,7 @@ async fn test_download_url_file_type_detection() {
         vars: None,
         mocks,
         world: None,
+        machines: None,
     };
 
     let mut consolidator = MockConsolidator::new();

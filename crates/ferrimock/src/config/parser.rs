@@ -47,6 +47,18 @@ pub struct MockCollectionConfig {
     /// add schemas to it but only one may set its seed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world: Option<WorldConfig>,
+
+    /// Machines this collection declares, by name.
+    ///
+    /// Beside `mocks:` and `world:` rather than inside either, because a
+    /// machine is not an entity's idea: the same declaration is what a
+    /// `world.states` entry names and what a route will read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
+    )]
+    pub machines: Option<std::collections::BTreeMap<String, MachineConfig>>,
 }
 
 /// A collection's contribution to the entity world.
@@ -147,7 +159,7 @@ pub struct WorldConfig {
         feature = "schema",
         schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
     )]
-    pub states: Option<std::collections::BTreeMap<String, Vec<StateConfig>>>,
+    pub states: Option<std::collections::BTreeMap<String, StatesConfig>>,
 }
 
 /// What an override says a field holds.
@@ -196,7 +208,10 @@ impl WorldConfig {
     /// A name nothing answers to is an error rather than a field that quietly
     /// keeps whatever was inferred — a typo in a mapping file should be found
     /// when the file is read, not from a payload that looks almost right.
-    pub fn field_rules(&self) -> crate::Result<crate::core::world::overrides::FieldRules> {
+    pub fn field_rules(
+        &self,
+        machines: Option<&std::collections::BTreeMap<String, MachineConfig>>,
+    ) -> crate::Result<crate::core::world::overrides::FieldRules> {
         use crate::core::world::overrides::{FieldRules, RuleKey};
 
         let mut rules = FieldRules::default();
@@ -209,14 +224,28 @@ impl WorldConfig {
                 resolve(declared, stated)?,
             );
         }
-        for (target, states) in self.states.iter().flatten() {
+        for (target, stated) in self.states.iter().flatten() {
+            let states = match stated {
+                StatesConfig::Inline(states) => states.as_slice(),
+                StatesConfig::Named(name) => {
+                    let declared = machines
+                        .and_then(|declared| declared.get(name))
+                        .ok_or_else(|| {
+                            crate::mp_err!(
+                                "`{target}` names the machine `{name}`, and no `machines:` block \
+                                 declares one"
+                            )
+                        })?;
+                    declared.states.as_slice()
+                }
+            };
             rules.insert(parse_target(target), lifecycle_of(target, states)?);
         }
         Ok(rules)
     }
 }
 
-/// One state of a lifecycle, and what a record in it does not carry.
+/// One state, and what being in it means for everything else.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StateConfig {
@@ -231,6 +260,78 @@ pub struct StateConfig {
     /// contradiction rather than an unlikely value.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub empty: Vec<String>,
+
+    /// The moves out of this state, by the event that causes them.
+    ///
+    /// Naming any of them turns the whole machine from an ordering into a
+    /// graph: `paid` reaching both `shipped` and `refunded` has no position to
+    /// sort into, and an order can only ever say "not backwards". Naming none
+    /// keeps the ordering, which is what every `states:` block written before
+    /// this meant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<std::collections::BTreeMap<String, serde_json::Value>>")
+    )]
+    pub on: Option<std::collections::BTreeMap<String, EdgeConfig>>,
+}
+
+/// Where one event leads, and what has to hold for it to.
+///
+/// A bare string is the target. The shaped form adds a guard, which is a
+/// *name* rather than a condition: whether it holds is answered outside the
+/// config, and the edge stays visible to anything counting edges either way.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum EdgeConfig {
+    /// `pay: paid`
+    Target(String),
+    /// `pay: { target: paid, guard: has_stock }`
+    Guarded {
+        target: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        guard: Option<String>,
+    },
+}
+
+impl EdgeConfig {
+    #[must_use]
+    pub fn target(&self) -> &str {
+        match self {
+            Self::Target(name) | Self::Guarded { target: name, .. } => name,
+        }
+    }
+
+    #[must_use]
+    pub fn guard(&self) -> Option<&str> {
+        match self {
+            Self::Target(_) => None,
+            Self::Guarded { guard, .. } => guard.as_deref(),
+        }
+    }
+}
+
+/// A machine declared once and referred to by name.
+///
+/// Named because a lifecycle whose only identity was the field it hung off
+/// could not be shared between two entities, and could not be reached at all
+/// by anything that is not a field.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct MachineConfig {
+    /// In order, because a machine that names no edge *is* its order.
+    pub states: Vec<StateConfig>,
+}
+
+/// What a `states:` entry says: a machine's name, or the states themselves.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum StatesConfig {
+    /// `Order.status: order`, naming an entry under `machines:`.
+    Named(String),
+    /// The states written where they are used.
+    Inline(Vec<StateConfig>),
 }
 
 const fn one() -> f64 {
@@ -255,7 +356,7 @@ fn lifecycle_of(
     target: &str,
     states: &[StateConfig],
 ) -> crate::Result<crate::core::world::overrides::FieldRule> {
-    use crate::core::machine::{Machine, State};
+    use crate::core::machine::{Edge, Machine, State};
     use crate::core::world::overrides::FieldRule;
 
     if states.len() < 2 {
@@ -263,7 +364,7 @@ fn lifecycle_of(
             "`{target}` is a lifecycle, so it needs at least two states"
         ));
     }
-    Ok(FieldRule::Lifecycle(Machine::new(
+    let machine = Machine::new(
         states
             .iter()
             .map(|state| State {
@@ -274,10 +375,36 @@ fn lifecycle_of(
                     .iter()
                     .map(|name| LeanString::from(name.as_str()))
                     .collect(),
-                on: Vec::new(),
+                on: state
+                    .on
+                    .iter()
+                    .flatten()
+                    .map(|(event, edge)| Edge {
+                        event: LeanString::from(event.as_str()),
+                        target: LeanString::from(edge.target()),
+                        guard: edge.guard().map(LeanString::from),
+                    })
+                    .collect(),
             })
             .collect(),
-    )))
+    );
+
+    // An edge to nowhere is a typo that would otherwise surface as a refused
+    // write much later, blamed on the caller rather than on the declaration.
+    for state in machine.states() {
+        for edge in &state.on {
+            if machine.get(edge.target.as_str()).is_none() {
+                return Err(crate::mp_err!(
+                    "`{target}` moves from `{}` to `{}` on `{}`, and has no state `{}`",
+                    state.name,
+                    edge.target,
+                    edge.event,
+                    edge.target
+                ));
+            }
+        }
+    }
+    Ok(FieldRule::Lifecycle(machine))
 }
 
 fn resolve(
@@ -402,6 +529,7 @@ impl MockCollectionConfig {
             vars: None,
             mocks,
             world: None,
+            machines: None,
         })
     }
 
@@ -999,6 +1127,94 @@ fn build_request_transforms(
 )]
 mod tests {
     use super::*;
+
+    /// A machine declared once and named from a `states:` entry, which is the
+    /// point of naming it: the same declaration is what a field's lifecycle
+    /// reads and what a route will read.
+    #[test]
+    fn a_states_entry_names_a_machine_or_carries_its_own() {
+        let yaml = r"
+machines:
+  order:
+    states:
+      - name: created
+        on: { pay: paid, cancel: cancelled }
+      - name: paid
+        on:
+          ship: shipped
+          refund: { target: created, guard: within_window }
+      - name: shipped
+      - name: cancelled
+
+world:
+  states:
+    Order.status: order
+    Invoice.status:
+      - name: draft
+      - name: issued
+";
+        let config = MockCollectionConfig::from_yaml(yaml).expect("parses");
+        let machines = config.machines.as_ref().expect("a machines block");
+        let world = config.world.as_ref().expect("a world block");
+        let rules = world.field_rules(Some(machines)).expect("resolves");
+
+        // The named one is a graph, and the guard rode along with the edge.
+        let ordered = matches!(
+            world.states.as_ref().and_then(|s| s.get("Invoice.status")),
+            Some(StatesConfig::Inline(_))
+        );
+        assert!(ordered, "an inline list is still a list");
+        assert!(matches!(
+            world.states.as_ref().and_then(|s| s.get("Order.status")),
+            Some(StatesConfig::Named(name)) if name == "order"
+        ));
+        assert!(!rules.is_empty());
+
+        // A name nothing declares is caught where it is written, not later as
+        // a refused write blamed on whoever made it.
+        let orphan = r"
+world:
+  states:
+    Order.status: nowhere
+";
+        let config = MockCollectionConfig::from_yaml(orphan).expect("parses");
+        let failed = config
+            .world
+            .as_ref()
+            .expect("a world block")
+            .field_rules(None)
+            .expect_err("a machine nothing declares is an error");
+        assert!(
+            failed.to_string().contains("nowhere"),
+            "the error names the machine: {failed}"
+        );
+    }
+
+    /// An edge to a state the machine does not have is a typo, and it surfaces
+    /// where it was written.
+    #[test]
+    fn an_edge_to_nowhere_is_refused_when_it_is_read() {
+        let yaml = r"
+machines:
+  order:
+    states:
+      - name: created
+        on: { pay: pahd }
+      - name: paid
+
+world:
+  states:
+    Order.status: order
+";
+        let config = MockCollectionConfig::from_yaml(yaml).expect("parses");
+        let failed = config
+            .world
+            .as_ref()
+            .expect("a world block")
+            .field_rules(config.machines.as_ref())
+            .expect_err("`pahd` is not a state");
+        assert!(failed.to_string().contains("pahd"), "{failed}");
+    }
 
     #[test]
     fn test_simple_mock_config() {

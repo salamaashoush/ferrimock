@@ -2211,6 +2211,84 @@ fn a_record_cannot_move_backwards_through_its_own_lifecycle() {
     );
 }
 
+/// A declared edge set is not an ordering, and the difference is the whole
+/// reason to declare one: `paid -> refunded` is a real move backwards that no
+/// position can express, and `paid -> delivered` is a forward move that should
+/// not be legal because nothing offers it.
+#[test]
+fn a_declared_edge_decides_the_move_rather_than_the_order() {
+    use crate::core::machine::Edge;
+    use crate::core::world::model::{Lifecycle, LifecycleState};
+
+    let state = |name: &str, on: &[(&str, &str)]| LifecycleState {
+        name: name.into(),
+        weight: 1.0,
+        empty: Vec::new(),
+        on: on
+            .iter()
+            .map(|(event, target)| Edge {
+                event: (*event).into(),
+                target: (*target).into(),
+                guard: None,
+            })
+            .collect(),
+    };
+    let mut graph = EntityGraph::new();
+    graph.insert(entity("Order").with_field(FieldDef::new(
+        "status",
+        ValueSpec::Lifecycle(Box::new(Lifecycle::new(vec![
+            state("draft", &[("pay", "paid")]),
+            state("paid", &[("ship", "shipped"), ("refund", "draft")]),
+            state("shipped", &[("deliver", "delivered")]),
+            state("delivered", &[]),
+        ]))),
+        false,
+    )));
+    let store = EntityStore::new(
+        Arc::new(graph),
+        StoreConfig::seeded(3).with_count("Order", 200),
+    );
+
+    let holding = |want: &str| {
+        store.keys("Order").into_iter().find(|key| {
+            store
+                .get("Order", key)
+                .and_then(|record| {
+                    record
+                        .get("status")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                })
+                .as_deref()
+                == Some(want)
+        })
+    };
+    let moved = |key, to: &str| {
+        store.apply(
+            "Order",
+            Mutation::Patch {
+                key,
+                values: serde_json::json!({ "status": to }),
+            },
+        )
+    };
+
+    let paid = holding("paid").expect("a paid order");
+    // Backwards, and allowed, because `refund` names it. An ordering refuses
+    // this outright and there is no way to ask it not to.
+    assert!(
+        moved(paid.clone(), "draft").is_ok(),
+        "refund is a real move"
+    );
+
+    let paid = holding("paid").expect("another paid order");
+    let skipped = moved(paid, "delivered");
+    assert!(
+        matches!(skipped, Err(crate::FerrimockError::Conflict(_))),
+        "nothing moves paid straight to delivered: {skipped:?}"
+    );
+}
+
 #[test]
 fn a_written_state_still_decides_what_the_record_holds() {
     let store = ordered_store(3, 300);

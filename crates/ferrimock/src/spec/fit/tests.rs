@@ -226,18 +226,23 @@ fn the_output_is_a_world_block_a_collection_can_carry() {
         Some(&50)
     );
 
-    let states = carried
+    let stated = carried
         .world
         .states
         .as_ref()
         .and_then(|states| states.get("Order.status"))
         .expect("the lifecycle survives the round trip");
+    // A fit writes the states where they are used rather than naming a machine
+    // nothing declared, and that still reads back as the same states.
+    let crate::config::StatesConfig::Inline(states) = stated else {
+        panic!("a fitted lifecycle is written inline: {stated:?}");
+    };
     assert_eq!(states.len(), 4);
     assert_eq!(states[0].name, "draft");
     assert_eq!(states[0].empty, ["paid_at", "shipped_at", "delivered_at"]);
 
     // And it is a rule the graph will actually take.
-    assert!(carried.world.field_rules().is_ok());
+    assert!(carried.world.field_rules(None).is_ok());
 }
 
 #[test]
