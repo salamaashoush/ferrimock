@@ -14,6 +14,8 @@
 //! answerable, and an ordering cannot be, because its edges are implied rather
 //! than written.
 
+use std::sync::Arc;
+
 use lean_string::LeanString;
 use parking_lot::RwLock;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -603,7 +605,13 @@ pub struct Seen {
 /// caller chose.
 #[derive(Debug)]
 pub struct Machines {
-    declared: FxHashMap<LeanString, Machine>,
+    /// Behind a lock and merged rather than replaced, because a directory holds
+    /// several collections and each may declare its own: installing one
+    /// collection's machines by overwriting the map made whichever loaded last
+    /// the only one that existed. Instances live beside this and outlive a
+    /// redeclaration, so a hot reload does not put every order back at the
+    /// start.
+    declared: RwLock<FxHashMap<LeanString, Arc<Machine>>>,
     instances: PersistenceStore,
     seen: RwLock<Seen>,
 }
@@ -612,20 +620,39 @@ impl Machines {
     #[must_use]
     pub fn new(declared: impl IntoIterator<Item = (LeanString, Machine)>) -> Self {
         Self {
-            declared: declared.into_iter().collect(),
+            declared: RwLock::new(
+                declared
+                    .into_iter()
+                    .map(|(name, machine)| (name, Arc::new(machine)))
+                    .collect(),
+            ),
             instances: PersistenceStore::new(),
             seen: RwLock::new(Seen::default()),
         }
     }
 
-    #[must_use]
-    pub fn get(&self, machine: &str) -> Option<&Machine> {
-        self.declared.get(machine)
+    /// Add one machine, replacing any of the same name. Instances are untouched.
+    pub fn declare(&self, name: impl Into<LeanString>, machine: Machine) {
+        self.declared.write().insert(name.into(), Arc::new(machine));
+    }
+
+    /// Drop every declaration, keeping instances. What a reload does before it
+    /// reads the collections again, so a machine deleted from a file stops
+    /// existing.
+    pub fn forget_declarations(&self) {
+        self.declared.write().clear();
     }
 
     #[must_use]
-    pub fn names(&self) -> Vec<&LeanString> {
-        self.declared.keys().collect()
+    pub fn get(&self, machine: &str) -> Option<Arc<Machine>> {
+        self.declared.read().get(machine).map(Arc::clone)
+    }
+
+    #[must_use]
+    pub fn names(&self) -> Vec<LeanString> {
+        let mut names: Vec<LeanString> = self.declared.read().keys().cloned().collect();
+        names.sort_unstable();
+        names
     }
 
     /// A machine name is barred from holding the separator, so splitting an
@@ -655,7 +682,7 @@ impl Machines {
         /// from spinning.
         const CHAIN: usize = 32;
 
-        let declared = self.declared.get(machine)?;
+        let declared = self.get(machine)?;
         let (held, arrived) = self.held(machine, key);
         let mut at = held
             .filter(|held| declared.get(held.as_str()).is_some())
@@ -725,7 +752,7 @@ impl Machines {
         event: &str,
         allows: impl Fn(&str) -> bool,
     ) -> Fired {
-        let Some(declared) = self.declared.get(machine) else {
+        let Some(declared) = self.get(machine) else {
             return Fired::NoSuchMachine;
         };
         let Some(from) = self.state_of(machine, key) else {
@@ -766,7 +793,7 @@ impl Machines {
     pub fn unreached(&self) -> Seen {
         let seen = self.seen.read();
         let mut missing = Seen::default();
-        for (name, machine) in &self.declared {
+        for (name, machine) in self.declared.read().iter() {
             for state in machine.states() {
                 if !seen.states.contains(&(name.clone(), state.name.clone())) {
                     missing.states.insert((name.clone(), state.name.clone()));

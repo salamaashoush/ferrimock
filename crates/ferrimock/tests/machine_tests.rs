@@ -150,3 +150,72 @@ async fn a_machine_declared_in_yaml_drives_routes_without_a_schema() {
         coverage.untaken_edges
     );
 }
+
+const SUGARED: &str = r#"
+machines:
+  gate:
+    states:
+      - name: shut
+        on: { open: ajar }
+      - name: ajar
+        on: { open: wide, shut: shut }
+      - name: wide
+        on: { shut: shut }
+
+mocks:
+  - id: read-gate
+    match: { GET: "/gate/:id" }
+    when: { machine: gate, key: "{{ captures.id }}" }
+    states:
+      shut: { status: 423, json: { state: "shut" } }
+      ajar: { status: 200, json: { state: "ajar" } }
+      wide: { status: 200, json: { state: "wide" } }
+
+  - id: open-gate
+    match: { POST: "/gate/:id/open" }
+    fire: { machine: gate, key: "{{ captures.id }}", event: open }
+    response:
+      template: '{"moved": "{{ _fired }}"}'
+"#;
+
+/// `when:`/`states:`/`fire:` say the same thing the template calls say, with
+/// the states visible as data instead of buried in a branch. The behaviour has
+/// to be identical, including that a read never moves anything.
+#[tokio::test]
+async fn the_declarative_binding_says_what_the_template_calls_say() {
+    let dir = std::env::temp_dir().join("ferrimock-machine-sugar");
+    std::fs::create_dir_all(&dir).expect("a temp dir");
+    std::fs::write(dir.join("gate.yaml"), SUGARED).expect("writes");
+
+    let registry = MockRegistry::new();
+    registry.load_from_directory(&dir).await.expect("loads");
+    ferrimock::template::get_global_machines().reset();
+    let matcher = MockMatcher::new(registry.clone());
+
+    // The per-state status is the state's own, not the mock's.
+    let (status, body) = served(&matcher, "GET", "/gate/1").await;
+    assert_eq!(status, 423, "{body}");
+    assert!(body.contains("shut"), "{body}");
+
+    let (status, _) = served(&matcher, "GET", "/gate/1").await;
+    assert_eq!(status, 423, "reading did not move it");
+
+    let (_, body) = served(&matcher, "POST", "/gate/1/open").await;
+    assert!(
+        body.contains("ajar"),
+        "`fire` answers where it landed: {body}"
+    );
+
+    let (status, body) = served(&matcher, "GET", "/gate/1").await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("ajar"), "{body}");
+
+    let (_, _) = served(&matcher, "POST", "/gate/1/open").await;
+    let (status, body) = served(&matcher, "GET", "/gate/1").await;
+    assert_eq!(status, 200);
+    assert!(body.contains("wide"), "{body}");
+
+    // Still a separate instance per key.
+    let (status, _) = served(&matcher, "GET", "/gate/2").await;
+    assert_eq!(status, 423);
+}

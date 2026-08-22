@@ -366,6 +366,9 @@ fn recorded_collection(interactions: &[RecordedInteraction]) -> MockCollectionCo
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         })
         .collect();
 

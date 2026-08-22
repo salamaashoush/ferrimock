@@ -1460,6 +1460,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
             MockConfig {
                 id: "test-2".into(),
@@ -1493,6 +1496,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
         ];
 
@@ -1681,6 +1687,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
             MockConfig {
                 id: "test-2".into(),
@@ -1721,6 +1730,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
         ];
 
@@ -1784,6 +1796,9 @@ mod tests {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         }];
 
         let responses: Vec<serde_json::Value> = mocks
@@ -1845,6 +1860,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -1879,6 +1897,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
         ];
 
@@ -1929,6 +1950,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -1963,6 +1987,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
         ];
 
@@ -2017,6 +2044,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
             MockConfig {
                 id: "get-user-2".into(),
@@ -2052,6 +2082,9 @@ mod tests {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             },
         ];
 
@@ -2094,6 +2127,9 @@ mod tests {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         }];
 
         let analysis = ResponseAnalyzer::analyze_graphql_variables(&mocks);
@@ -2130,6 +2166,9 @@ mod tests {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         }];
 
         let analysis = ResponseAnalyzer::analyze_graphql_variables(&mocks);

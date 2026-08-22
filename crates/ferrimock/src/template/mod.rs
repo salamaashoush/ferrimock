@@ -38,7 +38,7 @@ pub mod store;
 // Re-export public APIs
 pub use engine::hash_template;
 pub use error::TemplateError;
-pub use machine::{get_global_machines, set_global_machines};
+pub use machine::get_global_machines;
 pub use plugin::{TemplateFunction, register_template_function};
 pub use renderer::{
     render_patch_template, render_template, render_template_with_hash, render_template_with_id,

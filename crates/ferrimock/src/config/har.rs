@@ -873,6 +873,9 @@ impl HarLoader {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         }))
     }
 
@@ -950,6 +953,9 @@ impl HarLoader {
                 sse: None,
                 ws: Some(ws),
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             });
         }
         Ok(mocks)

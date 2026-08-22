@@ -56,6 +56,9 @@ fn create_mock(id: &str, method: &str, url: &str, status: u16, body: &str) -> Mo
         sse: None,
         ws: None,
         serve: None,
+        when: None,
+        states: None,
+        fire: None,
     }
 }
 

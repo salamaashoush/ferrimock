@@ -339,6 +339,28 @@ pub struct MachineConfig {
     pub on: Option<std::collections::BTreeMap<String, EdgeConfig>>,
 }
 
+/// Which machine a mock reads, and which instance of it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct WhenConfig {
+    pub machine: String,
+    /// Which instance. A Tera expression when written as `{{ captures.id }}`,
+    /// a literal otherwise. Absent is the machine's single instance, which is
+    /// what a rate limiter or a circuit breaker is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+/// A move a route makes.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct FireConfig {
+    pub machine: String,
+    pub event: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
 /// What a `states:` entry says: a machine's name, or the states themselves.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
@@ -624,6 +646,7 @@ impl MockCollectionConfig {
 
             // Lifted before lowering: `serve` is a mode, not a body, so the
             // ordinary response path must not see it.
+            config.lower_machine_bindings()?;
             let serve = config.serve.take();
             if let Some(serve) = &serve {
                 config.check_serve_is_alone(serve)?;
@@ -652,6 +675,70 @@ impl MockCollectionConfig {
         }
         Ok(definitions)
     }
+}
+
+/// A `key:` as a Tera expression.
+///
+/// `{{ captures.id }}` is what a reader writes and what every other key-ish
+/// field in a mock looks like, but it cannot be nested inside a function call,
+/// so the expression is lifted out of it. Anything else is a literal.
+fn key_expression(key: Option<&str>) -> String {
+    let Some(key) = key.map(str::trim) else {
+        return "\"\"".to_string();
+    };
+    key.strip_prefix("{{")
+        .and_then(|rest| rest.strip_suffix("}}"))
+        .map_or_else(
+            || format!("\"{}\"", key.replace('"', "\\\"")),
+            |expr| expr.trim().to_string(),
+        )
+}
+
+/// One state's response, as the `{status, headers, body}` a structured
+/// template emits.
+fn fragment_of(id: &str, response: &ResponseConfig) -> crate::Result<String> {
+    let (status, headers, body) = match response {
+        // A bare string is a body, and it is the author's to make valid JSON in
+        // this position — the same contract the structured-template form has
+        // always had.
+        ResponseConfig::Template(text) => (200u16, rustc_hash::FxHashMap::default(), text.clone()),
+        ResponseConfig::Structured {
+            status,
+            headers,
+            body,
+            template,
+            json,
+            file,
+            template_file,
+            ..
+        } => {
+            if file.is_some() || template_file.is_some() {
+                return Err(crate::mp_err!(
+                    "mock `{id}`: a per-state response cannot come from a file yet — inline it as \
+                     `body`, `json` or `template`"
+                ));
+            }
+            let rendered = if !json.is_null() {
+                serde_json::to_string(json)?
+            } else if let Some(text) = template {
+                text.clone()
+            } else if let Some(text) = body {
+                serde_json::to_string(text)?
+            } else {
+                "{}".to_string()
+            };
+            (status.unwrap_or(200), headers.clone(), rendered)
+        }
+        ResponseConfig::StatusShortcuts(_) => {
+            return Err(crate::mp_err!(
+                "mock `{id}`: a per-state response is one response, not a status map"
+            ));
+        }
+    };
+    let headers = serde_json::to_string(&headers)?;
+    Ok(format!(
+        "{{\"status\": {status}, \"headers\": {headers}, \"body\": {body}}}"
+    ))
 }
 
 fn default_enabled() -> bool {
@@ -787,6 +874,21 @@ pub struct MockConfig {
     /// say either. Exclusive with `response`, `patch`, `sse` and `ws`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub serve: Option<ServeConfig>,
+
+    /// Answer according to where a machine's instance is, without moving it.
+    ///
+    /// Reading and moving are different things and are spelled differently: a
+    /// `GET` that advances a lifecycle is a mock lying about a safe method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<WhenConfig>,
+
+    /// One response per state, chosen by `when:`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub states: Option<std::collections::BTreeMap<String, ResponseConfig>>,
+
+    /// Move a machine's instance before answering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fire: Option<FireConfig>,
 }
 
 /// Which schema serves a mock's URL, and over which protocol.
@@ -862,6 +964,9 @@ impl Default for MockConfig {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         }
     }
 }
@@ -870,6 +975,89 @@ impl MockConfig {
     /// `serve` is a mode like `sse` and `ws`, so it excludes the other ways a
     /// mock can answer. `response` survives for the same reason it does under
     /// `sse`: extra headers are still the mock's to set.
+    /// Lower `when:`/`states:`/`fire:` into the structured template they mean.
+    ///
+    /// Sugar, deliberately. `machine_state` and `machine_fire` already work and
+    /// a structured template already chooses its own status, so this adds no
+    /// runtime concept and nothing new can fail at request time. What it adds
+    /// is that the states are data a reader can see rather than a branch they
+    /// have to execute.
+    fn lower_machine_bindings(&mut self) -> crate::Result<()> {
+        if self.when.is_none() && self.fire.is_none() {
+            return Ok(());
+        }
+        if self.states.is_some() && self.when.is_none() {
+            return Err(crate::mp_err!(
+                "mock `{}`: `states:` chooses by machine state and needs a `when:` to say which \
+                 machine",
+                self.id
+            ));
+        }
+
+        let mut body = String::new();
+        if let Some(fire) = &self.fire {
+            // Moved before answering, so the response can describe where it
+            // landed rather than where it was.
+            body.push_str(&format!(
+                "{{%- set _fired = machine_fire(machine=\"{}\", key={}, event=\"{}\") -%}}\n",
+                fire.machine,
+                key_expression(fire.key.as_deref()),
+                fire.event
+            ));
+        }
+
+        match (self.when.clone(), self.states.clone()) {
+            (Some(when), Some(states)) => {
+                body.push_str(&format!(
+                    "{{%- set _at = machine_state(machine=\"{}\", key={}) -%}}\n",
+                    when.machine,
+                    key_expression(when.key.as_deref())
+                ));
+                let mut first = true;
+                for (at, response) in &states {
+                    body.push_str(if first { "{%- if " } else { "{%- elif " });
+                    first = false;
+                    body.push_str(&format!("_at == \"{at}\" -%}}\n"));
+                    body.push_str(&fragment_of(&self.id, response)?);
+                    body.push('\n');
+                }
+                // A state with no response is the declaration disagreeing with
+                // itself; saying so beats answering an arbitrary one.
+                body.push_str(&format!(
+                    "{{%- else -%}}\n{{\"status\": 501, \"body\": {{\"error\": \"mock `{}` has no \
+                     response for this state\", \"state\": \"{{{{ _at }}}}\"}}}}\n{{%- endif -%}}",
+                    self.id
+                ));
+            }
+            // A bare `fire:` keeps whatever response was already written.
+            (_, None) => {
+                let held = self.response_config.take();
+                body.push_str(&match held {
+                    Some(response) => fragment_of(&self.id, &response)?,
+                    None => "{\"status\": 200, \"body\": {}}".to_string(),
+                });
+            }
+            (None, Some(_)) => unreachable!("guarded above"),
+        }
+
+        self.when = None;
+        self.fire = None;
+        self.states = None;
+        // `Structured { template }` rather than the bare-string form: a bare
+        // string is a static body by definition, so the branches would have
+        // been served verbatim instead of chosen between.
+        self.response_config = Some(ResponseConfig::Structured {
+            status: None,
+            headers: rustc_hash::FxHashMap::default(),
+            body: None,
+            template: Some(body),
+            file: None,
+            template_file: None,
+            json: Box::new(serde_json::Value::Null),
+        });
+        Ok(())
+    }
+
     fn check_serve_is_alone(&self, serve: &ServeConfig) -> crate::Result<()> {
         let conflict = if self.patch.is_some() {
             "patch"

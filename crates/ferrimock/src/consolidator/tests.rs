@@ -43,6 +43,9 @@ fn create_test_mock(id: &str, method: &str, url: &str, response_body: &str) -> M
         sse: None,
         ws: None,
         serve: None,
+        when: None,
+        states: None,
+        fire: None,
     }
 }
 
@@ -1161,6 +1164,9 @@ async fn test_fuzzy_pagination_field_detection() {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         },
         MockConfig {
             id: "test-2".into(),
@@ -1191,6 +1197,9 @@ async fn test_fuzzy_pagination_field_detection() {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         },
     ];
 

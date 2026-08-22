@@ -325,6 +325,9 @@ async fn test_into_mock_definitions_with_dir() {
             sse: None,
             ws: None,
             serve: None,
+            when: None,
+            states: None,
+            fire: None,
         }],
         world: None,
         machines: None,
@@ -368,6 +371,9 @@ async fn test_mock_config_missing_match() {
         sse: None,
         ws: None,
         serve: None,
+        when: None,
+        states: None,
+        fire: None,
     };
 
     let result = config.into_mock_definition().await;
@@ -408,6 +414,9 @@ async fn test_mock_config_missing_return() {
         sse: None,
         ws: None,
         serve: None,
+        when: None,
+        states: None,
+        fire: None,
     };
 
     // No response_config means it defaults to empty response (no longer an error)
@@ -1853,6 +1862,9 @@ async fn test_body_file_with_config_dir() {
         sse: None,
         ws: None,
         serve: None,
+        when: None,
+        states: None,
+        fire: None,
     };
 
     let result = config
@@ -1897,6 +1909,9 @@ async fn test_body_file_not_found_fallback() {
         sse: None,
         ws: None,
         serve: None,
+        when: None,
+        states: None,
+        fire: None,
     };
 
     // Should succeed but file will be loaded on-demand

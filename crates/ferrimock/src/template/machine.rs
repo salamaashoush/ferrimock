@@ -5,7 +5,7 @@
 //! poll-counter scenario has: `machine_state` never moves anything, and
 //! `machine_fire` is the only thing that does.
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 use tera::{Kwargs, State, TeraResult};
 
@@ -13,28 +13,15 @@ use crate::core::machine::{Fired, Machines};
 
 /// The machines every template shares.
 ///
-/// A `RwLock` rather than a `OnceLock`, unlike the persistence store beside it:
-/// machines arrive when a collection declaring them is read, and a hot reload
-/// replaces them. A store that could only ever be set once would pin whichever
-/// collection happened to load first.
-static MACHINES: OnceLock<RwLock<Arc<Machines>>> = OnceLock::new();
-
-fn machines() -> &'static RwLock<Arc<Machines>> {
-    MACHINES.get_or_init(|| RwLock::new(Arc::new(Machines::new([]))))
-}
-
-/// Install the machines templates read. Replaces whatever was there.
-pub fn set_global_machines(declared: Arc<Machines>) {
-    if let Ok(mut held) = machines().write() {
-        *held = declared;
-    }
-}
+/// One per process, and declarations are merged into it rather than replacing
+/// it. Replacing would drop every instance on a hot reload — putting every
+/// order back at `created` because a file was touched — and would let the last
+/// collection in a directory be the only one whose machines existed.
+static MACHINES: OnceLock<Arc<Machines>> = OnceLock::new();
 
 #[must_use]
 pub fn get_global_machines() -> Arc<Machines> {
-    machines()
-        .read()
-        .map_or_else(|_| Arc::new(Machines::new([])), |held| Arc::clone(&held))
+    Arc::clone(MACHINES.get_or_init(|| Arc::new(Machines::new([]))))
 }
 
 fn instance(kwargs: &Kwargs) -> TeraResult<(String, String)> {
@@ -142,14 +129,16 @@ mod tests {
                 .collect(),
             after: Vec::new(),
         };
-        set_global_machines(Arc::new(Machines::new([(
-            LeanString::from("order"),
+        let machines = get_global_machines();
+        machines.forget_declarations();
+        machines.declare(
+            "order",
             Machine::new(vec![
                 state("created", &[("pay", "paid")]),
                 state("paid", &[("ship", "shipped")]),
                 state("shipped", &[]),
             ]),
-        )])));
+        );
     }
 
     fn render(body: &str) -> String {

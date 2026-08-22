@@ -707,6 +707,9 @@ impl MockRecorder {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             };
 
             // Determine if this is the first entry being written to the file.
@@ -973,6 +976,9 @@ impl MockRecorder {
                 sse: None,
                 ws: None,
                 serve: None,
+                when: None,
+                states: None,
+                fire: None,
             };
 
             mocks.push(mock_config);

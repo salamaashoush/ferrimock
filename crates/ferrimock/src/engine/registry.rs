@@ -642,6 +642,10 @@ impl MockRegistry {
         // World phase: settings and schemas, from collections first so a
         // `world.counts` is in force before anything seeds, then the schemas
         // dropped bare in the directory.
+        // Forgotten once, then redeclared from every collection: a machine
+        // deleted from a file has to stop existing, and a machine in the file
+        // beside it must not be collateral.
+        crate::template::get_global_machines().forget_declarations();
         for (file, collection) in &collections {
             Self::apply_collection_machines(collection);
             if let Err(e) = self.apply_collection_world(collection, file).await {
@@ -845,14 +849,15 @@ impl MockRegistry {
         let Some(declared) = &collection.machines else {
             return;
         };
-        let built = declared.iter().filter_map(|(name, machine)| {
-            crate::config::machine_of(machine)
-                .ok()
-                .map(|built| (LeanString::from(name.as_str()), built))
-        });
-        crate::template::set_global_machines(std::sync::Arc::new(
-            crate::core::machine::Machines::new(built),
-        ));
+        let machines = crate::template::get_global_machines();
+        for (name, declared) in declared {
+            match crate::config::machine_of(declared) {
+                Ok(built) => machines.declare(name.as_str(), built),
+                Err(e) => {
+                    tracing::warn!(machine = %name, error = %e, "machine not declared");
+                }
+            }
+        }
     }
 
     /// Populate the world from a collection's `world:` block.
