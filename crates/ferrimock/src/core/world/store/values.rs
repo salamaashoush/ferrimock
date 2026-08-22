@@ -9,9 +9,7 @@
 use lean_string::LeanString;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::core::world::model::{
-    Constraints, FieldDef, LifecycleState, Scalar, ScalarKind, TextShape, ValueSpec,
-};
+use crate::core::world::model::{Constraints, FieldDef, Scalar, ScalarKind, TextShape, ValueSpec};
 use crate::core::world::store::bus;
 use crate::core::world::store::clock;
 use crate::core::world::store::distribution::{
@@ -269,8 +267,7 @@ fn empty_by_state(fields: &[FieldDef], record: &mut JsonMap<String, JsonValue>) 
         let Some(state) = record
             .get(field.name.as_str())
             .and_then(JsonValue::as_str)
-            .and_then(|held| lifecycle.position_of(held))
-            .and_then(|at| lifecycle.state(at))
+            .and_then(|held| lifecycle.get(held))
         else {
             continue;
         };
@@ -424,10 +421,8 @@ fn generate_in_scope(spec: &ValueSpec, path: &str, seed: ValueSeed<'_>, derived:
                 .get(ranking.pick(derived))
                 .map_or(JsonValue::Null, |v| JsonValue::String(v.to_string()))
         }
-        // The weights are the caller's, not a prior: a lifecycle's shape is
-        // domain knowledge, and guessing at it from declaration order is the
-        // one thing that reliably gets it wrong.
-        ValueSpec::Lifecycle(lifecycle) => weighted(&lifecycle.states, derived)
+        ValueSpec::Lifecycle(lifecycle) => lifecycle
+            .weighted(derived)
             .map_or(JsonValue::Null, |state| {
                 JsonValue::String(state.name.to_string())
             }),
@@ -467,23 +462,6 @@ fn render(template: &str) -> JsonValue {
         return JsonValue::Null;
     };
     serde_json::from_str(&rendered).unwrap_or(JsonValue::String(rendered))
-}
-
-/// Which state one draw lands in, given what each weighs.
-fn weighted(states: &[LifecycleState], derived: u64) -> Option<&LifecycleState> {
-    let total: f64 = states.iter().map(|state| state.weight.max(0.0)).sum();
-    if total <= 0.0 {
-        return states.first();
-    }
-    let target = distribution::unit(derived) * total;
-    let mut carried = 0.0;
-    for state in states {
-        carried += state.weight.max(0.0);
-        if carried >= target {
-            return Some(state);
-        }
-    }
-    states.last()
 }
 
 fn list_len(inner: &ValueSpec, derived: u64) -> usize {

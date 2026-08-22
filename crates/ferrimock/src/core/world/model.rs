@@ -6,6 +6,8 @@
 //! becoming the union of both.
 
 use lean_string::LeanString;
+
+use crate::core::machine::{Machine, State as MachineState};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::fmt;
@@ -545,39 +547,21 @@ pub enum ScalarKind {
     Custom(LeanString),
 }
 
-/// A field whose value is a position in a lifecycle.
+/// A field whose value is a position in a machine.
 ///
 /// A status is not a categorical draw. `shipped` *means* `shipped_at` holds a
 /// value and `delivered_at` does not — a logical implication, and no
 /// correlation reproduces one: a latent gives a probability where the schema
 /// needs a certainty. Ordering is the other half: a delivered order cannot go
 /// back to draft, and a service that let it would be broken.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Lifecycle {
-    /// In order. A record moves to a later state, never to an earlier one.
-    pub states: Vec<LifecycleState>,
-}
+///
+/// Both halves are [`Machine`], which is not an entity's idea: a request-driven
+/// mock has states and moves too, and it was a separate mechanism only because
+/// this one lived inside a `ValueSpec`.
+pub type Lifecycle = Machine;
 
-impl Lifecycle {
-    #[must_use]
-    pub fn position_of(&self, state: &str) -> Option<usize> {
-        self.states.iter().position(|held| held.name == state)
-    }
-
-    #[must_use]
-    pub fn state(&self, at: usize) -> Option<&LifecycleState> {
-        self.states.get(at)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LifecycleState {
-    pub name: LeanString,
-    /// How much of the population sits here.
-    pub weight: f64,
-    /// Fields that hold nothing while a record is in this state.
-    pub empty: Vec<LeanString>,
-}
+/// One state of a lifecycle.
+pub type LifecycleState = MachineState;
 
 /// Bounds a generated value has to respect.
 #[derive(Debug, Clone, Default)]

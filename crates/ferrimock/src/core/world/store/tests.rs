@@ -2063,15 +2063,14 @@ fn ordered_store(seed: u64, orders: usize) -> EntityStore {
         name: name.into(),
         weight,
         empty: empty.iter().map(|held| (*held).into()).collect(),
+        on: Vec::new(),
     };
-    let lifecycle = Lifecycle {
-        states: vec![
-            state("draft", 5.0, &["paid_at", "shipped_at", "delivered_at"]),
-            state("paid", 40.0, &["shipped_at", "delivered_at"]),
-            state("shipped", 35.0, &["delivered_at"]),
-            state("delivered", 20.0, &[]),
-        ],
-    };
+    let lifecycle = Lifecycle::new(vec![
+        state("draft", 5.0, &["paid_at", "shipped_at", "delivered_at"]),
+        state("paid", 40.0, &["shipped_at", "delivered_at"]),
+        state("shipped", 35.0, &["delivered_at"]),
+        state("delivered", 20.0, &[]),
+    ]);
 
     let mut graph = EntityGraph::new();
     graph.insert(

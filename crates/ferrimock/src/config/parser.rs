@@ -255,7 +255,7 @@ fn lifecycle_of(
     target: &str,
     states: &[StateConfig],
 ) -> crate::Result<crate::core::world::overrides::FieldRule> {
-    use crate::core::world::model::{Lifecycle, LifecycleState};
+    use crate::core::machine::{Machine, State};
     use crate::core::world::overrides::FieldRule;
 
     if states.len() < 2 {
@@ -263,10 +263,10 @@ fn lifecycle_of(
             "`{target}` is a lifecycle, so it needs at least two states"
         ));
     }
-    Ok(FieldRule::Lifecycle(Lifecycle {
-        states: states
+    Ok(FieldRule::Lifecycle(Machine::new(
+        states
             .iter()
-            .map(|state| LifecycleState {
+            .map(|state| State {
                 name: LeanString::from(state.name.as_str()),
                 weight: state.weight,
                 empty: state
@@ -274,9 +274,10 @@ fn lifecycle_of(
                     .iter()
                     .map(|name| LeanString::from(name.as_str()))
                     .collect(),
+                on: Vec::new(),
             })
             .collect(),
-    }))
+    )))
 }
 
 fn resolve(

@@ -35,6 +35,7 @@ use super::model::{
     Cardinality, Carrier, EntityGraph, EntityKey, EntityType, FieldDef, Relation, Scalar,
     ScalarKind, ValueSpec,
 };
+use crate::core::machine::Move;
 use crate::fake_data::{self, rng};
 use distribution::Preference;
 use values::{Arrival, ValueSeed};
@@ -1487,7 +1488,7 @@ impl EntityStore {
             .get(entity.name.as_str(), key)
             .ok_or_else(|| crate::mp_err!("`{}` with key `{key}` not found", entity.name))?;
 
-        refuse_backward_states(entity, &existing.fields, &provided)?;
+        refuse_undeclared_states(entity, &existing.fields, &provided)?;
 
         let mut fields = if replace {
             JsonMap::new()
@@ -2328,19 +2329,21 @@ fn derive_key(
     }))
 }
 
-/// Refuse a write that moves a record backwards through its own lifecycle.
+/// Refuse a write the field's own machine does not allow.
 ///
 /// A delivered order cannot return to draft. A service that let it would be
 /// broken, so the mock answers the way the real one does rather than storing
-/// the contradiction — which is the whole point of declaring the lifecycle at
-/// all.
-fn refuse_backward_states(
+/// the contradiction — which is the whole point of declaring the states at all.
+/// Which moves are legal is the machine's question, not the store's: an ordered
+/// machine refuses whatever goes back, a drawn one refuses whatever it does not
+/// name.
+fn refuse_undeclared_states(
     entity: &EntityType,
     held: &JsonMap<String, JsonValue>,
     provided: &JsonMap<String, JsonValue>,
 ) -> crate::Result<()> {
     for field in &entity.fields {
-        let ValueSpec::Lifecycle(lifecycle) = &field.value else {
+        let ValueSpec::Lifecycle(machine) = &field.value else {
             continue;
         };
         let Some(wanted) = provided
@@ -2349,23 +2352,22 @@ fn refuse_backward_states(
         else {
             continue;
         };
-        let Some(to) = lifecycle.position_of(wanted) else {
-            return Err(crate::FerrimockError::Conflict(format!(
-                "`{}` has no state `{wanted}`",
-                field.name
-            )));
-        };
         let was = held.get(field.name.as_str()).and_then(JsonValue::as_str);
-        if was
-            .and_then(|state| lifecycle.position_of(state))
-            .is_some_and(|from| to < from)
-        {
-            return Err(crate::FerrimockError::Conflict(format!(
+        let refusal = match machine.allows(was, wanted) {
+            Move::Allowed => continue,
+            Move::NoSuchState => format!("`{}` has no state `{wanted}`", field.name),
+            Move::Backward => format!(
                 "`{}` cannot move from `{}` back to `{wanted}`",
                 field.name,
                 was.unwrap_or_default()
-            )));
-        }
+            ),
+            Move::Undeclared => format!(
+                "`{}` declares no move from `{}` to `{wanted}`",
+                field.name,
+                was.unwrap_or_default()
+            ),
+        };
+        return Err(crate::FerrimockError::Conflict(refusal));
     }
     Ok(())
 }
