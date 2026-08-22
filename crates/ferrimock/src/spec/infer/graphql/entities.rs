@@ -17,7 +17,7 @@ use crate::graphql::introspection::{
     FieldDefinition, ParsedSchema, TypeDefinition, TypeKind, TypeRef,
 };
 use crate::spec::infer::descriptions::{DescriptionHint, hint};
-use crate::spec::infer::semantics::{semantic_of, text_shape_of};
+use crate::spec::infer::semantics::{semantic_fits, semantic_of, text_shape_of};
 
 /// How deep value objects are inlined before the expansion stops.
 ///
@@ -472,15 +472,21 @@ fn scalar_spec(
     }
 
     let kind = scalar_kind(type_name);
-    let mut scalar = Scalar::new(kind).with_shape(text_shape_of(field_name));
+    let mut scalar = Scalar::new(kind.clone()).with_shape(text_shape_of(field_name));
 
     // The field's own name and declared type beat prose about it. A field
     // named `id` on an `ID` is an identifier however its description rambles.
     // A GraphQL schema has nowhere to write an example, so there is never
     // one to read here.
-    if let Some(field_type) = semantic_of(field_name, type_name, None, owner, &[]) {
-        scalar = scalar.with_semantic(field_type);
-    } else if let Some(DescriptionHint::Semantic(field_type)) = mined {
+    // A name is a guess and the declared type is a statement, so a guess that
+    // contradicts it is dropped rather than allowed to win.
+    let guessed = semantic_of(field_name, type_name, None, owner, &[])
+        .or_else(|| match mined {
+            Some(DescriptionHint::Semantic(field_type)) => Some(field_type),
+            _ => None,
+        })
+        .filter(|field_type| semantic_fits(&kind, field_type));
+    if let Some(field_type) = guessed {
         scalar = scalar.with_semantic(field_type);
     }
     ValueSpec::Scalar(scalar)
@@ -693,6 +699,55 @@ mod tests {
         // addresses it, whatever the schema typed it as.
         let sized = graph.get("Sized").expect("`id: Int` is an identifier");
         assert_eq!(sized.key.as_single().map(LeanString::as_str), Some("id"));
+    }
+
+    /// A name is a guess and a declared type is a statement. The guess used to
+    /// win: `isPathSkipped` is `Boolean!` and came back `"https://example.io"`
+    /// because the detector read `Path`.
+    #[test]
+    fn a_declared_type_beats_a_guess_read_off_the_name() {
+        const SCHEMA: &str = r"
+            type Mapping {
+              id: ID!
+              isPathSkipped: Boolean!
+              canGenerateUserToken: Boolean!
+              sourceUrl: String!
+              retryCount: Int!
+            }
+
+            type Query { mappings: [Mapping!]! }
+        ";
+        let graph = to_entity_graph(&parse_sdl(SCHEMA).unwrap());
+        let mapping = graph.get("Mapping").expect("an entity");
+
+        let semantic = |name: &str| match &mapping.field(name).expect(name).value {
+            ValueSpec::Scalar(scalar) => scalar.semantic.clone(),
+            other => panic!("{name} is not a scalar: {other:?}"),
+        };
+
+        // Named like a path and like a token, declared as booleans. Neither
+        // keeps a semantic that would answer with text.
+        for boolean in ["isPathSkipped", "canGenerateUserToken"] {
+            let held = semantic(boolean);
+            assert!(
+                held.as_ref().is_none_or(|field_type| matches!(
+                    field_type,
+                    crate::type_detector::FieldType::Boolean { .. }
+                )),
+                "`{boolean}` is declared Boolean and kept {held:?}"
+            );
+        }
+
+        // And a guess that agrees with the declaration is still taken, or the
+        // fix would just be turning the detector off.
+        assert!(
+            matches!(
+                semantic("sourceUrl"),
+                Some(crate::type_detector::FieldType::Url)
+            ),
+            "a declared String may still be a URL: {:?}",
+            semantic("sourceUrl")
+        );
     }
 
     #[test]

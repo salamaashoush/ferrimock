@@ -10,7 +10,7 @@
 //! Case conventions are handled by the detector's own matcher, so `createdAt`,
 //! `created_at` and `CREATED-AT` all land in the same place.
 
-use crate::core::world::model::TextShape;
+use crate::core::world::model::{ScalarKind, TextShape};
 use crate::type_detector::semantic::{matches_any_field_name, matches_field_name};
 use crate::type_detector::{DateFormat, FieldType, TimestampFormat};
 
@@ -22,6 +22,50 @@ use crate::type_detector::{DateFormat, FieldType, TimestampFormat};
 /// a folder's, and on a `File` it is a filename. Answering all three with
 /// `Cloyd Oberbrunner` is the kind of wrong a screenshot shows immediately.
 #[must_use]
+/// Whether a semantic read off a name may apply to a field of this declared
+/// kind.
+///
+/// A name is a guess and a declared type is a statement, so the statement wins.
+/// Without this the guess quietly beat it: `isPathSkipped` is `Boolean!` in the
+/// schema and the detector read `Path` as a URL, so the field came back
+/// `"https://example.io"`. `canGenerateUserToken` and `isSubjectSkipped` went
+/// the same way — three fields on one real schema answering a type no client
+/// reading that schema can accept.
+#[must_use]
+pub fn semantic_fits(kind: &ScalarKind, semantic: &FieldType) -> bool {
+    match kind {
+        // Only a boolean generator, and only when it is spelled as one: a
+        // `yes`/`no` spelling produces a string, which a `Boolean` field cannot
+        // hold either.
+        ScalarKind::Boolean => {
+            matches!(
+                semantic,
+                FieldType::Boolean {
+                    spelling: crate::type_detector::BooleanSpelling::TrueFalse
+                }
+            ) || matches!(semantic, FieldType::Constant(value) if value.is_boolean())
+        }
+        ScalarKind::Int | ScalarKind::Float => {
+            matches!(
+                semantic,
+                FieldType::SequentialNumber { .. }
+                    | FieldType::RandomNumber { .. }
+                    | FieldType::RandomFloat { .. }
+            ) || matches!(semantic, FieldType::Constant(value) if value.is_number())
+        }
+        // Everything else generates text, and an id is text a client treats as
+        // opaque.
+        ScalarKind::String | ScalarKind::Id => !matches!(
+            semantic,
+            FieldType::SequentialNumber { .. }
+                | FieldType::RandomNumber { .. }
+                | FieldType::RandomFloat { .. }
+        ),
+        // A custom scalar is whatever the spec says it is.
+        ScalarKind::Custom(_) => true,
+    }
+}
+
 pub fn semantic_of(
     field_name: &str,
     type_name: &str,

@@ -85,6 +85,7 @@ pub enum Check {
     StaleClock,
     IdTimeOrder,
     UnreachableState,
+    ShapeDisagreement,
 }
 
 impl Check {
@@ -108,6 +109,7 @@ impl Check {
             Self::StaleClock => "stale-clock",
             Self::IdTimeOrder => "id-time-order",
             Self::UnreachableState => "unreachable-state",
+            Self::ShapeDisagreement => "shape-disagreement",
         }
     }
 
@@ -117,7 +119,8 @@ impl Check {
             Self::RelationDisagreement
             | Self::CountDisagreement
             | Self::SelfParent
-            | Self::UnreachableState => Severity::Broken,
+            | Self::UnreachableState
+            | Self::ShapeDisagreement => Severity::Broken,
             _ => Severity::Tell,
         }
     }
@@ -142,6 +145,7 @@ impl Check {
             Self::StaleClock => "the newest timestamp is older than today",
             Self::IdTimeOrder => "sorting by id does not order by time",
             Self::UnreachableState => "a state nothing can move into",
+            Self::ShapeDisagreement => "a value is not the shape the spec declared",
         }
     }
 }
@@ -344,12 +348,102 @@ fn check_values(entity: &EntityType, records: &[Record], report: &mut Report) {
         }
         let subject = format!("{}.{}", entity.name, field.name);
         check_reachable(field, &subject, report);
+        check_shape(field, &stats, &subject, report);
         check_nullability(entity, field, &stats, &subject, report);
         check_list_length(field, &stats, &subject, report);
         check_enum(field, &stats, &subject, report);
         check_boolean(&stats, &subject, report);
         check_numbers(entity, field, &stats, &subject, report);
         check_text(field, &stats, &subject, report);
+    }
+}
+
+/// Whether the world is the shape the spec that built it declared.
+///
+/// Every other check here measures whether generated data is *convincing*. This
+/// one measures whether it is the data that was asked for, and the spec is the
+/// oracle: a schema saying `[ID!]` and a store answering one string is not an
+/// unlikely value, it is the wrong type, and no client that reads the schema
+/// can cope with it.
+///
+/// The bug that prompted it: a list of ids was chosen as an entity's key, the
+/// store wrote the key as a scalar the way it writes every key, and the field
+/// stopped being served at all — absent from every one of 360 objects a client
+/// selected it on. Nothing compared the output to the declaration that produced
+/// it, so nothing noticed. `constant-list-length` was pointing straight at the
+/// field and reporting "world has 0 arrays", which reads as too small rather
+/// than as wrong.
+fn check_shape(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut Report) {
+    let mut disagreed = |held: &str, wanted: &str| {
+        report.fail(
+            Check::ShapeDisagreement,
+            subject.to_string(),
+            format!("the spec declares {wanted}; the world holds {held}"),
+        );
+    };
+
+    match &field.value {
+        ValueSpec::List(_) => {
+            // Absent or null is nullability, which `never-absent` owns. A
+            // present value that is not an array is a type error.
+            let scalars = stats.strings.len() + stats.numbers.len() + stats.trues + stats.falses;
+            if scalars > 0 {
+                disagreed(&format!("{scalars} value(s) that are not arrays"), "a list");
+            }
+        }
+        ValueSpec::Enum(members) => {
+            let strays: BTreeSet<&String> = stats
+                .enum_counts
+                .keys()
+                .filter(|held| {
+                    !members
+                        .iter()
+                        .any(|member| member.as_str() == held.as_str())
+                })
+                .collect();
+            if let Some(stray) = strays.iter().next() {
+                disagreed(
+                    &format!(
+                        "`{stray}`, which is not one of its {} member(s)",
+                        members.len()
+                    ),
+                    "an enum",
+                );
+            }
+        }
+        ValueSpec::Lifecycle(machine) => {
+            if let Some(stray) = stats
+                .enum_counts
+                .keys()
+                .find(|held| machine.get(held.as_str()).is_none())
+            {
+                disagreed(
+                    &format!("`{stray}`, which is not one of its states"),
+                    "a machine",
+                );
+            }
+        }
+        ValueSpec::Scalar(scalar) => {
+            let wrong = match &scalar.kind {
+                ScalarKind::Int | ScalarKind::Float => {
+                    stats.strings.len() + stats.trues + stats.falses
+                }
+                ScalarKind::Boolean => stats.strings.len() + stats.numbers.len(),
+                // A string field answering with a number is the JSON type
+                // changing under a client, which is the same defect either way.
+                ScalarKind::String | ScalarKind::Id => stats.trues + stats.falses,
+                // A custom scalar is whatever the spec says it is, which is
+                // nothing this can check against.
+                ScalarKind::Custom(_) => 0,
+            };
+            if wrong > 0 {
+                disagreed(
+                    &format!("{wrong} value(s) of another type"),
+                    &format!("{:?}", scalar.kind).to_lowercase(),
+                );
+            }
+        }
+        ValueSpec::Embedded(_) | ValueSpec::Relation(_) | ValueSpec::Template(_) => {}
     }
 }
 

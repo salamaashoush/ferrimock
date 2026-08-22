@@ -55,9 +55,13 @@ pub enum WorldAction {
         #[arg(short, long)]
         dir: Option<PathBuf>,
 
-        /// Exit non-zero when anything at all is reported, not just a defect
+        /// Exit zero even when a tell is reported. Defects still fail.
+        ///
+        /// A tell is a thing a client can distinguish, which is the whole
+        /// reason to run this — so it fails the build by default and this is
+        /// the way to say "not yet".
         #[arg(long)]
-        strict: bool,
+        lenient: bool,
     },
 }
 
@@ -100,7 +104,7 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
             fit(world, &recordings, out.as_deref()).await
         }
 
-        WorldAction::Doctor { dir, strict } => {
+        WorldAction::Doctor { dir, lenient } => {
             let registry = MockRegistry::new();
             let dir = dir.unwrap_or_else(|| PathBuf::from(crate::config::mocks_dir()));
 
@@ -120,7 +124,7 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
                 );
                 return Ok(());
             }
-            diagnose(&world.store(), strict)
+            diagnose(&world.store(), lenient)
         }
     }
 }
@@ -209,7 +213,7 @@ async fn fit(
 /// ship, so the report leads with the counts rather than with the prose.
 fn diagnose(
     store: &ferrimock::core::world::store::EntityStore,
-    strict: bool,
+    lenient: bool,
 ) -> anyhow::Result<()> {
     use ferrimock::core::world::doctor::{self, Severity};
 
@@ -279,7 +283,10 @@ fn diagnose(
         }
     }
 
-    if report.broken() > 0 || (strict && !report.is_clean()) {
+    // A tell fails by default. Reporting one and exiting zero makes the whole
+    // thing advisory, and an advisory lint is one nobody runs — which is how a
+    // world acquires the tells this exists to name.
+    if report.broken() > 0 || (!lenient && !report.is_clean()) {
         anyhow::bail!("world doctor reported {} finding(s)", report.findings.len());
     }
     Ok(())
