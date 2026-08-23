@@ -2278,10 +2278,7 @@ fn a_declared_edge_decides_the_move_rather_than_the_order() {
     let paid = holding("paid").expect("a paid order");
     // Backwards, and allowed, because `refund` names it. An ordering refuses
     // this outright and there is no way to ask it not to.
-    assert!(
-        moved(paid.clone(), "draft").is_ok(),
-        "refund is a real move"
-    );
+    assert!(moved(paid, "draft").is_ok(), "refund is a real move");
 
     let paid = holding("paid").expect("another paid order");
     let skipped = moved(paid, "delivered");

@@ -62,6 +62,15 @@ pub enum WorldAction {
         /// the way to say "not yet".
         #[arg(long)]
         lenient: bool,
+
+        /// A check whose findings are known and accepted, by name. Repeatable.
+        ///
+        /// Strict by default is only adoptable if a world that already has a
+        /// tell can start failing on *new* ones. The findings are still
+        /// printed and still counted — accepting one says "seen, decided,
+        /// not yet", not "hide it" — and anything unaccepted still fails.
+        #[arg(long = "accept", value_name = "CHECK")]
+        accepted: Vec<String>,
     },
 }
 
@@ -104,7 +113,11 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
             fit(world, &recordings, out.as_deref()).await
         }
 
-        WorldAction::Doctor { dir, lenient } => {
+        WorldAction::Doctor {
+            dir,
+            lenient,
+            accepted,
+        } => {
             let registry = MockRegistry::new();
             let dir = dir.unwrap_or_else(|| PathBuf::from(crate::config::mocks_dir()));
 
@@ -124,7 +137,7 @@ pub async fn execute(command: WorldCommand) -> anyhow::Result<()> {
                 );
                 return Ok(());
             }
-            diagnose(&world.store(), lenient)
+            diagnose(&world.store(), lenient, &accepted)
         }
     }
 }
@@ -214,6 +227,7 @@ async fn fit(
 fn diagnose(
     store: &ferrimock::core::world::store::EntityStore,
     lenient: bool,
+    accepted: &[String],
 ) -> anyhow::Result<()> {
     use ferrimock::core::world::doctor::{self, Severity};
 
@@ -286,8 +300,28 @@ fn diagnose(
     // A tell fails by default. Reporting one and exiting zero makes the whole
     // thing advisory, and an advisory lint is one nobody runs — which is how a
     // world acquires the tells this exists to name.
-    if report.broken() > 0 || (!lenient && !report.is_clean()) {
-        anyhow::bail!("world doctor reported {} finding(s)", report.findings.len());
+    let unaccepted: Vec<&doctor::Finding> = report
+        .findings
+        .iter()
+        .filter(|finding| !accepted.iter().any(|name| name == finding.check.name()))
+        .collect();
+    let accepted_count = report.findings.len() - unaccepted.len();
+    if accepted_count > 0 {
+        crate::say!();
+        crate::say!(
+            "{}",
+            ui::dim(&format!(
+                "{accepted_count} finding(s) accepted by name and not failing this run: {}",
+                accepted.join(", ")
+            ))
+        );
+    }
+    let broken = unaccepted
+        .iter()
+        .filter(|finding| finding.check.severity() == Severity::Broken)
+        .count();
+    if broken > 0 || (!lenient && !unaccepted.is_empty()) {
+        anyhow::bail!("world doctor reported {} finding(s)", unaccepted.len());
     }
     Ok(())
 }

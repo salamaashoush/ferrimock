@@ -86,6 +86,7 @@ pub enum Check {
     IdTimeOrder,
     UnreachableState,
     ShapeDisagreement,
+    CrowdedDay,
 }
 
 impl Check {
@@ -94,7 +95,7 @@ impl Check {
     /// Exhaustive by construction: the test that pairs each with a world it
     /// fires on matches over this, so a new variant does not compile until
     /// somebody has shown it can fail.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::RelationDisagreement,
         Self::CountDisagreement,
         Self::SelfParent,
@@ -112,6 +113,7 @@ impl Check {
         Self::IdTimeOrder,
         Self::UnreachableState,
         Self::ShapeDisagreement,
+        Self::CrowdedDay,
     ];
 
     /// The stable name a report is diffed on.
@@ -135,6 +137,7 @@ impl Check {
             Self::IdTimeOrder => "id-time-order",
             Self::UnreachableState => "unreachable-state",
             Self::ShapeDisagreement => "shape-disagreement",
+            Self::CrowdedDay => "crowded-day",
         }
     }
 
@@ -171,6 +174,7 @@ impl Check {
             Self::IdTimeOrder => "sorting by id does not order by time",
             Self::UnreachableState => "a state nothing can move into",
             Self::ShapeDisagreement => "a value is not the shape the spec declared",
+            Self::CrowdedDay => "most of a collection shares one calendar day",
         }
     }
 }
@@ -772,6 +776,7 @@ fn check_numbers(
 /// vocabulary.
 fn check_text(field: &FieldDef, stats: &FieldStats, subject: &str, report: &mut Report) {
     check_day_of_month(stats, subject, report);
+    check_crowded_day(stats, subject, report);
     check_clock(stats, subject, report);
     // A declared enum is a closed set by definition and a written date is a
     // calendar rather than a vocabulary; both are already measured above.
@@ -947,6 +952,73 @@ fn ordinal(day: u32) -> String {
         _ => "th",
     };
     format!("{day}{suffix}")
+}
+
+/// Whether a collection's timestamps pile onto a single day.
+///
+/// Arrivals are recency-weighted on purpose — a service whose volume grew — and
+/// that is right. What is not right is the degree: `moment_of` puts a record's
+/// age at `history/(1+ordinal)`, so the number of records younger than a day is
+/// `N - history`, which grows without bound. Measured across a real schema, the
+/// median timestamp field puts 44% of its values on one calendar day and the
+/// worst puts 84%.
+///
+/// A client sorting or grouping by such a field gets a tie block covering half
+/// the collection, and the doctor has been blaming its own sample size for it:
+/// `day-of-month` reports "needs 39 distinct dates, world has 15" on fields
+/// holding six hundred values, which reads as a world too small when it is
+/// really a clock too steep. Naming it here is what separates those.
+///
+/// The threshold is what growth can explain. A collection doubling in size
+/// every `d` days has about `1 - 2^(-1/d)` of everything on its newest day:
+/// monthly doubling gives 2%, weekly gives 9%, and reaching a quarter needs a
+/// doubling time under three days sustained across the whole span. Past that
+/// the arrival *rate* is diverging rather than growing, which nothing real
+/// does.
+fn check_crowded_day(stats: &FieldStats, subject: &str, report: &mut Report) {
+    /// What the fastest growth anyone would claim puts on one day.
+    const EXPLAINABLE: f64 = 0.25;
+    /// Below this the collection is too young for one busy day to mean
+    /// anything: everything in it did happen at about the same time.
+    const SETTLED_DAYS: i64 = 30;
+    const ENOUGH: usize = 90;
+
+    let dates: Vec<chrono::NaiveDate> = stats
+        .strings
+        .iter()
+        .filter_map(|text| calendar_of(text))
+        .filter_map(|(year, month, day)| chrono::NaiveDate::from_ymd_opt(year, month, day))
+        .collect();
+    if dates.len() < ENOUGH {
+        return;
+    }
+    let (Some(first), Some(last)) = (dates.iter().min(), dates.iter().max()) else {
+        return;
+    };
+    if (*last - *first).num_days() < SETTLED_DAYS {
+        return;
+    }
+
+    let mut per_day: BTreeMap<chrono::NaiveDate, usize> = BTreeMap::new();
+    for date in &dates {
+        *per_day.entry(*date).or_insert(0) += 1;
+    }
+    let Some((busiest, held)) = per_day.iter().max_by_key(|(_, held)| **held) else {
+        return;
+    };
+    let share = ratio_of(*held, dates.len());
+    if share > EXPLAINABLE {
+        report.fail(
+            Check::CrowdedDay,
+            subject.to_string(),
+            format!(
+                "{held} of {} value(s) fall on {busiest}, {:.0}% of a {}-day span",
+                dates.len(),
+                share * 100.0,
+                (*last - *first).num_days()
+            ),
+        );
+    }
 }
 
 fn check_clock(stats: &FieldStats, subject: &str, report: &mut Report) {

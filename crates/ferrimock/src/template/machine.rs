@@ -30,7 +30,7 @@ fn instance(kwargs: &Kwargs) -> TeraResult<(String, String)> {
     // a circuit breaker is: state about the service, not about a resource.
     let key = kwargs
         .get::<&str>("key")?
-        .map_or_else(String::new, ToString::to_string);
+        .map_or_else(String::new, str::to_string);
     Ok((machine, key))
 }
 
@@ -38,7 +38,7 @@ fn unknown(machine: &str) -> tera::Error {
     let known = get_global_machines()
         .names()
         .iter()
-        .map(|name| name.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
     tera::Error::message(if known.is_empty() {

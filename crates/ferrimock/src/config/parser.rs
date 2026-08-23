@@ -741,6 +741,25 @@ fn fragment_of(id: &str, response: &ResponseConfig) -> crate::Result<String> {
     ))
 }
 
+impl Default for MockCollectionConfig {
+    /// So a caller can write the two fields they care about and leave the rest.
+    ///
+    /// Adding one field to this struct broke roughly thirty-five literals
+    /// across two repositories, three times in one day. A struct that grows is
+    /// a struct callers should not have to spell in full.
+    fn default() -> Self {
+        Self {
+            name: None,
+            description: None,
+            enabled: true,
+            vars: None,
+            mocks: Vec::new(),
+            world: None,
+            machines: None,
+        }
+    }
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -983,6 +1002,8 @@ impl MockConfig {
     /// is that the states are data a reader can see rather than a branch they
     /// have to execute.
     fn lower_machine_bindings(&mut self) -> crate::Result<()> {
+        use std::fmt::Write as _;
+
         if self.when.is_none() && self.fire.is_none() {
             return Ok(());
         }
@@ -998,36 +1019,39 @@ impl MockConfig {
         if let Some(fire) = &self.fire {
             // Moved before answering, so the response can describe where it
             // landed rather than where it was.
-            body.push_str(&format!(
-                "{{%- set _fired = machine_fire(machine=\"{}\", key={}, event=\"{}\") -%}}\n",
+            let _ = writeln!(
+                body,
+                "{{%- set _fired = machine_fire(machine=\"{}\", key={}, event=\"{}\") -%}}",
                 fire.machine,
                 key_expression(fire.key.as_deref()),
                 fire.event
-            ));
+            );
         }
 
         match (self.when.clone(), self.states.clone()) {
             (Some(when), Some(states)) => {
-                body.push_str(&format!(
-                    "{{%- set _at = machine_state(machine=\"{}\", key={}) -%}}\n",
+                let _ = writeln!(
+                    body,
+                    "{{%- set _at = machine_state(machine=\"{}\", key={}) -%}}",
                     when.machine,
                     key_expression(when.key.as_deref())
-                ));
+                );
                 let mut first = true;
                 for (at, response) in &states {
                     body.push_str(if first { "{%- if " } else { "{%- elif " });
                     first = false;
-                    body.push_str(&format!("_at == \"{at}\" -%}}\n"));
+                    let _ = writeln!(body, "_at == \"{at}\" -%}}");
                     body.push_str(&fragment_of(&self.id, response)?);
                     body.push('\n');
                 }
                 // A state with no response is the declaration disagreeing with
                 // itself; saying so beats answering an arbitrary one.
-                body.push_str(&format!(
+                let _ = write!(
+                    body,
                     "{{%- else -%}}\n{{\"status\": 501, \"body\": {{\"error\": \"mock `{}` has no \
                      response for this state\", \"state\": \"{{{{ _at }}}}\"}}}}\n{{%- endif -%}}",
                     self.id
-                ));
+                );
             }
             // A bare `fire:` keeps whatever response was already written.
             (_, None) => {
@@ -1037,7 +1061,14 @@ impl MockConfig {
                     None => "{\"status\": 200, \"body\": {}}".to_string(),
                 });
             }
-            (None, Some(_)) => unreachable!("guarded above"),
+            // `states:` without `when:` is refused above, so this is the
+            // compiler asking rather than a case that can happen.
+            (None, Some(_)) => {
+                return Err(crate::mp_err!(
+                    "mock `{}`: `states:` without a `when:`",
+                    self.id
+                ));
+            }
         }
 
         self.when = None;
@@ -1455,6 +1486,18 @@ world:
             .field_rules(config.machines.as_ref())
             .expect_err("`pahd` is not a state");
         assert!(failed.to_string().contains("pahd"), "{failed}");
+    }
+
+    /// The pattern that stops the next field from breaking every caller.
+    #[test]
+    fn a_collection_can_be_built_from_the_fields_that_matter() {
+        let collection = MockCollectionConfig {
+            name: Some("two fields".to_string()),
+            ..MockCollectionConfig::default()
+        };
+        assert!(collection.enabled, "a collection is on unless it says not");
+        assert!(collection.mocks.is_empty());
+        assert!(collection.machines.is_none());
     }
 
     #[test]

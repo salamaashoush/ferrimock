@@ -14,14 +14,6 @@ use crate::core::world::model::{ScalarKind, TextShape};
 use crate::type_detector::semantic::{matches_any_field_name, matches_field_name};
 use crate::type_detector::{DateFormat, FieldType, TimestampFormat};
 
-/// Infer a field's meaning from its name and, failing that, from the name of
-/// the type the spec gave it.
-///
-/// `owner` is the entity the field belongs to, which is the only thing that can
-/// settle a bare `name`: on a `User` it is a person's name, on a `Folder` it is
-/// a folder's, and on a `File` it is a filename. Answering all three with
-/// `Cloyd Oberbrunner` is the kind of wrong a screenshot shows immediately.
-#[must_use]
 /// Whether a semantic read off a name may apply to a field of this declared
 /// kind.
 ///
@@ -66,6 +58,14 @@ pub fn semantic_fits(kind: &ScalarKind, semantic: &FieldType) -> bool {
     }
 }
 
+/// Infer a field's meaning from its name and, failing that, from the name of
+/// the type the spec gave it.
+///
+/// `owner` is the entity the field belongs to, which is the only thing that can
+/// settle a bare `name`: on a `User` it is a person's name, on a `Folder` it is
+/// a folder's, and on a `File` it is a filename. Answering all three with
+/// `Cloyd Oberbrunner` is the kind of wrong a screenshot shows immediately.
+#[must_use]
 pub fn semantic_of(
     field_name: &str,
     type_name: &str,

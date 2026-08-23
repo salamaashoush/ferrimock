@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use ferrimock::core::machine::{Edge, Machine, Machines, State, Timer};
+use ferrimock::core::machine::{Machine, Machines, State, Timer};
 use proptest::prelude::*;
 
 /// A chain: each state moves to the next after a second, the last is terminal.

@@ -944,6 +944,24 @@ fn every_check_has_been_seen_to_fail() {
                 check_reachable(&field, "Order.status", &mut report);
                 fired(&report)
             }
+            Check::CrowdedDay => {
+                let mut report = Report::default();
+                // A year of history with half of everything on one day of it.
+                let mut strings: Vec<String> = (0..365)
+                    .map(|day| {
+                        let date = chrono::NaiveDate::from_ymd_opt(2025, 1, 1).expect("a date")
+                            + chrono::Duration::days(day);
+                        format!("{date}T09:00:00Z")
+                    })
+                    .collect();
+                strings.extend((0..400).map(|_| "2025-06-15T09:00:00Z".to_string()));
+                let stats = FieldStats {
+                    strings,
+                    ..FieldStats::default()
+                };
+                check_crowded_day(&stats, "Doc.at", &mut report);
+                fired(&report)
+            }
             Check::ShapeDisagreement => {
                 let mut report = Report::default();
                 let field = FieldDef::new(
@@ -993,4 +1011,53 @@ fn every_check_has_been_seen_to_fail() {
             ),
         }
     }
+}
+
+/// The clock is recency-weighted on purpose, so the check has to separate
+/// "recent" from "all on one day" — otherwise it fires on the shape the
+/// generator is meant to have and tells nobody anything.
+#[test]
+fn a_busy_day_is_named_and_an_ordinary_recency_weighting_is_not() {
+    fn measured(strings: Vec<String>) -> Report {
+        let mut report = Report::default();
+        let stats = FieldStats {
+            strings,
+            ..FieldStats::default()
+        };
+        check_crowded_day(&stats, "Doc.at", &mut report);
+        report
+    }
+    fn on(day: i64) -> String {
+        let date = chrono::NaiveDate::from_ymd_opt(2025, 1, 1).expect("a date")
+            + chrono::Duration::days(day);
+        format!("{date}T09:00:00Z")
+    }
+
+    // Doubling every thirty days over a year: heavily weighted to the recent
+    // end, and no single day holds much of it. This is the shape the clock is
+    // *for*, and firing on it would make the check useless.
+    let grown: Vec<String> = (0..365)
+        .flat_map(|day| {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let weight = (f64::from(i32::try_from(day).unwrap_or(0)) / 30.0).exp2() as usize;
+            std::iter::repeat_n(on(day), weight.max(1))
+        })
+        .collect();
+    assert!(
+        failed(&measured(grown), Check::CrowdedDay).is_empty(),
+        "monthly doubling is growth, not a pile"
+    );
+
+    // The same span with half of everything on one day is not growth.
+    let mut piled: Vec<String> = (0..365).map(on).collect();
+    piled.extend((0..400).map(|_| on(200)));
+    assert_eq!(failed(&measured(piled), Check::CrowdedDay).len(), 1);
+
+    // And a collection younger than a month is not judged: everything in it
+    // did happen at about the same time.
+    let young: Vec<String> = (0..200).map(|_| on(3)).collect();
+    assert!(
+        failed(&measured(young), Check::CrowdedDay).is_empty(),
+        "a three-day-old collection has not had time to spread"
+    );
 }

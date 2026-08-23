@@ -82,7 +82,17 @@ jobs:
       # this red rather than quietly reading as "too small to say".
       #
       # Strict by default: a tell fails here, not just a defect.
-      - run: cargo run --release -p ferrimock-cli -- world doctor -d crates/ferrimock/tests/fixtures/doctor
+      #
+      # `crowded-day` is accepted rather than fixed, and the reason is written
+      # down because "accepted" has to mean decided rather than ignored. The
+      # arrival clock owes three things at once — a fixed history, a recent
+      # newest record, and a time that does not change when the census is
+      # resized — and no monotone sequence satisfies all three: search the
+      # `H/(1+i/k)^a` family and every law under 25% on one day leaves the
+      # newest record more than a year old. `an_arrival_does_not_depend_on_how
+      # _many_arrivals_there_are` is the constraint that would have to give.
+      # The finding is still printed on every run; anything else still fails.
+      - run: cargo run --release -p ferrimock-cli -- world doctor -d crates/ferrimock/tests/fixtures/doctor --accept crowded-day
 
   doc:
     name: Documentation

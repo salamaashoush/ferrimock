@@ -63,14 +63,14 @@ pub struct State {
 }
 
 /// A move that needs no event, only time.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Timer {
     pub after: std::time::Duration,
     pub target: LeanString,
 }
 
 /// One named move out of a state.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edge {
     pub event: LeanString,
     pub target: LeanString,
