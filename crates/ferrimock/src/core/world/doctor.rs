@@ -263,7 +263,8 @@ impl Report {
 /// cannot be told from a fair coin at all — which is how a real schema came to
 /// answer three hundred and eight checks with "the world is too small" instead
 /// of a result. Nothing about a lint requires the counts a mount asked to
-/// serve, so those checks read a census of their own, sized to [`SAMPLE_CAP`].
+/// serve, so those checks read a census of their own, wide enough that the
+/// hungriest of them has something to measure.
 ///
 /// A count someone stated by name is left where they put it. It is a fact
 /// about a world that was wanted, and [`Check::WorldSize`] still has to be
