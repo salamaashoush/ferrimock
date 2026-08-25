@@ -61,6 +61,22 @@ server = ["engine", "dep:axum", "dep:tower-http", "dep:notify", "dep:tokio-tungs
 # Mock management HTTP API (axum router)
 api = ["server"]
 
+# Reverse proxy: mocks first, upstream for everything else. An axum router on
+# an axum server; the extra dependencies are the upstream client and the TLS
+# material, neither of which is a web framework's job.
+proxy = [
+  "server",
+  "dep:axum-server",
+  "dep:hyper",
+  "dep:hyper-util",
+  "dep:hyper-rustls",
+  "dep:http-body",
+  "dep:http-body-util",
+  "dep:rustls",
+  "dep:rcgen",
+  "dep:pin-project-lite",
+]
+
 # Config schema generation (for editor extensions)
 schema = ["dep:schemars"]
 
@@ -79,7 +95,7 @@ scripting = [
 ]
 
 # Everything
-full = ["engine", "graphql", "spec", "server", "api", "schema", "scripting"]
+full = ["engine", "graphql", "spec", "server", "api", "schema", "scripting", "proxy"]
 
 [dependencies]
 async-graphql = { workspace = true, optional = true }
@@ -146,6 +162,17 @@ tokio-tungstenite = { workspace = true, optional = true }
 # SSE upstream passthrough client (rustls; already a workspace dep via the CLI)
 reqwest = { workspace = true, optional = true }
 
+# Proxy (proxy feature)
+axum-server = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+hyper-rustls = { workspace = true, optional = true }
+http-body = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rcgen = { workspace = true, optional = true }
+pin-project-lite = { workspace = true, optional = true }
+
 # Schema (schema feature)
 schemars = { version = "1", optional = true }
 
@@ -172,6 +199,15 @@ tokio = { workspace = true, features = ["test-util"] }
 # WS test client (frames must be masked; this is the standard axum-ws test client)
 tokio-tungstenite = { workspace = true }
 uuid = { workspace = true }
+# Proxy tests drive a real browser-side client against a real upstream, so
+# they need a client that is not the one under test.
+reqwest = { workspace = true, features = ["stream"] }
+hyper = { workspace = true }
+hyper-util = { workspace = true, features = ["server", "server-auto"] }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+serde_json = { workspace = true }
 
 [[bench]]
 name = "mock_performance"
@@ -193,6 +229,11 @@ harness = false
 name = "script_performance"
 harness = false
 required-features = ["scripting"]
+
+[[bench]]
+name = "proxy_overhead"
+harness = false
+required-features = ["proxy"]
 
 [[bench]]
 name = "world_performance"

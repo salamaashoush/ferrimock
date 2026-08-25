@@ -130,8 +130,31 @@ tokio = { version = "1.53", features = ["full"] }
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "timeout"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+
+# Proxy. axum serves the connection; these are the pieces it has no opinion
+# about -- an upstream client, TLS material, and a body combinator for the
+# recording tee.
+hyper = { version = "1.11", features = ["http1", "http2", "client"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "tokio"] }
+http-body = "1"
+http-body-util = "0.1"
+# aws-lc-rs everywhere: rustls resolves its crypto provider process-wide, and a
+# second provider in the tree turns that into a runtime panic on first connect.
+hyper-rustls = { version = "0.27", default-features = false, features = [
+  "http1",
+  "http2",
+  "aws-lc-rs",
+  "native-tokio",
+  "webpki-tokio",
+  "tls12",
+  "logging",
+] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12", "logging"] }
+rcgen = "0.14"
+pin-project-lite = "0.2"
 
 # Serialization
 base64 = "0.23"
