@@ -34,6 +34,16 @@
 //! | `scripting` | no | JS-scripted mock handlers on an embedded QuickJS engine |
 //! | `full` | no | Enable everything |
 
+// `load_from_directory` joins futures over an `async fn` that itself returns
+// `impl Future`, and proving that chain `Send` walks a layer per combinator.
+// Since nightly-2026-08-24 the solver runs out of depth doing it, and what
+// fails is not the future but whatever transitively awaits it -- an axum
+// handler in `api`, with an error naming neither. Boxing the inner futures
+// does not help: the coercion needs the same `Send` proof, so it overflows in
+// the same place while costing an allocation per file. The depth is the
+// constraint, so the depth is what is raised.
+#![recursion_limit = "256"]
+
 // ---------------------------------------------------------------------------
 // Core (always available when engine is enabled)
 // ---------------------------------------------------------------------------
