@@ -122,7 +122,7 @@ enum Command {
     ///   ferrimock proxy --mocks ./mocks http://localhost:5173
     ///
     ///   # Record everything that reaches the real backend
-    ///   ferrimock proxy --record ./recordings https://api.example.com
+    ///   ferrimock proxy --record ./recordings api.example.com
     ///
     ///   # Serve over TLS so the page gets a secure context
     ///   ferrimock proxy --tls http://localhost:5173
@@ -132,7 +132,7 @@ enum Command {
         #[arg(value_name = "UPSTREAM", value_hint = ValueHint::Url)]
         upstream: Option<String>,
 
-        /// Route, as <prefix>=<upstream>. Repeatable; the longest prefix wins
+        /// Route, written PREFIX=UPSTREAM. Repeatable; the longest prefix wins
         #[arg(short = 'r', long = "route", value_name = "SPEC")]
         routes: Vec<String>,
 
