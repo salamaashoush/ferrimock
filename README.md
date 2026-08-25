@@ -445,6 +445,61 @@ ferrimock world explain --dir mocks/   # what is in the world, and from where
 
 Details in [Mock Engine](docs/MOCK_ENGINE.md).
 
+## Reverse Proxy
+
+Put ferrimock in front of a dev server or a backend and point the browser at it
+instead. A request that matches a mock is answered locally; everything else
+reaches the real thing. One origin covers both, so there is no CORS to
+configure and nothing in the application changes.
+
+```bash
+# In front of a vite dev server
+ferrimock proxy http://localhost:5173
+
+# API to a backend, everything else to vite. The longest prefix wins
+ferrimock proxy -r /api=http://localhost:8080 -r /=http://localhost:5173
+
+# With mocks, so anything they match never reaches the upstream
+ferrimock proxy --mocks ./mocks http://localhost:5173
+
+# Record what does reach the real backend, ready to consolidate into mocks
+ferrimock proxy --record ./recordings https://api.example.com
+
+# Terminate TLS with a generated certificate, for a secure browsing context
+ferrimock proxy --tls http://localhost:5173
+```
+
+The forwarding path never collects a body. A request is read into memory only
+when some registered mock matches on request bodies, and a response only when a
+`patch:` mock is rewriting one; everything else moves frame by frame. So an
+upload, a bundle and an event stream each cost one frame of memory rather than
+their own size, and HMR WebSockets and SSE work without configuration.
+Recording keeps that property by teeing the body as it streams rather than
+collecting it first.
+
+Downstream it is an axum router on an axum server, so HTTP/1.1, HTTP/2 and
+WebSocket all work as they do anywhere else in axum. Upstream it speaks
+HTTP/1.1 and HTTP/2 by ALPN, TLS with optional certificate validation, and
+WebSocket.
+
+From Rust, behind the `proxy` feature:
+
+```rust
+use ferrimock::proxy::{ProxyConfig, RouteConfig};
+
+let mut config = ProxyConfig {
+    routes: vec![
+        RouteConfig::parse("/api=http://localhost:8080")?,
+        RouteConfig::parse("/=http://localhost:5173")?,
+    ],
+    ..ProxyConfig::default()
+};
+config.compile();
+
+let proxy = ferrimock::proxy::start(config, Some(matcher)).await?;
+println!("listening on {}", proxy.url());
+```
+
 ## Packages
 
 | Package | Description |
@@ -472,6 +527,7 @@ npm install -g @ferrimock/cli              # Prebuilt binary via npm
 cargo install ferrimock-cli --locked       # Or build from source
 
 ferrimock mock serve mocks/                # Serve mocks with hot reload
+ferrimock proxy http://localhost:5173      # Proxy a dev server, mocks first
 ferrimock mock create "/api/users/:id"     # Create a mock
 ferrimock mock test -m GET /api/users/123  # Test matching
 ferrimock fake data email --count 10       # Generate fake data
