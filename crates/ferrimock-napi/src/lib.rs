@@ -1,4 +1,8 @@
 #![deny(clippy::all)]
+// See the note in `ferrimock`'s lib.rs: proving the mock loader's future
+// `Send` needs more solver depth than the default allows since
+// nightly-2026-08-24, and the limit is per crate rather than inherited.
+#![recursion_limit = "256"]
 // `#[napi]` exports are invoked from JS, not Rust — rustc/clippy see them as
 // unused. Suppress crate-wide rather than annotating every binding.
 #![allow(dead_code)]

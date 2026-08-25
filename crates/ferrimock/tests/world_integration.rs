@@ -1,3 +1,8 @@
+// See the note in `ferrimock`'s lib.rs: proving the mock loader's future
+// `Send` needs more solver depth than the default allows since
+// nightly-2026-08-24, and the limit is per crate rather than inherited.
+#![recursion_limit = "256"]
+
 //! One cohesive system, end to end.
 //!
 //! A directory holding a schema, a collection that says where it is served,
