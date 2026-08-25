@@ -8,6 +8,7 @@ mod export;
 pub mod fake;
 mod format;
 mod list;
+pub mod proxy;
 mod recordings;
 mod reload;
 mod serve;
