@@ -4,6 +4,61 @@ Behaviour that changed between releases, and what to do about it. The
 [CHANGELOG](CHANGELOG.md) lists every commit; this lists only the ones that can
 break a working setup.
 
+## 0.3.0 to 0.4.0
+
+Six breaking changes, all of them in the state machines and the world doctor.
+The short version: **nothing in the mock engine, the templates, the recorder or
+the consolidator moved.** YAML mock files, HAR recordings and `setupServer`
+handlers written against 0.3.0 all still work unchanged. What breaks is Rust
+code that constructs the config structs field by field, or matches
+exhaustively on the doctor's checks.
+
+### Config structs gained fields
+
+`MockConfig` gained `when`, `states` and `fire`; `MockCollectionConfig` gained
+`machines`; `StateConfig` and `core::machine::State` gained `on` and `after`;
+`CoverageReport` gained `unreached_states` and `untaken_edges`. Every one is
+additive, and every one breaks a struct literal that listed all the fields.
+
+```rust
+// before
+let config = MockConfig { id, priority, /* ... every field ... */ };
+
+// after: let the defaults fill in what you did not set
+let config = MockConfig { id, priority, ..MockConfig::default() };
+```
+
+`..Default::default()` is the fix, and it keeps working the next time a field
+is added.
+
+### `core::machine::Machine` no longer exposes its fields
+
+`states` was public and is now private, and the new `on` is private too. A
+machine is built by the config loader from a `machines:` block, which is how
+every supported path already reached it; read its shape through the methods
+rather than the fields.
+
+### `doctor::Check` gained three variants
+
+`UnreachableState`, `ShapeDisagreement` and `CrowdedDay`. A `match` over
+`Check` needs a `_ => {}` arm, or arms for the three.
+
+### `WorldConfig::field_rules` takes an argument
+
+It now takes the collection's `machines`, because a field rule can name a
+machine's state and resolving that needs the declarations. Pass `None` if you
+declare no machines:
+
+```rust
+let rules = world_config.field_rules(None)?;
+```
+
+### Why the version jumped a minor rather than a patch
+
+`cargo-semver-checks` reports these against the published 0.3.0, so the release
+is 0.4.0 even though the surface most people use is unchanged. If you only load
+mocks from files, nothing here applies to you.
+
 ## 0.2.0 to 0.3.0
 
 Nine breaking changes, all of them in the entity world and the spec-derived

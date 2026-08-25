@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-08-25
+
+Six breaking changes, all in the state machines and the world doctor added
+since 0.3.0. Nothing in the mock engine, the templates or the recorder moved.
+A `MockConfig` or `MockCollectionConfig` built field by field will not compile,
+and neither will a `match` over `doctor::Check`. See
+[UPGRADING.md](UPGRADING.md).
+
+The headline feature is `ferrimock proxy`: the engine in front of a dev server
+or a real backend, on one origin, answering from mocks and forwarding
+everything else.
+
+### Bug Fixes
+
+- *(doctor)* Measure vocabulary where it means something, and how ([8728943](https://github.com/salamaashoush/ferrimock/commit/8728943379e7a3492db2f2e148205d70a86478a9))
+- *(doctor)* A key is not a field that is never absent ([06631da](https://github.com/salamaashoush/ferrimock/commit/06631dad1fe8874cc4b7678cd8bbdda4066ad61b))
+- *(doctor)* An id tracks creation, not every timestamp beside it ([de35969](https://github.com/salamaashoush/ferrimock/commit/de359694c42f1421355b0ed8d64ccc2308b21b04))
+- *(doctor)* An enum needs enough draws before flat means flat ([61e9c2a](https://github.com/salamaashoush/ferrimock/commit/61e9c2ac26f605fafb501f15b76dcee49f068f5f))
+- *(doctor)* A key numbers the census, it does not draw from a bound ([f919f20](https://github.com/salamaashoush/ferrimock/commit/f919f207a0897ad6149780276e3b939045e15745))
+- *(doctor)* A date repeated is not a date drawn again ([251a388](https://github.com/salamaashoush/ferrimock/commit/251a388066a42bdfebd4c7ea13381446b8274e7a))
+- *(doctor)* A floor set at the average skew cannot see half of what it draws ([51776c9](https://github.com/salamaashoush/ferrimock/commit/51776c9497992ee76c4331ca64bd98acbcca398e))
+- *(graphql)* A list of ids is not the field that addresses one record ([f370683](https://github.com/salamaashoush/ferrimock/commit/f37068319564eed8dcbc505fef2f8a034617f357))
+- *(fake-data)* A flag a template draws is not a fair coin either ([b304e89](https://github.com/salamaashoush/ferrimock/commit/b304e894fa0c147542dfa4a92df07e3bb2acd5d8))
+- *(config)* A machine an editor cannot complete is a machine nobody writes ([ee9c5b1](https://github.com/salamaashoush/ferrimock/commit/ee9c5b11a90dd6e13ac851165d43d09a8050cfa9))
+- *(cli)* A clap help string is rustdoc as well ([1cd464d](https://github.com/salamaashoush/ferrimock/commit/1cd464df9dfae1b1a5fffaaae20bb26a56ae89c9))
+- Give the trait solver the depth the mock loader's future needs ([95a6e15](https://github.com/salamaashoush/ferrimock/commit/95a6e157c6413a1c57c34e05a59c8d434e197da1))
+
+### Documentation
+
+- *(doctor)* A public doc cannot link to a private constant ([855a70d](https://github.com/salamaashoush/ferrimock/commit/855a70d403db700b8df2ae24959ec926cdd4382d))
+- *(proxy)* What it costs, measured against a direct baseline ([1540490](https://github.com/salamaashoush/ferrimock/commit/154049052c941dd79568d9477622630c4a440eed))
+
+### Features
+
+- *(fake-data)* A vocabulary deep enough to write with ([23d39f3](https://github.com/salamaashoush/ferrimock/commit/23d39f34f2acb83f8550f34d17c784cdc7b9a96c))
+- *(doctor)* A lint reads the world it needs, not the one that is served ([7270a31](https://github.com/salamaashoush/ferrimock/commit/7270a31eb26d2f2f454634e07fe0ee209bb7a999))
+- *(machine)* A machine is declared once and named, and its edges are the graph ([2ed9a5a](https://github.com/salamaashoush/ferrimock/commit/2ed9a5a86a782987a4aaeeb0b4316a20cf1883a6))
+- *(machine)* An instance exists when something asks for it, and its edges are counted ([873fa3e](https://github.com/salamaashoush/ferrimock/commit/873fa3e80d78d759128bd67f26034d2fdcd95d24))
+- *(machine)* Machines drive routes, with no schema anywhere ([199a892](https://github.com/salamaashoush/ferrimock/commit/199a89238dea4a4bfb6ad4710343a2114f9ccfde))
+- *(machine)* A move can come from time, and an edge can come from anywhere ([868fbe7](https://github.com/salamaashoush/ferrimock/commit/868fbe74bffdbb3a015547502cc1a90179877865))
+- *(doctor)* A branch nothing took is a coverage question, and a state nothing reaches is a defect ([348398c](https://github.com/salamaashoush/ferrimock/commit/348398cbbdf2724720939aac35be67ab3dbea54c))
+- *(machine)* When, states and fire, lowered into the template they mean ([766b5f0](https://github.com/salamaashoush/ferrimock/commit/766b5f0b467e46149955580a898012e6cae7fde1))
+- *(doctor)* The spec is an oracle, and consulting it found three real defects ([0a68ed4](https://github.com/salamaashoush/ferrimock/commit/0a68ed4a4126b4e046006f9c6766a7556707d65a))
+- *(doctor)* Name the arrival pile, and give strict a way to be adopted ([6975a41](https://github.com/salamaashoush/ferrimock/commit/6975a412799b4be2ea8494a122529de256b2ae27))
+- *(proxy)* A mock answers, or the real thing does, on one origin ([8a116ec](https://github.com/salamaashoush/ferrimock/commit/8a116ec71c1e0ce4271bd65279669ecb3b6a2f93))
+- *(cli)* Ferrimock proxy, pointed at a dev server or a backend ([c4f6842](https://github.com/salamaashoush/ferrimock/commit/c4f6842511cc56c44cc0eae9bf2e3d6064372bb4))
+
+### Refactoring
+
+- *(machine)* States and the moves between them are not an entity's idea ([1d2e783](https://github.com/salamaashoush/ferrimock/commit/1d2e7833431d2e62199c41955491be13aad597b2))
+
+### Testing
+
+- The six ways this codebase failed quietly, each given something that watches ([0cf7cf0](https://github.com/salamaashoush/ferrimock/commit/0cf7cf0cb1f1018b99284ec276d543cabcf2ad7c))
+
 ## [0.3.0] - 2026-08-21
 
 Nine breaking changes, all in the entity world and the spec-derived
