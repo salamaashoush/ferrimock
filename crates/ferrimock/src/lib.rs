@@ -119,6 +119,10 @@ pub mod server;
 #[cfg(feature = "api")]
 pub mod api;
 
+/// Reverse proxy: mocks first, upstream for everything else
+#[cfg(feature = "proxy")]
+pub mod proxy;
+
 /// JS-scripted mock handlers on an embedded QuickJS engine
 #[cfg(feature = "scripting")]
 pub mod scripting;
