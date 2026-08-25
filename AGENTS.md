@@ -69,6 +69,8 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
   `spec::bind::graphql`.
 - `server` - HTTP server utilities: hot reload, graceful shutdown
 - `api` - Mock management HTTP API (axum router)
+- `proxy` - Reverse proxy: mocks first, upstream for everything else (feature
+  `proxy`). An axum router on an axum server. See "The proxy" below.
 - `recorder` - HTTP request/response recording
 - `scripting` - JS-scripted mock handlers on embedded QuickJS (feature `scripting`)
 - `spec` - Reading a schema into the world and binding it to a protocol
@@ -117,6 +119,7 @@ The only CLI is the Rust binary (ferrimock-cli).
 ```bash
 # Rust
 cargo check --workspace                          # Fast compile check
+cargo test -p ferrimock --features proxy --test proxy_tests  # Proxy end-to-end
 cargo test -p ferrimock --lib                       # Run Rust unit tests
 cargo test --workspace --all-features               # Everything
 cargo check -p ferrimock-napi                       # Check NAPI bindings
@@ -194,6 +197,68 @@ Key files:
   (`register_template_function`) work from JS automatically.
 - Tests: `tests/scripting_tests.rs`. Bench: `benches/script_performance.rs`
   (~10us per scripted handler call).
+
+### The proxy (feature `proxy`)
+
+A reverse proxy in front of a dev server or a backend: a request that matches a
+mock is answered locally, everything else is forwarded. One origin covers both,
+which is what removes the CORS configuration and the application change.
+
+**Nothing on the forwarding path is collected.** That is the whole design, and
+every part of the module exists to keep it true:
+
+- `MockRegistry::needs_request_body()` decides whether a request body is read at
+  all. It is a registry-wide fact, so a setup with no body-matching mock never
+  touches a body and a 2GB upload costs one frame. A body that turns out to be
+  over the cap becomes `PendingBody::Chained`: frames already read cannot be
+  pushed back, so they are re-emitted ahead of the rest of the stream rather
+  than dropped.
+- The request body stays `axum::body::Body` end to end. Forwarding an upstream
+  `Incoming` through `Body::new` is a move, not a copy, so the proxy never
+  needs a body type of its own.
+- Recording tees rather than collects (`proxy::tee::TeeBody`, the one body
+  combinator axum does not provide). Collecting first would mean a recorded
+  event stream never delivers its first event. **It commits from `PinnedDrop`
+  as well as from the terminal `poll_frame`**: a known-length body
+  is finished once that many bytes are written and hyper stops polling there, so
+  the `None` that would have committed never arrives. `is_end_stream()` is what
+  separates that from a client that disconnected half way, whose partial capture
+  must not be recorded as a complete response.
+
+**Only two things force a collect**, and both are opt-in: a `patch:` mock (a
+JSONPath cannot be applied to a stream) and recording. Both also force
+`Accept-Encoding: identity` upstream, because a patch operates on JSON and the
+recorder stores text. Everything else forwards the browser's own
+`Accept-Encoding` and never looks at the body, so compressed bytes pass through
+uncosted.
+
+**WebSockets connect upstream before the client gets its 101.** The subprotocol
+is chosen by the upstream and has to be echoed in the response; answering first
+and connecting after would mean guessing, and a client handed a subprotocol
+nobody selected closes immediately. axum writes the 101 and owns the client
+half; `to_axum`/`to_tungstenite` map the two frame enums, and the ping and pong
+payloads have to survive because several clients echo them back and check. This is the path a dev server's HMR channel
+takes, so breaking it looks like "my edits stopped showing up" rather than like
+a proxy bug.
+
+Route resolution is a linear scan over a `compile()`-sorted table, which beats
+any map at the handful of routes a dev setup has. A prefix matches on **whole
+path segments**: without that, `/apifoo` goes to the `/api` route.
+
+Upstream tuning is in `proxy::UpstreamConfig`, measured rather than guessed:
+`benches/proxy_overhead.rs` runs every arm against the same upstream through
+the same client, so the direct baseline is right beside the proxy number.
+Quoting a proxy figure without it is quoting loopback TCP. `pool_timer` is not
+a tuning knob but a correctness fix: without it `pool_idle_timeout` never
+fires, and the pool grows to its cap per upstream and stays there for the life
+of the process.
+
+Tests are `tests/proxy_tests.rs`, driving a real client over a real socket to a
+real upstream (`tests/proxy/upstream.rs`). The properties that matter are not
+observable any other way: the SSE test asserts the first event arrives inside
+200ms against an upstream that spaces three events 120ms apart, which a proxy
+that collected the body could not do. That test is what caught the missing
+`PinnedDrop` commit.
 
 ### MSW API Compatibility
 
