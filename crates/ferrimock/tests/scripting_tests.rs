@@ -1012,7 +1012,7 @@ http.post('/api/multipart', async ({ request }) => {
         field: form.get('field'),
         fileName: file.name,
         fileType: file.type,
-        fileText: file.text(),
+        fileText: await file.text(),
         fileSize: file.size,
     });
 });
@@ -1491,7 +1491,7 @@ http.get('/api/items', ({ request }) => {
     assert_eq!(json["all"][1], "2");
     assert_eq!(json["decoded"], "hello world");
     assert_eq!(json["size"], 4);
-    assert_eq!(json["str"], "a=1&a=2&b=hello%20world&c=3");
+    assert_eq!(json["str"], "a=1&a=2&b=hello+world&c=3");
     assert_eq!(json["spread"], 4);
     assert_eq!(json["canParse"], false);
 }

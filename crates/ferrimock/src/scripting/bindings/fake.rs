@@ -59,8 +59,9 @@ fn fake_call<'js>(
 
     // Not `rquickjs_serde::to_value`: a generator returning a number
     // (`fake.price()`, `fake.amount()`) would arrive in JS as the
-    // `$serde_json::private::Number` map. See `super::convert`.
-    super::convert::json_to_js(&ctx, &result)
+    // `$serde_json::private::Number` map under `arbitrary_precision`;
+    // the runtime's walker reads numbers through the safe accessors.
+    ferrijs::value::json_to_js(&ctx, &result)
 }
 
 const FAKE_PROXY: &str = r"

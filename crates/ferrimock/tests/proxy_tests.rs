@@ -43,9 +43,17 @@ async fn registry_from(yaml: &str) -> MockRegistry {
     registry
 }
 
+/// A browser-side client that reads exactly what the proxy wrote. Every
+/// automatic decoder is off: reqwest strips `content-encoding` from a
+/// body it decompresses, which is the header these tests are here to
+/// observe.
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
         .build()
         .unwrap()
 }

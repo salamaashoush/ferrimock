@@ -15,13 +15,18 @@ use crate::scripting::slots::{ScriptMockKind, ScriptMockSpec, with_slots};
 use crate::streaming::WsUpstreamCmd;
 use crate::types::{WsFrame, WsOutbound};
 
-use super::streams::chunk_to_bytes;
-
 fn value_to_frame<'js>(ctx: &Ctx<'js>, data: &Value<'js>) -> rquickjs::Result<WsFrame> {
     if let Some(s) = data.as_string() {
         return Ok(WsFrame::Text(s.to_string()?));
     }
-    chunk_to_bytes(ctx, data).map(WsFrame::Binary)
+    super::response::value_to_bytes(data)
+        .map(WsFrame::Binary)
+        .ok_or_else(|| {
+            Exception::throw_type(
+                ctx,
+                "WebSocket frames must be strings, ArrayBuffers, or TypedArrays",
+            )
+        })
 }
 
 /// The intercepted client connection (`connection.client`).

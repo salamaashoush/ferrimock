@@ -15,6 +15,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use ferrijs::fetch::multipart::form_data_from_fields;
+use ferrijs_fetch::{multipart_boundary_of, parse_multipart};
+use ferrijs_std::web::form_data::FormDataJs;
 use rquickjs::{Class, Ctx, Exception, JsLifetime, Object, Persistent, Value, class::Trace};
 use rustc_hash::FxHashMap;
 
@@ -348,7 +351,8 @@ impl Request {
     }
 
     /// Parse the body as multipart/form-data or
-    /// application/x-www-form-urlencoded (from the Content-Type header).
+    /// application/x-www-form-urlencoded (from the Content-Type header)
+    /// into the runtime's `FormData`.
     #[qjs(rename = "formData")]
     pub fn form_data<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let content_type = self
@@ -359,13 +363,9 @@ impl Request {
             .unwrap_or_default();
         // body_as_bytes: binary multipart bodies only exist as body_bytes.
         let body = self.inner.body_as_bytes().unwrap_or_default();
-        let entries = super::form_data::parse_body(content_type, body)
+        let form = parse_form_body(content_type, body)
             .map_err(|e| Exception::throw_type(&ctx, &format!("Failed to parse form data: {e}")))?;
-        Ok(
-            Class::instance(ctx, super::form_data::FormData::from_entries(entries))?
-                .as_value()
-                .clone(),
-        )
+        Ok(Class::instance(ctx, form)?.as_value().clone())
     }
 
     /// The body is fully buffered, so a clone shares the same data.
@@ -374,6 +374,30 @@ impl Request {
         Ok(Class::instance(ctx, Request::new(Rc::clone(&self.inner)))?
             .as_value()
             .clone())
+    }
+}
+
+/// Decode a request body by its Content-Type. Byte-based so binary
+/// multipart file parts round-trip losslessly.
+fn parse_form_body(content_type: &str, body: &[u8]) -> Result<FormDataJs, String> {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match mime.as_str() {
+        "application/x-www-form-urlencoded" => {
+            Ok(FormDataJs::from_urlencoded(&String::from_utf8_lossy(body)))
+        }
+        "multipart/form-data" => {
+            let boundary = multipart_boundary_of(content_type)
+                .ok_or("multipart/form-data without a boundary parameter")?;
+            Ok(form_data_from_fields(&parse_multipart(body, &boundary)))
+        }
+        other => Err(format!(
+            "cannot parse '{other}' as form data (expected multipart/form-data or application/x-www-form-urlencoded)"
+        )),
     }
 }
 

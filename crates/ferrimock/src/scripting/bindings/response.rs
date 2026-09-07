@@ -12,19 +12,20 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use bytes::Bytes;
+use ferrijs::ScriptError;
+use ferrijs::fetch::multipart::form_data_to_fields;
+use ferrijs_fetch::serialize_multipart;
+use ferrijs_std::stream_web::ReadableStream;
+use ferrijs_std::web::form_data::FormDataJs;
 use http::StatusCode;
 use rquickjs::function::{Func, Opt};
 use rquickjs::{Class, Ctx, Exception, JsLifetime, Object, TypedArray, Value, class::Trace};
 use rustc_hash::FxHashMap;
 
-use crate::FerrimockError;
 use crate::types::DynamicResponse;
 
-use super::form_data::{self, FormData};
-use super::streams;
-
-/// Response body: bytes, or a native ReadableStream drained by the
-/// handler bridge after the resolver settles.
+/// Response body: bytes, or a `ReadableStream` drained by the handler
+/// bridge after the resolver settles.
 enum ResponseBody {
     Bytes(Bytes),
     Stream(rquickjs::Persistent<Value<'static>>),
@@ -95,7 +96,8 @@ fn with_content_type(
     headers
 }
 
-fn value_to_bytes(data: &Value<'_>) -> Option<Bytes> {
+/// The bytes of an `ArrayBuffer` or a `Uint8Array`-shaped view.
+pub(super) fn value_to_bytes(data: &Value<'_>) -> Option<Bytes> {
     if let Some(ab) = data
         .as_object()
         .and_then(|o| rquickjs::ArrayBuffer::from_object(o.clone()))
@@ -154,16 +156,16 @@ impl HttpResponse {
         };
 
         if let Some(obj) = v.as_object() {
-            if Class::<streams::ReadableStream>::from_object(obj).is_some() {
+            if Class::<ReadableStream<'js>>::from_object(obj).is_some() {
                 let mut response = build(parse_init(&ctx, init.0)?, None, Bytes::new());
                 response.body = std::cell::RefCell::new(ResponseBody::Stream(
                     rquickjs::Persistent::save(&ctx, v),
                 ));
                 return Ok(response);
             }
-            if let Some(fd) = Class::<FormData>::from_object(obj) {
+            if let Some(fd) = Class::<FormDataJs>::from_object(obj) {
                 return Ok(Self::form_data_response(
-                    fd.borrow().snapshot(),
+                    &fd.borrow(),
                     parse_init(&ctx, init.0)?,
                 ));
             }
@@ -343,14 +345,14 @@ impl HttpResponse {
         data: Value<'js>,
         init: Opt<Object<'js>>,
     ) -> rquickjs::Result<Self> {
-        let Some(fd) = data.as_object().and_then(Class::<FormData>::from_object) else {
+        let Some(fd) = data.as_object().and_then(Class::<FormDataJs>::from_object) else {
             return Err(Exception::throw_type(
                 &ctx,
                 "HttpResponse.formData expects a FormData instance",
             ));
         };
         Ok(Self::form_data_response(
-            fd.borrow().snapshot(),
+            &fd.borrow(),
             parse_init(&ctx, init.0)?,
         ))
     }
@@ -367,22 +369,20 @@ impl HttpResponse {
         }
     }
 
-    fn form_data_response(
-        entries: Vec<(String, form_data::FormValue)>,
-        init: ResponseInit,
-    ) -> Self {
-        let (body, boundary) = form_data::serialize_multipart(&entries);
+    fn form_data_response(form: &FormDataJs, init: ResponseInit) -> Self {
+        let boundary = format!(
+            "ferrimockformboundary{:032x}",
+            rand::RngExt::random::<u128>(&mut crate::fake_data::rng::rng())
+        );
+        let (body, content_type) = serialize_multipart(&form_data_to_fields(form), &boundary);
         let (status, status_text, headers) = init;
         let mut headers = headers.unwrap_or_default();
-        headers.insert(
-            "content-type".to_string(),
-            format!("multipart/form-data; boundary={boundary}"),
-        );
+        headers.insert("content-type".to_string(), content_type);
         HttpResponse {
             status: Some(status.unwrap_or(200)),
             status_text,
             headers: Some(headers),
-            body: std::cell::RefCell::new(ResponseBody::Bytes(body)),
+            body: std::cell::RefCell::new(ResponseBody::Bytes(Bytes::from(body))),
         }
     }
 
@@ -461,7 +461,7 @@ pub fn install(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
 pub fn value_to_dynamic_response<'js>(
     ctx: &Ctx<'js>,
     value: Value<'js>,
-) -> Result<ConvertedResponse, FerrimockError> {
+) -> Result<ConvertedResponse, ScriptError> {
     if let Some(obj) = value.as_object()
         && let Some(resp) = Class::<HttpResponse>::from_object(obj)
     {
@@ -472,18 +472,18 @@ pub fn value_to_dynamic_response<'js>(
     } else if let Some(s) = value.as_string() {
         let s = s
             .to_string()
-            .map_err(|e| FerrimockError::Script(format!("handler returned invalid string: {e}")))?;
+            .map_err(|e| ScriptError::internal(format!("handler returned invalid string: {e}")))?;
         DynamicResponse::from_rendered_string(s)
     } else {
         let json = ctx
             .json_stringify(value)
             .map_err(|e| {
-                FerrimockError::Script(format!("handler return value not serializable: {e}"))
+                ScriptError::internal(format!("handler return value not serializable: {e}"))
             })?
             .map(|s| s.to_string())
             .transpose()
             .map_err(|e| {
-                FerrimockError::Script(format!("handler return value not serializable: {e}"))
+                ScriptError::internal(format!("handler return value not serializable: {e}"))
             })?
             .unwrap_or_else(|| "null".to_string());
         DynamicResponse::from_rendered_string(json)

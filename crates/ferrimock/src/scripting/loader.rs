@@ -1,23 +1,22 @@
-//! Module loading for script mock files.
+//! The `ferrimock` native module and mock-file evaluation.
 //!
 //! Files are bundled by rolldown (TS transpiled, `node_modules` and
-//! relative imports inlined) before they reach the VM, so the runtime
-//! loader chain only has to serve the `ferrimock` native module — the one
-//! import kept external so `import { http, HttpResponse } from
-//! 'ferrimock'` stays portable with the Node package.
+//! relative imports inlined) before they reach the realm, so the module
+//! table only has to serve `ferrimock` -- the one import kept external so
+//! `import { http, HttpResponse } from 'ferrimock'` stays portable with
+//! the Node package.
 
-use std::path::Path;
+use std::sync::Arc;
 
-use rquickjs::loader::{BuiltinResolver, ModuleLoader};
+use ferrijs::{NativeModule, RunOptions, ScriptError};
+use ferrijs_bundle::CompiledModule;
 use rquickjs::module::ModuleDef;
-use rquickjs::{CatchResultExt, Ctx, Module, Value};
+use rquickjs::{Ctx, Object, Value};
 
-use crate::{FerrimockError, Result, vm_with};
+use crate::Result;
 
-use super::bridge::caught_to_error;
-use super::bundle::{CompiledBundle, bundle_and_compile, remap_error};
-use super::engine::ScriptEngine;
-use super::slots::{ScriptMockSpec, with_slots};
+use super::engine::{ScriptEngine, remap_error};
+use super::slots::{HandlerSlots, ScriptMockSpec, with_slots};
 
 /// Bare specifier for the host-provided module.
 pub const FERRIMOCK_MODULE: &str = "ferrimock";
@@ -39,6 +38,18 @@ const MODULE_EXPORTS: [&str; 9] = [
     "sse",
 ];
 
+/// The exports as one object: the module's `default`, and what
+/// `require('ferrimock')` hands back.
+fn exports_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+    let globals = ctx.globals();
+    let object = Object::new(ctx.clone())?;
+    for name in MODULE_EXPORTS {
+        let value: Value<'js> = globals.get(name)?;
+        object.set(name, value)?;
+    }
+    Ok(object)
+}
+
 impl ModuleDef for FerrimockModule {
     fn declare(decl: &rquickjs::module::Declarations<'_>) -> rquickjs::Result<()> {
         for name in MODULE_EXPORTS {
@@ -52,71 +63,46 @@ impl ModuleDef for FerrimockModule {
         ctx: &Ctx<'js>,
         exports: &rquickjs::module::Exports<'js>,
     ) -> rquickjs::Result<()> {
-        let globals = ctx.globals();
-        let default = rquickjs::Object::new(ctx.clone())?;
+        let default = exports_object(ctx)?;
         for name in MODULE_EXPORTS {
-            let value: Value<'js> = globals.get(name)?;
-            exports.export(name, value.clone())?;
-            default.set(name, value)?;
+            let value: Value<'js> = default.get(name)?;
+            exports.export(name, value)?;
         }
         exports.export("default", default)?;
         Ok(())
     }
 }
 
-/// Resolver serving only the `ferrimock` native module — everything else
-/// was inlined by the bundler.
-pub fn native_resolver() -> BuiltinResolver {
-    BuiltinResolver::default().with_module(FERRIMOCK_MODULE)
+/// The `ferrimock` module as the realm (and the bundler) serve it.
+pub fn native_module() -> NativeModule {
+    NativeModule::new::<FerrimockModule, _>([FERRIMOCK_MODULE], exports_object)
 }
 
-/// Loader counterpart of [`native_resolver`]. The built-in consuming
-/// `ModuleLoader` is safe here: one engine hosts exactly one context,
-/// so `ferrimock` is only ever loaded once per loader instance.
-pub fn native_loader() -> ModuleLoader {
-    ModuleLoader::default().with_module(FERRIMOCK_MODULE, FerrimockModule)
-}
-
-/// Bundle + compile a mock script file, evaluate its bytecode on
-/// `engine`'s VM, and drain the specs its `http.*`/`graphql.*` calls
-/// registered. Returns the compiled bundle so the caller can keep the
-/// source map for later error remapping.
+/// Evaluate a compiled mock file on `engine`'s realm and drain the specs
+/// its `http.*`/`graphql.*`/`sse`/`ws.link` calls registered. The
+/// bundle's source map is registered on the realm first, so every later
+/// failure (a handler throwing at request time included) reports the
+/// original `.ts`/`.js` position.
 pub async fn evaluate_mock_module(
     engine: &ScriptEngine,
-    path: &Path,
-    cwd: &Path,
-) -> Result<(Vec<ScriptMockSpec>, CompiledBundle)> {
-    let bundle = bundle_and_compile(path, cwd).await?;
-
-    let vm = engine.vm().clone();
-    let bytecode = std::sync::Arc::clone(&bundle.bytecode);
-    let result: Result<Vec<ScriptMockSpec>> = vm_with!(vm => |ctx| {
-        // SAFETY: produced by `Module::write` by this exact
-        // rquickjs/QuickJS build with native endianness — either in this
-        // process or restored from the bytecode disk cache, whose ABI
-        // tag (QuickJS version, crate version, arch, endianness, pointer
-        // width) + transitive input hashes guarantee an ABI-identical
-        // toolchain wrote it. That satisfies the precondition
-        // `Module::load` documents.
-        #[allow(unsafe_code)]
-        let module = match (unsafe { Module::load(ctx.clone(), &bytecode) }).catch(&ctx) {
-            Ok(m) => m,
-            Err(e) => return Err(caught_to_error(&e)),
-        };
-        let promise = match module.eval().catch(&ctx) {
-            Ok((_, promise)) => promise,
-            Err(e) => return Err(caught_to_error(&e)),
-        };
-        if let Err(e) = promise.into_future::<()>().await.catch(&ctx) {
-            return Err(caught_to_error(&e));
-        }
-        with_slots(&ctx, super::slots::HandlerSlots::drain_specs)
-            .map_err(|e| FerrimockError::Script(e.to_string()))
-    })
-    .await?;
-
-    match result {
-        Ok(specs) => Ok((specs, bundle)),
-        Err(e) => Err(remap_error(e, &bundle)),
-    }
+    bundle: &CompiledModule,
+) -> Result<Vec<ScriptMockSpec>> {
+    let bytecode = Arc::clone(&bundle.bytecode);
+    let mapper = bundle.mapper();
+    let label = bundle.module_name.clone();
+    let run = engine
+        .runtime()
+        .run(
+            RunOptions::default(),
+            Box::new(move |ctx| {
+                Box::pin(async move {
+                    ferrijs::source_map::register_bundle(&ctx, mapper);
+                    ferrijs::eval_bytecode(&ctx, &bytecode, &label).await?;
+                    with_slots(&ctx, HandlerSlots::drain_specs)
+                        .map_err(|e| ScriptError::internal(e.to_string()))
+                })
+            }),
+        )
+        .await;
+    run.result.map_err(|e| remap_error(e, bundle))
 }

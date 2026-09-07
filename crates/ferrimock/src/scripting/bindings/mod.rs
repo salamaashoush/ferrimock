@@ -1,19 +1,17 @@
-//! Host bindings installed on every script VM: the MSW-compatible
-//! surface (`http`, `graphql`, `HttpResponse`, `FormData`, `File`,
-//! `ReadableStream`, `fake`, `delay`), `world` for the shared entity store,
-//! plus `console`.
+//! Host bindings installed on every mock realm: the MSW-compatible
+//! surface (`http`, `graphql`, `HttpResponse`, `Headers`, `fake`,
+//! `delay`, `sse`, `ws`) plus `world` for the shared entity store.
+//!
+//! The web-standard globals (`URL`, `URLSearchParams`, `FormData`,
+//! `File`, `Blob`, `ReadableStream`, `console`, the timers) are the
+//! runtime's own; nothing here duplicates them.
 
-mod console;
-pub mod convert;
 mod delay;
 mod fake;
-pub mod form_data;
 mod register;
 pub mod request;
 pub mod response;
 pub mod sse;
-pub mod streams;
-mod url;
 pub mod world;
 pub mod ws;
 
@@ -21,10 +19,10 @@ use rquickjs::atom::PredefinedAtom;
 use rquickjs::function::{Func, This};
 use rquickjs::{Class, Ctx, Exception, JsLifetime, Object, Value, class::Trace};
 
-/// `[Symbol.iterator]` for entry-list classes (Headers, FormData,
-/// URLSearchParams): delegates to `this.entries()` and hands back the
-/// array's own iterator, so `for...of` and spread work without a native
-/// iterator protocol implementation.
+/// `[Symbol.iterator]` for entry-list classes (`Headers`): delegates to
+/// `this.entries()` and hands back the array's own iterator, so
+/// `for...of` and spread work without a native iterator protocol
+/// implementation.
 // rquickjs Func targets take FromJs params owned and Ctx by value.
 #[allow(clippy::needless_pass_by_value)]
 fn entries_iterator<'js>(ctx: Ctx<'js>, this: This<Object<'js>>) -> rquickjs::Result<Value<'js>> {
@@ -55,20 +53,13 @@ pub fn install_all(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     Class::<request::Request>::define(&ctx.globals())?;
     Class::<request::Headers>::define(&ctx.globals())?;
     Class::<request::GraphQLRequestInfo>::define(&ctx.globals())?;
-    Class::<form_data::FormData>::define(&ctx.globals())?;
-    Class::<form_data::File>::define(&ctx.globals())?;
-    Class::<streams::ReadableStream>::define(&ctx.globals())?;
-    Class::<streams::StreamController>::define(&ctx.globals())?;
     set_entries_iterator::<request::Headers>(ctx)?;
-    set_entries_iterator::<form_data::FormData>(ctx)?;
     response::install(ctx)?;
     register::install(ctx)?;
     sse::install(ctx)?;
     ws::install(ctx)?;
-    url::install(ctx)?;
     fake::install(ctx)?;
     world::install(ctx)?;
     delay::install(ctx)?;
-    console::install(ctx)?;
     Ok(())
 }

@@ -5,16 +5,18 @@
 //! preventDefault semantics) lives in [`crate::streaming`]; this module
 //! only supplies the dispatch callbacks that run listeners as VM jobs.
 //!
-//! Unlike request/response handlers these run UNARMED (no interrupt
-//! budget): the engine's timeout poisons the whole VM when any bytecode
-//! outlives the armed deadline, which is engine-fatal around a
-//! long-lived connection. A synchronous infinite loop in a streaming
-//! callback therefore wedges that one file's engine — per-file isolation
-//! bounds the blast radius and a hot reload replaces it.
+//! Unlike request/response handlers these run outside the run bracket
+//! (no interrupt budget, through [`ferrijs::vm_with!`]): the realm's
+//! deadline poisons the whole VM when any bytecode outlives it, which is
+//! engine-fatal around a long-lived connection. A synchronous infinite
+//! loop in a streaming callback therefore wedges that one file's engine
+//! -- per-file isolation bounds the blast radius and a hot reload
+//! replaces it.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 
+use ferrijs::{ScriptError, VmHandle, vm_with};
+use ferrijs_bundle::CompiledModule;
 use rquickjs::function::Func;
 use rquickjs::{CatchResultExt, Class, Ctx, Object, Promise, TypedArray, Value};
 use tokio::sync::mpsc;
@@ -26,38 +28,13 @@ use crate::types::{
     RequestContext, SseHandlerFn, SseMessage, SseSinkMsg, WsConnection, WsFrame, WsHandlerFn,
     WsOutbound,
 };
-use crate::{FerrimockError, vm_with};
 
 use super::bindings::request::RequestInfo;
 use super::bindings::sse::{SseClient, SseServer};
 use super::bindings::ws::{WsClient, WsServer};
-use super::bridge::{caught_to_error, restore_handler};
+use super::bridge::{await_js, caught, live_engine, restore_handler};
+use super::engine::{ScriptEngine, remap_error};
 use super::slots::with_slots;
-use super::vm::VmHandle;
-
-/// Await a possibly-promise JS value inside the VM closure (mirror of
-/// bridge.rs's macro; rquickjs futures are single-threaded so it must
-/// stay inline).
-macro_rules! await_js {
-    ($ctx:expr, $value:expr) => {{
-        let value: Value<'_> = $value;
-        if let Some(promise) = value.as_promise() {
-            let promise: Promise<'_> = promise.clone();
-            match promise.into_future::<Value<'_>>().await.catch($ctx) {
-                Ok(v) => v,
-                Err(e) => return Err(caught_to_error(&e)),
-            }
-        } else {
-            value
-        }
-    }};
-}
-
-fn poisoned_error() -> FerrimockError {
-    FerrimockError::Script(
-        "script engine is poisoned (previous timeout/OOM); reload the script file".to_string(),
-    )
-}
 
 #[allow(clippy::needless_pass_by_value)]
 fn prevent_default(this: rquickjs::function::This<Object<'_>>) -> rquickjs::Result<()> {
@@ -95,36 +72,36 @@ async fn dispatch_sse_event(
     conn_id: u64,
     event_name: String,
     frame: Option<SseMessage>,
-) -> Result<bool, FerrimockError> {
+) -> Result<bool, ScriptError> {
     let vm = vm.clone();
     vm_with!(vm => |ctx| {
         let listeners = match with_slots(&ctx, |slots| slots.sse_listeners(conn_id, &event_name)) {
             Ok(l) => l,
-            Err(e) => return Err(FerrimockError::Script(e.to_string())),
+            Err(e) => return Err(ScriptError::internal(e.to_string())),
         };
         if listeners.is_empty() {
             return Ok(false);
         }
         let event = match base_event(&ctx, &event_name) {
             Ok(e) => e,
-            Err(e) => return Err(FerrimockError::Script(e.to_string())),
+            Err(e) => return Err(ScriptError::internal(e.to_string())),
         };
         if let Some(frame) = &frame {
             let result = event
                 .set("data", frame.data.as_str())
                 .and_then(|()| event.set("lastEventId", frame.id.as_deref().unwrap_or("")));
             if let Err(e) = result {
-                return Err(FerrimockError::Script(e.to_string()));
+                return Err(ScriptError::internal(e.to_string()));
             }
         }
         for listener in listeners {
             let func = match listener.restore(&ctx) {
                 Ok(f) => f,
-                Err(e) => return Err(FerrimockError::Script(format!("restore listener: {e}"))),
+                Err(e) => return Err(ScriptError::internal(format!("restore listener: {e}"))),
             };
             let result: Value<'_> = match func.call((event.clone(),)).catch(&ctx) {
                 Ok(v) => v,
-                Err(e) => return Err(caught_to_error(&e)),
+                Err(e) => return Err(caught(&ctx, e)),
             };
             let _ = await_js!(&ctx, result);
         }
@@ -138,33 +115,30 @@ async fn dispatch_sse_event(
 /// `upstream_url` is the handler's absolute http(s) URL when it has one
 /// — the real endpoint `server.connect()` dials.
 pub fn build_sse_handler_fn(
-    vm: VmHandle,
+    engine: Weak<ScriptEngine>,
     slot: u64,
-    poisoned: Arc<AtomicBool>,
-    bundle: Arc<super::bundle::CompiledBundle>,
+    bundle: Arc<CompiledModule>,
     upstream_url: Option<String>,
 ) -> SseHandlerFn {
     Arc::new(
         move |request: RequestContext, tx: mpsc::UnboundedSender<SseSinkMsg>| {
-            let vm = vm.clone();
-            let poisoned = Arc::clone(&poisoned);
+            let engine = Weak::clone(&engine);
             let bundle = Arc::clone(&bundle);
             let upstream_url = upstream_url.clone();
             Box::pin(async move {
-                if poisoned.load(Ordering::Relaxed) {
-                    return Err(poisoned_error());
-                }
+                let engine = live_engine(&engine)?;
+                let vm = engine.runtime().handle();
 
                 let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<SseUpstreamCmd>();
                 let resolver_tx = tx.clone();
                 let resolver_cmd = cmd_tx.clone();
                 let resolver_url = upstream_url.clone();
 
-                let init: Result<u64, FerrimockError> = vm_with!(vm => |ctx| {
+                let init: Result<u64, ScriptError> = vm_with!(vm => |ctx| {
                     let conn_id =
                         match with_slots(&ctx, super::slots::HandlerSlots::new_sse_connection) {
                             Ok(id) => id,
-                            Err(e) => return Err(FerrimockError::Script(e.to_string())),
+                            Err(e) => return Err(ScriptError::internal(e.to_string())),
                         };
 
                     let func = match restore_handler(&ctx, slot) {
@@ -175,17 +149,17 @@ pub fn build_sse_handler_fn(
                     let info =
                         match Class::instance(ctx.clone(), RequestInfo::new(request)).catch(&ctx) {
                             Ok(i) => i.as_value().clone(),
-                            Err(e) => return Err(caught_to_error(&e)),
+                            Err(e) => return Err(caught(&ctx, e)),
                         };
                     let Some(info_obj) = info.as_object() else {
-                        return Err(FerrimockError::Script("resolver info is not an object".into()));
+                        return Err(ScriptError::internal("resolver info is not an object"));
                     };
 
                     let client =
                         match Class::instance(ctx.clone(), SseClient::new(resolver_tx)).catch(&ctx)
                         {
                             Ok(c) => c.as_value().clone(),
-                            Err(e) => return Err(caught_to_error(&e)),
+                            Err(e) => return Err(caught(&ctx, e)),
                         };
                     let server = match Class::instance(
                         ctx.clone(),
@@ -194,18 +168,18 @@ pub fn build_sse_handler_fn(
                     .catch(&ctx)
                     {
                         Ok(s) => s.as_value().clone(),
-                        Err(e) => return Err(caught_to_error(&e)),
+                        Err(e) => return Err(caught(&ctx, e)),
                     };
                     if let Err(e) = info_obj
                         .set("client", client)
                         .and_then(|()| info_obj.set("server", server))
                     {
-                        return Err(FerrimockError::Script(e.to_string()));
+                        return Err(ScriptError::internal(e.to_string()));
                     }
 
                     let pending: Value<'_> = match func.call((info.clone(),)).catch(&ctx) {
                         Ok(v) => v,
-                        Err(e) => return Err(caught_to_error(&e)),
+                        Err(e) => return Err(caught(&ctx, e)),
                     };
                     let _ = await_js!(&ctx, pending);
                     Ok(conn_id)
@@ -215,7 +189,7 @@ pub fn build_sse_handler_fn(
 
                 let conn_id = match init {
                     Ok(id) => id,
-                    Err(e) => return Err(super::bundle::remap_error(e, &bundle)),
+                    Err(e) => return Err(remap_error(e, &bundle)),
                 };
 
                 // Host loop: lives until the client disconnects (the sink
@@ -225,7 +199,7 @@ pub fn build_sse_handler_fn(
                 let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<SseUpstreamEvent>();
                 let mut pump: Option<tokio::task::JoinHandle<()>> = None;
 
-                let result: Result<(), FerrimockError> = loop {
+                let result: Result<(), ScriptError> = loop {
                     tokio::select! {
                         () = tx.closed() => break Ok(()),
                         cmd = cmd_rx.recv() => match cmd {
@@ -316,11 +290,10 @@ pub fn build_sse_handler_fn(
                 let vm_cleanup = vm.clone();
                 let _ = vm_with!(vm_cleanup => |ctx| {
                     let _ = with_slots(&ctx, |slots| slots.remove_sse_connection(conn_id));
-                    Ok::<(), FerrimockError>(())
                 })
                 .await;
 
-                result.map_err(|e| super::bundle::remap_error(e, &bundle))
+                result.map_err(|e| remap_error(e, &bundle))
             })
         },
     )
@@ -375,27 +348,27 @@ async fn dispatch_ws_event(
     event_type: &'static str,
     frame: Option<WsFrame>,
     close: Option<(Option<u16>, Option<String>)>,
-) -> Result<bool, FerrimockError> {
+) -> Result<bool, ScriptError> {
     let vm = vm.clone();
     vm_with!(vm => |ctx| {
         let listeners = match with_slots(&ctx, |slots| slots.ws_connection_listeners(conn_id, event_key)) {
             Ok(l) => l,
-            Err(e) => return Err(FerrimockError::Script(e.to_string())),
+            Err(e) => return Err(ScriptError::internal(e.to_string())),
         };
         if listeners.is_empty() {
             return Ok(false);
         }
         let event = match base_event(&ctx, event_type) {
             Ok(e) => e,
-            Err(e) => return Err(FerrimockError::Script(e.to_string())),
+            Err(e) => return Err(ScriptError::internal(e.to_string())),
         };
         if let Some(frame) = &frame {
             let data = match frame_to_js(&ctx, frame) {
                 Ok(v) => v,
-                Err(e) => return Err(FerrimockError::Script(e.to_string())),
+                Err(e) => return Err(ScriptError::internal(e.to_string())),
             };
             if let Err(e) = event.set("data", data) {
-                return Err(FerrimockError::Script(e.to_string()));
+                return Err(ScriptError::internal(e.to_string()));
             }
         }
         if let Some((code, reason)) = &close {
@@ -404,17 +377,17 @@ async fn dispatch_ws_event(
                 .and_then(|()| event.set("reason", reason.as_deref().unwrap_or("")))
                 .and_then(|()| event.set("wasClean", code.is_none_or(|c| c == 1000)));
             if let Err(e) = result {
-                return Err(FerrimockError::Script(e.to_string()));
+                return Err(ScriptError::internal(e.to_string()));
             }
         }
         for listener in listeners {
             let func = match listener.restore(&ctx) {
                 Ok(f) => f,
-                Err(e) => return Err(FerrimockError::Script(format!("restore listener: {e}"))),
+                Err(e) => return Err(ScriptError::internal(format!("restore listener: {e}"))),
             };
             let result: Value<'_> = match func.call((event.clone(),)).catch(&ctx) {
                 Ok(v) => v,
-                Err(e) => return Err(caught_to_error(&e)),
+                Err(e) => return Err(caught(&ctx, e)),
             };
             let _ = await_js!(&ctx, result);
         }
@@ -429,21 +402,18 @@ async fn dispatch_ws_event(
 /// [`crate::streaming::drive_ws_connection`]; this bridge only turns
 /// driver events into VM jobs.
 pub fn build_ws_handler_fn(
-    vm: VmHandle,
+    engine: Weak<ScriptEngine>,
     link_slot: u64,
-    poisoned: Arc<AtomicBool>,
-    bundle: Arc<super::bundle::CompiledBundle>,
+    bundle: Arc<CompiledModule>,
     link_url: Option<String>,
 ) -> WsHandlerFn {
     Arc::new(move |connection: WsConnection| {
-        let vm = vm.clone();
-        let poisoned = Arc::clone(&poisoned);
+        let engine = Weak::clone(&engine);
         let bundle = Arc::clone(&bundle);
         let link_url = link_url.clone();
         Box::pin(async move {
-            if poisoned.load(Ordering::Relaxed) {
-                return Err(poisoned_error());
-            }
+            let engine = live_engine(&engine)?;
+            let vm = engine.runtime().handle();
 
             // Set while dispatching the Connection event; every later
             // event addresses this connection's listener table.
@@ -452,12 +422,14 @@ pub fn build_ws_handler_fn(
             let dispatch_vm = vm.clone();
             let dispatch_cell = Arc::clone(&conn_cell);
             let dispatch_link_url = link_url.clone();
+            let dispatch_bundle = Arc::clone(&bundle);
             let dispatch: WsDispatchFn = Arc::new(move |event: WsDriverEvent| {
                 let vm = dispatch_vm.clone();
                 let conn_cell = Arc::clone(&dispatch_cell);
                 let link_url = dispatch_link_url.clone();
+                let bundle = Arc::clone(&dispatch_bundle);
                 Box::pin(async move {
-                    match event {
+                    let outcome: Result<bool, ScriptError> = match event {
                         WsDriverEvent::Connection(seed) => {
                             // Reconstruct the client-facing URL from the
                             // handshake.
@@ -480,7 +452,7 @@ pub fn build_ws_handler_fn(
                                     super::slots::HandlerSlots::new_ws_connection,
                                 ) {
                                     Ok(id) => id,
-                                    Err(e) => return Err(FerrimockError::Script(e.to_string())),
+                                    Err(e) => return Err(ScriptError::internal(e.to_string())),
                                 };
 
                                 let arg = match build_connection_arg(
@@ -494,19 +466,19 @@ pub fn build_ws_handler_fn(
                                     &protocols,
                                 ) {
                                     Ok(arg) => arg,
-                                    Err(e) => return Err(FerrimockError::Script(e.to_string())),
+                                    Err(e) => return Err(ScriptError::internal(e.to_string())),
                                 };
 
                                 let listeners =
                                     match with_slots(&ctx, |slots| slots.ws_link_listeners(link_slot)) {
                                         Ok(l) => l,
-                                        Err(e) => return Err(FerrimockError::Script(e.to_string())),
+                                        Err(e) => return Err(ScriptError::internal(e.to_string())),
                                     };
                                 for listener in listeners {
                                     let func = match listener.restore(&ctx) {
                                         Ok(f) => f,
                                         Err(e) => {
-                                            return Err(FerrimockError::Script(format!(
+                                            return Err(ScriptError::internal(format!(
                                                 "restore listener: {e}"
                                             )));
                                         }
@@ -514,7 +486,7 @@ pub fn build_ws_handler_fn(
                                     let result: Value<'_> =
                                         match func.call((arg.clone(),)).catch(&ctx) {
                                             Ok(v) => v,
-                                            Err(e) => return Err(caught_to_error(&e)),
+                                            Err(e) => return Err(caught(&ctx, e)),
                                         };
                                     let _ = await_js!(&ctx, result);
                                 }
@@ -600,7 +572,8 @@ pub fn build_ws_handler_fn(
                                 }
                             }
                         }
-                    }
+                    };
+                    outcome.map_err(|e| remap_error(e, &bundle))
                 })
             });
 
@@ -612,12 +585,11 @@ pub fn build_ws_handler_fn(
                 let vm_cleanup = vm.clone();
                 let _ = vm_with!(vm_cleanup => |ctx| {
                     let _ = with_slots(&ctx, |slots| slots.remove_ws_connection(conn_id));
-                    Ok::<(), FerrimockError>(())
                 })
                 .await;
             }
 
-            result.map_err(|e| super::bundle::remap_error(e, &bundle))
+            result
         })
     })
 }

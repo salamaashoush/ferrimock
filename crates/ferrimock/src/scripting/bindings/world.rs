@@ -22,8 +22,14 @@ fn throw(message: impl std::fmt::Display) -> rquickjs::Error {
     rquickjs::Error::new_from_js_message("ferrimock", "Error", message.to_string())
 }
 
+/// Hand JSON to the realm as native values. Not `rquickjs_serde::to_value`:
+/// under `serde_json/arbitrary_precision` (forced workspace-wide by
+/// rolldown) a number would arrive as the `$serde_json::private::Number`
+/// map; the runtime's walker reads numbers through the safe accessors and
+/// defines keys as own properties, so a `__proto__` field in an entity
+/// lands as a field.
 fn to_js<'js>(ctx: &Ctx<'js>, value: &JsonValue) -> rquickjs::Result<Value<'js>> {
-    super::convert::json_to_js(ctx, value)
+    ferrijs::value::json_to_js(ctx, value)
 }
 
 /// Read a JS value as JSON.

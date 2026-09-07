@@ -80,17 +80,17 @@ proxy = [
 # Config schema generation (for editor extensions)
 schema = ["dep:schemars"]
 
-# JS/TS-scripted mock handlers on an embedded QuickJS engine, with a
+# JS/TS-scripted mock handlers on the ferrijs QuickJS runtime, with its
 # rolldown bundler front-end (TS transpile, node_modules resolution) and
-# a bytecode disk cache
+# bytecode disk cache
 scripting = [
   "engine",
+  "dep:ferrijs",
+  "dep:ferrijs-bundle",
+  "dep:ferrijs-fetch",
+  "dep:ferrijs-std",
   "dep:rquickjs",
   "dep:rquickjs-serde",
-  "dep:rolldown",
-  "dep:rolldown_common",
-  "dep:rolldown_plugin",
-  "dep:sourcemap",
   "dep:dunce",
 ]
 
@@ -177,13 +177,13 @@ pin-project-lite = { workspace = true, optional = true }
 schemars = { version = "1", optional = true }
 
 # QuickJS scripting (scripting feature)
+ferrijs = { workspace = true, optional = true }
+ferrijs-bundle = { workspace = true, optional = true }
+ferrijs-fetch = { workspace = true, optional = true }
+ferrijs-std = { workspace = true, optional = true }
 rquickjs = { workspace = true, optional = true }
 rquickjs-serde = { workspace = true, optional = true }
-rolldown = { workspace = true, optional = true }
 dunce = { workspace = true, optional = true }
-rolldown_common = { workspace = true, optional = true }
-rolldown_plugin = { workspace = true, optional = true }
-sourcemap = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -200,8 +200,13 @@ tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true }
 uuid = { workspace = true }
 # Proxy tests drive a real browser-side client against a real upstream, so
-# they need a client that is not the one under test.
-reqwest = { workspace = true, features = ["stream"] }
+# they need a client that is not the one under test. The decompression
+# features are named so the `no_*` builders always exist: a test client
+# that silently decodes a body strips the `content-encoding` the proxy
+# was being asked to forward, and cargo features are additive, so
+# whether some other crate in the graph turns them on is not ours to
+# decide (`scripting` pulls ferrijs-fetch, which does).
+reqwest = { workspace = true, features = ["stream", "gzip", "brotli", "deflate", "zstd"] }
 hyper = { workspace = true }
 hyper-util = { workspace = true, features = ["server", "server-auto"] }
 http-body-util = { workspace = true }

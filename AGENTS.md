@@ -72,7 +72,7 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 - `proxy` - Reverse proxy: mocks first, upstream for everything else (feature
   `proxy`). An axum router on an axum server. See "The proxy" below.
 - `recorder` - HTTP request/response recording
-- `scripting` - JS-scripted mock handlers on embedded QuickJS (feature `scripting`)
+- `scripting` - JS-scripted mock handlers on the ferrijs QuickJS runtime (feature `scripting`)
 - `spec` - Reading a schema into the world and binding it to a protocol
   (feature `spec`). `infer` (SDL -> entity graph), `bind` (graph + store ->
   executable GraphQL schema), `emit` (backend -> ordinary `MockDefinition`).
@@ -173,39 +173,65 @@ Key files:
 
 ### QuickJS Scripting (feature `scripting`)
 
-`.js`/`.mjs`/`.ts`/`.mts` mock files run on embedded QuickJS (rquickjs 0.12,
-`parallel` feature) — no Node needed. Architecture:
+`.js`/`.mjs`/`.ts`/`.mts` mock files run on the ferrijs runtime (a sibling
+checkout, `../ferrijs`, depended on by path) -- no Node needed. Everything
+generic about running JavaScript is ferrijs's; ferrimock keeps only its
+MSW-shaped host bindings. Architecture:
 
-- rolldown bundler front-end (`scripting/bundle.rs`): TS transpile, node_modules +
-  relative import resolution, tree-shaking, single ESM output; only the `ferrimock`
-  specifier stays external (re-links against the runtime ModuleDef). Source maps
-  remap error positions back to original files (`remap_error`).
-- Bytecode disk cache (`scripting/bytecode_cache.rs`): `Module::write` output cached
-  under an ABI-tagged dir (QuickJS version, crate version, arch, endianness, pointer
-  width), validated by content hashes of every transitive input from the source map.
-  `FERRIMOCK_CACHE_DIR` overrides location; `FERRIMOCK_NO_BYTECODE_CACHE` disables.
+- One `ScriptEngine` per script file (`scripting/host.rs`), wrapping one
+  `ferrijs::Runtime` built by `scripting/engine.rs`: `ScriptEngineConfig`
+  (memory, stack, GC threshold, `handler_timeout`) maps onto `ferrijs::Limits`;
+  the realm gets `Permissions::none()` (no filesystem, network, environment or
+  system access), no `fetch`, `ModulePolicy::no_builtins().no_files()` (no Node
+  modules, no imports from disk), and one `Extension` (`FerrimockExtension`)
+  that registers the `ferrimock` native module (`scripting/loader.rs`) and
+  installs the globals (`scripting/bindings/`). `ferrimock` is therefore the
+  only importable specifier, as an ES import or through `require`.
+- Bundling and bytecode are `ferrijs_bundle::Bundler` over the runtime's own
+  module registry (`ScriptEngine::bundler`): rolldown TS transpile, node_modules
+  + relative import resolution, tree-shaking, one ESM chunk with `ferrimock`
+  external, compiled once and cached on disk under an ABI-tagged directory,
+  validated by mtime+size stamps of every transitive input.
+  `FERRIMOCK_CACHE_DIR` overrides the location (`<dir>/ferrimock`);
+  `FERRIMOCK_NO_BYTECODE_CACHE` disables the cache. The bundle's source map is
+  registered on the realm at evaluation, so stack frames in every later error
+  (handler throws included) name the original `.ts`/`.js` position.
 - GOTCHA: rolldown_common force-enables `serde_json/arbitrary_precision`
   workspace-wide, which breaks serde untagged-enum buffering on floats. HAR parsing
   goes through `config::parse_har` (AP-safe); never `serde_json::from_str::<Har>`.
-
-- One `ScriptEngine` per script file (`scripting/host.rs`). Hot reload / poison
-  recovery = drop the file's engine, re-evaluate on a fresh one. Module-scope state
-  resets on reload.
-- Single-owner VM event loop (`scripting/vm.rs`): exactly one never-completing tokio
-  task polls the runtime scheduler; everything else submits jobs via `VmHandle`.
-  Never use transient `async_with!` against the runtime — rquickjs's scheduler has a
-  single waker slot and a short-lived poller kills it.
+- The realm's single-owner VM event loop is ferrijs's (`ferrijs::VmHandle`,
+  `ferrijs::vm_with!`). Never use a transient `async_with!` against the runtime
+  -- rquickjs's scheduler has a single waker slot and a short-lived poller kills
+  it. Every handler call is one `Runtime::run(RunOptions { timeout }, body)`
+  bracket (`scripting/bridge.rs`): the interrupt deadline halts runaway bytecode
+  at `handler_timeout`, the backstop (+1s grace) frees a call parked on a host
+  await, and either outcome poisons the realm (`Runtime::poisoned`); a poisoned
+  file's handlers fail fast until a reload drops the engine. Overlapping runs
+  are fine (concurrent HTTP handlers). Mocks hold the engine weakly: unloading
+  or reloading a file tears its realm down even while stale mocks linger.
+- `sse()` / `ws.link()` resolvers (`scripting/bridge_streaming.rs`) run outside
+  the bracket through `vm_with!` -- no deadline on a long-lived connection, so a
+  synchronous infinite loop in a streaming callback wedges that one file's
+  engine; per-file isolation bounds the blast radius and a hot reload replaces it.
 - `http.get(path, fn)` at evaluation time persists the handler into VM-side slots
   (`scripting/slots.rs`) and the loader builds normal `MockDefinition`s with
-  `BodySource::Handler` — matching never crosses into JS.
-- Two-layer timeout (`scripting/bridge.rs`): QuickJS interrupt handler kills runaway
-  bytecode at `handler_timeout` (poisons the engine); a tokio backstop (+1s grace)
-  frees requests parked on host awaits.
+  `BodySource::Handler` -- matching never crosses into JS.
+- Web-standard globals are ferrijs-std's, WHATWG-complete: `URL`,
+  `URLSearchParams`, `FormData`, `File`, `Blob`, `ReadableStream`, `console`
+  (forwarded to `tracing` under `ferrimock::script` through a `ConsoleSink`),
+  the timers, `TextEncoder`, `crypto`, `structuredClone`. A handler returning a
+  `Response` with a `ReadableStream` body is drained through the stream's
+  default reader inside the run body (buffered delivery); `delay()` inside a
+  `pull` still works because it runs on the VM loop. ferrimock's own classes are
+  the MSW ones: `HttpResponse` (aliased as `Response`), `Request`, `Headers`
+  (kept because the runtime is built without `fetch`, which is where ferrijs's
+  `Headers` lives), the resolver info objects, and the SSE/WS connection objects.
 - `fake.*` dispatches through the same Tera function registry templates use
-  (`scripting/bindings/fake.rs`) — one source of truth, embedder plugin functions
+  (`scripting/bindings/fake.rs`) -- one source of truth, embedder plugin functions
   (`register_template_function`) work from JS automatically.
 - Tests: `tests/scripting_tests.rs`. Bench: `benches/script_performance.rs`
-  (~10us per scripted handler call).
+  (~15us per scripted handler call; about 4us of that is the run bracket's
+  per-run console refresh, which is ferrijs's to make optional).
 
 ### The proxy (feature `proxy`)
 
@@ -284,8 +310,8 @@ Implemented (MSW and web-standard naming only; no aliases):
   original Response (live stream, zero copies) via the stream stash; the
   standalone TCP server and the QuickJS lane deliver drained (buffered) bodies
 - `request.formData()` + `HttpResponse.formData()`: native on Node (real
-  Request/Response); native `FormData`/`File` classes + multipart/urlencoded
-  codecs on the QuickJS lane
+  Request/Response); ferrijs-std's WHATWG `FormData`/`File` plus the
+  ferrijs-fetch multipart/urlencoded codecs on the QuickJS lane
 
 Not covered (by design): `setupWorker` (browser service worker; the engine is a
 native addon).
@@ -687,11 +713,11 @@ private one-key map that only serde_json's own deserializer intercepts, so any
 number was meant.
 
 - **QuickJS**: never `rquickjs_serde::to_value` for a `serde_json::Value`. Use
-  `scripting::bindings::convert::json_to_js`, which walks the value into native
-  values — also faster, since it skips the serde data model entirely. It defines
-  own properties via `JS_DefineProperty` rather than `Object::set`, so a
-  `__proto__` key in an entity lands as a field instead of firing the prototype
-  setter.
+  `ferrijs::value::json_to_js`, which walks the value into native values
+  through the `as_*` accessors — also faster, since it skips the serde data
+  model entirely. It defines own properties via `JS_DefineProperty` rather than
+  `Object::set`, so a `__proto__` key in an entity lands as a field instead of
+  firing the prototype setter.
 - **Reading JS into Rust** stays on `rquickjs_serde::from_value`: the token is
   only ever produced by `Serialize`, so the inbound direction never meets it.
 - **NAPI** needs no workaround — `napi`'s `ToNapiValue for &Value` matches the

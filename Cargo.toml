@@ -12,8 +12,9 @@ resolver = "2"
 version = "0.4.1"
 authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
 edition = "2024"
-# Verified floor for the stable feature set; the `scripting` feature
-# needs nightly regardless (rolldown's oxc tree uses if-let guards).
+# Verified floor for the stable feature set. `scripting` (ferrijs plus
+# rolldown's oxc tree) builds on current stable but is not verified at
+# the floor.
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/salamaashoush/ferrimock"
@@ -229,21 +230,32 @@ tera = "2.1"
 # now and get_random are part of the documented mock template surface.
 tera-contrib = { version = "0.2", features = ["json", "date", "rand"] }
 
-# QuickJS scripting (scripting feature)
+# QuickJS scripting (scripting feature): the ferrijs runtime owns the VM,
+# its event loop, the resource limits, the standard globals and the
+# rolldown bundler; ferrimock adds only its MSW-shaped host bindings.
+# `fetch` is compiled in for the multipart codec and the stream bridge;
+# the runtime itself is built `without_fetch`.
+ferrijs = { path = "../ferrijs/crates/ferrijs", version = "0.1.0", default-features = false, features = ["fetch"] }
+ferrijs-bundle = { path = "../ferrijs/crates/ferrijs-bundle", version = "0.1.0" }
+ferrijs-fetch = { path = "../ferrijs/crates/ferrijs-fetch", version = "0.1.0" }
+ferrijs-std = { path = "../ferrijs/crates/ferrijs-std", version = "0.1.0" }
+# The same feature set ferrijs enables, so the workspace links one rquickjs.
 # `full-async` does NOT imply `parallel`; without it AsyncRuntime is !Send/!Sync
 # and HandlerFn closures (Send + Sync) cannot reach the VM.
-rquickjs = { version = "0.12", features = ["full-async", "parallel", "macro", "loader", "array-buffer"] }
+rquickjs = { version = "0.12", features = [
+  "full-async",
+  "parallel",
+  "macro",
+  "loader",
+  "array-buffer",
+  "half",
+  "either",
+  "bytes",
+] }
 rquickjs-serde = "0.6"
-# Bundler front-end: rolldown bundles + tree-shakes + transpiles TS to one ESM
-# module (resolving node_modules), compiled once to QuickJS bytecode.
-rolldown = "1"
 # canonicalize without Windows \\?\ verbatim prefixes (rolldown cannot
 # resolve them as entry paths)
 dunce = "1"
-rolldown_common = "1"
-rolldown_plugin = "1"
-# Remap QuickJS error line:col (bundled output) back to original .ts/.js.
-sourcemap = "9"
 
 # Testing
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }

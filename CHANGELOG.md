@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+The scripting lane now runs on the ferrijs runtime (`../ferrijs`, a path
+dependency). Everything generic about running JavaScript came out of
+ferrimock: the VM event loop, the interrupt deadline and its backstop, poison
+detection, the rolldown bundler and its bytecode cache, `console`, and the
+web-standard globals (`URL`, `URLSearchParams`, `FormData`, `File`, `Blob`,
+`ReadableStream`). What stays is the MSW-shaped surface: `http`, `graphql`,
+`HttpResponse`, `Request`, `Headers`, `sse`, `ws`, `fake`, `delay`, `world`.
+
+### Refactoring
+
+- *(scripting)* Host the mock realm on ferrijs. A mock script gets no
+  filesystem, network, environment or system access and no `fetch`;
+  `ferrimock` is the only importable module. `File.text()` now answers a
+  Promise and `URLSearchParams.toString()` serialises a space as `+`, both per
+  the WHATWG specs the runtime implements. A handler parked past its budget on
+  a host await now poisons the file's engine like a runaway loop does; the
+  bytecode cache validates inputs by mtime+size stamps rather than content
+  hashes. `ScriptEngineConfig` is unchanged.
+
 ## [0.4.1] - 2026-09-06
 
 ### Bug Fixes

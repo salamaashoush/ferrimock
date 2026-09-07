@@ -12,11 +12,12 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
+use ferrijs_bundle::CompiledModule;
+
 use crate::types::MockDefinition;
 use crate::{FerrimockError, Result, handler};
 
 use super::bridge::{HandlerKind, build_handler_fn};
-use super::bundle::CompiledBundle;
 use super::engine::{ScriptEngine, ScriptEngineConfig};
 use super::loader::evaluate_mock_module;
 use super::slots::{
@@ -24,8 +25,9 @@ use super::slots::{
 };
 
 struct LoadedScript {
-    /// Never read — held so the VM loop (and every `Persistent` handler)
-    /// lives exactly as long as this file's registry entry.
+    /// Never read: the only strong reference, so the realm (and every
+    /// `Persistent` handler in it) lives exactly as long as this file's
+    /// entry; the mocks themselves hold it weakly.
     _engine: Arc<ScriptEngine>,
     root: PathBuf,
 }
@@ -69,7 +71,14 @@ impl ScriptHost {
 
         let config = self.config.read().clone();
         let engine = Arc::new(ScriptEngine::new(config).await?);
-        let (specs, bundle) = evaluate_mock_module(&engine, &canonical, &root).await?;
+        // An unchanged source tree skips both rolldown and the QuickJS
+        // compile through the bytecode disk cache.
+        let module_name = canonical.to_string_lossy().into_owned();
+        let bundle = engine
+            .bundler()
+            .compile(std::slice::from_ref(&canonical), &root, &module_name)
+            .await?;
+        let specs = evaluate_mock_module(&engine, &bundle).await?;
         let bundle = Arc::new(bundle);
         if specs.is_empty() {
             tracing::warn!(
@@ -130,7 +139,7 @@ fn streaming_stub(kind: &'static str) -> crate::types::HandlerFn {
 
 fn build_mock(
     engine: &Arc<ScriptEngine>,
-    bundle: &Arc<CompiledBundle>,
+    bundle: &Arc<CompiledModule>,
     spec: ScriptMockSpec,
     source_file: &str,
 ) -> Result<MockDefinition> {
@@ -145,9 +154,8 @@ fn build_mock(
                 _ => None,
             };
             let handler = super::bridge_streaming::build_sse_handler_fn(
-                engine.vm().clone(),
+                Arc::downgrade(engine),
                 spec.slot,
-                engine.poisoned_flag(),
                 Arc::clone(bundle),
                 upstream_url,
             );
@@ -196,9 +204,8 @@ fn build_mock(
                 }
             };
             let handler = super::bridge_streaming::build_ws_handler_fn(
-                engine.vm().clone(),
+                Arc::downgrade(engine),
                 spec.slot,
-                engine.poisoned_flag(),
                 Arc::clone(bundle),
                 upstream_url,
             );
@@ -228,11 +235,8 @@ fn build_mock(
         }
     };
     let handler_fn = build_handler_fn(
-        engine.vm().clone(),
+        Arc::downgrade(engine),
         spec.slot,
-        Arc::clone(engine.timeout_state()),
-        engine.poisoned_flag(),
-        engine.config().handler_timeout,
         Arc::clone(bundle),
         kind,
         spec.is_generator,

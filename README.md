@@ -110,7 +110,7 @@ mocks:
 run on an embedded QuickJS engine — the CLI server and any Rust embedder execute them
 without Node. Files are bundled by rolldown (TypeScript transpiled, `node_modules`
 and relative imports resolved + tree-shaken), compiled once to QuickJS bytecode, and
-cached on disk keyed by toolchain ABI + transitive input hashes — warm starts skip
+cached on disk keyed by toolchain ABI + transitive input stamps — warm starts skip
 bundling and compiling entirely. Error positions map back to the original sources.
 Handlers support async/await, `delay()`, `fake.*`, and module-scope state (counters,
 in-memory stores) that persists across requests and resets on hot reload.
@@ -139,7 +139,7 @@ in both runtimes — the same file loads under the CLI (QuickJS) and under Node 
 `loadMocksDir` (V8), whether it registers with bare calls or `export default [...]`.
 RegExp paths (`http.get(/^\/api\/\d+$/i, ...)`), `HttpResponse.error()`, and
 `passthrough()` behave the same in both. npm packages resolve and bundle in both
-runtimes. Scripted handler calls cost ~10us (Rust matching + QuickJS execution);
+runtimes. Scripted handler calls cost ~15us (Rust matching + QuickJS execution);
 matching never touches JS. Enabled via the `scripting` cargo feature (included in
 `full`; excluded from the Node addon, where V8 runs the files instead).
 
