@@ -2521,9 +2521,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef522c16e4d321ae2e44d3cf469e2fcc20f4e13eb6b9915301a1740fb1125268"
+checksum = "18286b504c6e06d07e992e3aea891bf8d326c21b05f6c61d482abec1f3e07327"
 dependencies = [
  "bytes",
  "ferrijs-fetch",
@@ -2542,9 +2542,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-bundle"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "062cb70cf17a0440b0ae9e761e910fbfa765ed127473d34cefba19ee5fb9c701"
+checksum = "04c537d4405c13c04a69e8f44a60fdd44034ac8e3839d006c7076420608bdd03"
 dependencies = [
  "ferrijs",
  "rolldown",
@@ -2561,9 +2561,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-fetch"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fda637246efa3c2b5283bece6fb7afe766a2e6c605ae45c7505ccd2d8500f20c"
+checksum = "d8343bf51d47822b5bc04cd561dc54978db7c7fc0ac1a0c88ca85d9f692b4fa2"
 dependencies = [
  "bytes",
  "ferrijs-permissions",
@@ -2579,15 +2579,15 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-permissions"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b3c1c93fe0285732af2fa745546f1694cf8c03c308137d18483d949838918af"
+checksum = "e748d081a2c212a93df97c281aaf5377eb67e2f8bd0933fb6c98cce16e4cc399"
 
 [[package]]
 name = "ferrijs-serde"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a42f3a402432a8680a5c5c62fa9af60184eb2f7c9766f3e72ecbe2ecb5abb0f"
+checksum = "1616cc59cd9cb21d74a61b1346d48bef8ae7f468dbaf93fc5306d46b4707b249"
 dependencies = [
  "rquickjs",
  "serde",
@@ -2595,9 +2595,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-std"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce0b049f23b2d6fd61f1b2c199ab782edaf731c83155acf5a565801c91143abd"
+checksum = "98aca09816dc2856caaeec9a18d41e0a747aeb9a3ead39b6b66ae8485e191412"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2657,6 +2657,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "windows-sys 0.61.2",
  "x25519-dalek",
  "zstd 0.14.0",
 ]
