@@ -1,6 +1,6 @@
 {
   "name": "@ferrimock/node",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "High-performance HTTP mocking engine with MSW-style handler API for Node.js",
   "main": "index.js",
   "module": "index.mjs",

@@ -2522,6 +2522,8 @@ dependencies = [
 [[package]]
 name = "ferrijs"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef522c16e4d321ae2e44d3cf469e2fcc20f4e13eb6b9915301a1740fb1125268"
 dependencies = [
  "bytes",
  "ferrijs-fetch",
@@ -2541,6 +2543,8 @@ dependencies = [
 [[package]]
 name = "ferrijs-bundle"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "062cb70cf17a0440b0ae9e761e910fbfa765ed127473d34cefba19ee5fb9c701"
 dependencies = [
  "ferrijs",
  "rolldown",
@@ -2558,6 +2562,8 @@ dependencies = [
 [[package]]
 name = "ferrijs-fetch"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fda637246efa3c2b5283bece6fb7afe766a2e6c605ae45c7505ccd2d8500f20c"
 dependencies = [
  "bytes",
  "ferrijs-permissions",
@@ -2574,10 +2580,14 @@ dependencies = [
 [[package]]
 name = "ferrijs-permissions"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b3c1c93fe0285732af2fa745546f1694cf8c03c308137d18483d949838918af"
 
 [[package]]
 name = "ferrijs-serde"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a42f3a402432a8680a5c5c62fa9af60184eb2f7c9766f3e72ecbe2ecb5abb0f"
 dependencies = [
  "rquickjs",
  "serde",
@@ -2586,6 +2596,8 @@ dependencies = [
 [[package]]
 name = "ferrijs-std"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce0b049f23b2d6fd61f1b2c199ab782edaf731c83155acf5a565801c91143abd"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2651,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -2723,7 +2735,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock-cli"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2754,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock-ml"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "burn",
  "chrono",
@@ -2770,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock-napi"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "axum",
  "bytes",
