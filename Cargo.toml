@@ -235,10 +235,10 @@ tera-contrib = { version = "0.2", features = ["json", "date", "rand"] }
 # rolldown bundler; ferrimock adds only its MSW-shaped host bindings.
 # `fetch` is compiled in for the multipart codec and the stream bridge;
 # the runtime itself is built `without_fetch`.
-ferrijs = { path = "../ferrijs/crates/ferrijs", version = "0.1.0", default-features = false, features = ["fetch"] }
-ferrijs-bundle = { path = "../ferrijs/crates/ferrijs-bundle", version = "0.1.0" }
-ferrijs-fetch = { path = "../ferrijs/crates/ferrijs-fetch", version = "0.1.0" }
-ferrijs-std = { path = "../ferrijs/crates/ferrijs-std", version = "0.1.0" }
+ferrijs = { version = "0.1.0", default-features = false, features = ["fetch"] }
+ferrijs-bundle = "0.1.0"
+ferrijs-fetch = "0.1.0"
+ferrijs-std = "0.1.0"
 # The same feature set ferrijs enables, so the workspace links one rquickjs.
 # `full-async` does NOT imply `parallel`; without it AsyncRuntime is !Send/!Sync
 # and HandlerFn closures (Send + Sync) cannot reach the VM.
