@@ -176,6 +176,11 @@ macro_rules! await_js {
 pub(super) use await_js;
 
 /// Bytes behind a stream chunk (string, `Uint8Array` or `ArrayBuffer`).
+// Reading a JS buffer's bytes is `unsafe` from rquickjs 0.13: the slice
+// aliases engine memory and no JavaScript may run while it is alive.
+// Every read here copies immediately, so the borrow never spans a call
+// back into script.
+#[allow(unsafe_code)]
 fn chunk_bytes(chunk: &Value<'_>) -> Result<Vec<u8>, ScriptError> {
     if let Some(s) = chunk.as_string() {
         return s
@@ -184,10 +189,12 @@ fn chunk_bytes(chunk: &Value<'_>) -> Result<Vec<u8>, ScriptError> {
             .map_err(|e| ScriptError::internal(format!("stream chunk: {e}")));
     }
     if let Ok(ta) = rquickjs::TypedArray::<u8>::from_value(chunk.clone()) {
-        return Ok(ta.as_bytes().unwrap_or_default().to_vec());
+        // SAFETY: `to_vec` copies it out before anything runs JS.
+        return Ok(unsafe { ta.as_bytes() }.unwrap_or_default().to_vec());
     }
     if let Some(ab) = rquickjs::ArrayBuffer::from_value(chunk.clone()) {
-        return Ok(ab.as_bytes().unwrap_or_default().to_vec());
+        // SAFETY: as above -- copied before anything runs JS.
+        return Ok(unsafe { ab.as_bytes() }.unwrap_or_default().to_vec());
     }
     Err(ScriptError::named(
         "TypeError",

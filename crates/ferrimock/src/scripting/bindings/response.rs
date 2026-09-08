@@ -97,16 +97,25 @@ fn with_content_type(
 }
 
 /// The bytes of an `ArrayBuffer` or a `Uint8Array`-shaped view.
+// Reading a JS buffer's bytes is `unsafe` from rquickjs 0.13: the slice
+// aliases engine memory and no JavaScript may run while it is alive.
+// Every read here copies immediately, so the borrow never spans a call
+// back into script.
+#[allow(unsafe_code)]
 pub(super) fn value_to_bytes(data: &Value<'_>) -> Option<Bytes> {
     if let Some(ab) = data
         .as_object()
         .and_then(|o| rquickjs::ArrayBuffer::from_object(o.clone()))
     {
-        return Some(Bytes::copy_from_slice(ab.as_bytes().unwrap_or_default()));
+        // SAFETY: copied by `copy_from_slice` before anything runs JS.
+        return Some(Bytes::copy_from_slice(
+            unsafe { ab.as_bytes() }.unwrap_or_default(),
+        ));
     }
     TypedArray::<u8>::from_value(data.clone())
         .ok()
-        .map(|ta| Bytes::copy_from_slice(ta.as_bytes().unwrap_or_default()))
+        // SAFETY: as above -- copied before anything runs JS.
+        .map(|ta| Bytes::copy_from_slice(unsafe { ta.as_bytes() }.unwrap_or_default()))
 }
 
 fn build(init: ResponseInit, default_content_type: Option<&str>, body: Bytes) -> HttpResponse {

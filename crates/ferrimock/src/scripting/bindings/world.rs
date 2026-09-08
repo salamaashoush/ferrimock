@@ -22,7 +22,7 @@ fn throw(message: impl std::fmt::Display) -> rquickjs::Error {
     rquickjs::Error::new_from_js_message("ferrimock", "Error", message.to_string())
 }
 
-/// Hand JSON to the realm as native values. Not `rquickjs_serde::to_value`:
+/// Hand JSON to the realm as native values. Not `ferrijs_serde::to_value`:
 /// under `serde_json/arbitrary_precision` (forced workspace-wide by
 /// rolldown) a number would arrive as the `$serde_json::private::Number`
 /// map; the runtime's walker reads numbers through the safe accessors and
@@ -34,13 +34,13 @@ fn to_js<'js>(ctx: &Ctx<'js>, value: &JsonValue) -> rquickjs::Result<Value<'js>>
 
 /// Read a JS value as JSON.
 ///
-/// Straight through `rquickjs_serde`, unlike the outbound direction: the
+/// Straight through `ferrijs_serde`, unlike the outbound direction: the
 /// private-number token is only ever produced by serde_json's *Serialize*
 /// impl, so reading into Rust never meets it.
 fn from_js(value: Option<Value<'_>>, what: &str) -> rquickjs::Result<JsonValue> {
     match value.filter(|v| !v.is_undefined() && !v.is_null()) {
         None => Ok(JsonValue::Object(serde_json::Map::new())),
-        Some(v) => match rquickjs_serde::from_value(v).map_err(throw)? {
+        Some(v) => match ferrijs_serde::from_value(v).map_err(throw)? {
             object @ JsonValue::Object(_) => Ok(object),
             _ => Err(throw(format!("{what} has to be an object"))),
         },

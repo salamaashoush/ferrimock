@@ -29,7 +29,7 @@ fn fake_call<'js>(
     // `fake.uuid()` arrives as an explicit `undefined`.
     let args: Args = match args.0 {
         Some(v) if !v.is_undefined() && !v.is_null() => {
-            rquickjs_serde::from_value(v).map_err(|e| {
+            ferrijs_serde::from_value(v).map_err(|e| {
                 rquickjs::Error::new_from_js_message("ferrimock", "TypeError", e.to_string())
             })?
         }
@@ -57,7 +57,7 @@ fn fake_call<'js>(
         rquickjs::Error::new_from_js_message("ferrimock", "Error", format!("fake.{name}: {e}"))
     })?;
 
-    // Not `rquickjs_serde::to_value`: a generator returning a number
+    // Not `ferrijs_serde::to_value`: a generator returning a number
     // (`fake.price()`, `fake.amount()`) would arrive in JS as the
     // `$serde_json::private::Number` map under `arbitrary_precision`;
     // the runtime's walker reads numbers through the safe accessors.

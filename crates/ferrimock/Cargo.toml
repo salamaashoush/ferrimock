@@ -90,7 +90,7 @@ scripting = [
   "dep:ferrijs-fetch",
   "dep:ferrijs-std",
   "dep:rquickjs",
-  "dep:rquickjs-serde",
+  "dep:ferrijs-serde",
   "dep:dunce",
 ]
 
@@ -182,7 +182,7 @@ ferrijs-bundle = { workspace = true, optional = true }
 ferrijs-fetch = { workspace = true, optional = true }
 ferrijs-std = { workspace = true, optional = true }
 rquickjs = { workspace = true, optional = true }
-rquickjs-serde = { workspace = true, optional = true }
+ferrijs-serde = { workspace = true, optional = true }
 dunce = { workspace = true, optional = true }
 
 [dev-dependencies]

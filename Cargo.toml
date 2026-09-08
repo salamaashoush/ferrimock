@@ -131,7 +131,7 @@ tokio = { version = "1.53", features = ["full"] }
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "timeout"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 
@@ -186,15 +186,15 @@ regex = "1.13"
 regex-syntax = "0.8"
 rustc-hash = "2.1"
 sha2 = "0.11"
-smallvec = { version = "1.15", features = ["serde", "union", "const_generics"] }
+smallvec = { version = "1.16", features = ["serde", "union", "const_generics"] }
 url = "2.5"
 urlencoding = "2.1.3"
-uuid = { version = "1.24", features = ["v4", "serde"] }
+uuid = { version = "1.26", features = ["v4", "serde"] }
 
 # CLI
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.6"
-dirs = "6.0"
+dirs = "7.0"
 colored = "3.1"
 comfy-table = { version = "8.0", features = ["custom_styling"] }
 indicatif = "0.18"
@@ -225,24 +225,25 @@ async-graphql = { version = "7.2", default-features = false, features = ["dynami
 async-graphql-parser = "7.2"
 
 # Template engine
-tera = "2.1"
+tera = "2.3"
 # Tera 2 moved its dependency-heavy built-ins out of core; json_encode, date,
 # now and get_random are part of the documented mock template surface.
-tera-contrib = { version = "0.2", features = ["json", "date", "rand"] }
+tera-contrib = { version = "0.3", features = ["json", "date", "rand"] }
 
 # QuickJS scripting (scripting feature): the ferrijs runtime owns the VM,
 # its event loop, the resource limits, the standard globals and the
 # rolldown bundler; ferrimock adds only its MSW-shaped host bindings.
 # `fetch` is compiled in for the multipart codec and the stream bridge;
 # the runtime itself is built `without_fetch`.
-ferrijs = { version = "0.1.0", default-features = false, features = ["fetch"] }
-ferrijs-bundle = "0.1.0"
-ferrijs-fetch = "0.1.0"
-ferrijs-std = "0.1.0"
+ferrijs = { version = "0.2.0", default-features = false, features = ["fetch"] }
+ferrijs-bundle = "0.2.0"
+ferrijs-fetch = "0.2.0"
+ferrijs-serde = "0.2.0"
+ferrijs-std = "0.2.0"
 # The same feature set ferrijs enables, so the workspace links one rquickjs.
 # `full-async` does NOT imply `parallel`; without it AsyncRuntime is !Send/!Sync
 # and HandlerFn closures (Send + Sync) cannot reach the VM.
-rquickjs = { version = "0.12", features = [
+rquickjs = { version = "0.13", features = [
   "full-async",
   "parallel",
   "macro",
@@ -252,7 +253,6 @@ rquickjs = { version = "0.12", features = [
   "either",
   "bytes",
 ] }
-rquickjs-serde = "0.6"
 # canonicalize without Windows \\?\ verbatim prefixes (rolldown cannot
 # resolve them as entry paths)
 dunce = "1"
@@ -287,3 +287,13 @@ tokio.opt-level = 2
 regex.opt-level = 2
 regex-automata.opt-level = 2
 dashmap.opt-level = 2
+
+# ferrijs 0.2.0 is not published yet; resolve it from the sibling checkout
+# while the two move together. Remove once it is on crates.io.
+[patch.crates-io]
+ferrijs = { path = "../ferrijs/crates/ferrijs" }
+ferrijs-std = { path = "../ferrijs/crates/ferrijs-std" }
+ferrijs-fetch = { path = "../ferrijs/crates/ferrijs-fetch" }
+ferrijs-bundle = { path = "../ferrijs/crates/ferrijs-bundle" }
+ferrijs-permissions = { path = "../ferrijs/crates/ferrijs-permissions" }
+ferrijs-serde = { path = "../ferrijs/crates/ferrijs-serde" }

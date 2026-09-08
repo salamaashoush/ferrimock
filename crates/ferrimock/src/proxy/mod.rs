@@ -198,7 +198,17 @@ pub async fn start(
                         handle.graceful_shutdown(None);
                     }
                 });
-                if let Err(error) = axum_server::from_tcp_rustls(std_listener, tls)
+                // 0.8 builds the server fallibly: the listener is adopted
+                // here rather than at the first accept, so a socket that
+                // cannot be taken over is an error before anything serves.
+                let server = match axum_server::from_tcp_rustls(std_listener, tls) {
+                    Ok(server) => server,
+                    Err(error) => {
+                        tracing::error!("proxy TLS listener error: {error}");
+                        return;
+                    }
+                };
+                if let Err(error) = server
                     .handle(handle)
                     .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                     .await
