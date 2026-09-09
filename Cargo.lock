@@ -2672,7 +2672,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -2744,7 +2744,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2775,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock-ml"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "burn",
  "chrono",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "ferrimock-napi"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "bytes",
