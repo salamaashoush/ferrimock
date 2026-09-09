@@ -1789,6 +1789,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cty"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b365fabc795046672053e29c954733ec3b05e4be654ab130fe8f1f94d7051f35"
+
+[[package]]
 name = "cubecl-common"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2521,9 +2527,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bd9bafc649f1363bfac43cfe56792d2d091ef7fdedf5ed82f09e21a100d07"
+checksum = "fbe4414652c3bab25ee440c5a1a764162a98d58eb40915aaadf868f0c42f88d0"
 dependencies = [
  "bytes",
  "ferrijs-fetch",
@@ -2531,6 +2537,7 @@ dependencies = [
  "ferrijs-serde",
  "ferrijs-std",
  "futures",
+ "libmimalloc-sys",
  "rquickjs",
  "rustc-hash",
  "serde",
@@ -2542,9 +2549,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-bundle"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d571260dc6a36d65c801d4239cdefc5d3363077e7d2e99d1676571e127db9939"
+checksum = "329e24d1bc3f51a40f18e298338f83071af0b78f4750b4019d9679b8fb036a8c"
 dependencies = [
  "ferrijs",
  "rolldown",
@@ -2561,9 +2568,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-fetch"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa7d749c6839aafc46eef21834e4e4bce88823a6b40605247c39b16549f968d4"
+checksum = "95ef8eff3d07a83ba74bed51d137aac3e67779a093e7c78c7b3f36de27403acd"
 dependencies = [
  "bytes",
  "ferrijs-permissions",
@@ -2579,15 +2586,15 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-permissions"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd2c75b9c2abe669dc50811543a8d41c3a0f7a3edd12efc6ed708cfa00b57232"
+checksum = "6f556ee050f68a215ab33026e107baabbc15f66ad46f4be7cfe4a16302315cce"
 
 [[package]]
 name = "ferrijs-serde"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c403e18e53668c14227c57324bb8aa68f640d07c7cd31c19185aadbcee46198f"
+checksum = "d501dbb3c181db83d20223761e8d57ecc0fc8c7c4ba6dca564b589b79496e449"
 dependencies = [
  "rquickjs",
  "serde",
@@ -2595,9 +2602,9 @@ dependencies = [
 
 [[package]]
 name = "ferrijs-std"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af7889723e93b7f42822972330b32d319f2791736eb5849efcf053563dbf90d"
+checksum = "6004e613a0db7065e9d188480b99fe654a5ffd3e1b3fac42e02c8eaa526bdc40"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4192,6 +4199,16 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
+name = "libmimalloc-sys"
+version = "0.1.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
+dependencies = [
+ "cc",
+ "cty",
+]
 
 [[package]]
 name = "libredox"
