@@ -12,6 +12,12 @@ pub struct GeneratorInfo {
 
 /// Get all available generators with their metadata
 pub fn get_all_generators() -> Vec<GeneratorInfo> {
+    let mut generators = base_generators();
+    generators.extend(pdf_presets());
+    generators
+}
+
+fn base_generators() -> Vec<GeneratorInfo> {
     vec![
         // Identity
         GeneratorInfo {
@@ -562,6 +568,156 @@ pub fn get_all_generators() -> Vec<GeneratorInfo> {
             example: "7",
             params: "",
         },
+        // Images -- `fake image TYPE`
+        GeneratorInfo {
+            name: "placeholder",
+            category: "image",
+            description: "Size label on a flat panel",
+            example: "300x200 grey PNG",
+            params: "width, height, text, bg_color, text_color",
+        },
+        GeneratorInfo {
+            name: "avatar",
+            category: "image",
+            description: "Initials on a coloured disc",
+            example: "JS on teal",
+            params: "initials, size, bg_color, text_color",
+        },
+        GeneratorInfo {
+            name: "gradient",
+            category: "image",
+            description: "Two-stop linear gradient",
+            example: "red to blue",
+            params: "width, height, start, end, direction",
+        },
+        GeneratorInfo {
+            name: "mesh",
+            category: "image",
+            description: "Four-corner gradient mesh",
+            example: "four random corners",
+            params: "width, height",
+        },
+        GeneratorInfo {
+            name: "checkerboard",
+            category: "image",
+            description: "Alternating squares",
+            example: "black and white",
+            params: "width, height, bg_color, text_color",
+        },
+        GeneratorInfo {
+            name: "noise",
+            category: "image",
+            description: "Per-pixel noise",
+            example: "grey or coloured static",
+            params: "width, height, colored",
+        },
+        GeneratorInfo {
+            name: "stripes",
+            category: "image",
+            description: "Banded stripes",
+            example: "black on white",
+            params: "width, height, direction",
+        },
+        GeneratorInfo {
+            name: "text",
+            category: "image",
+            description: "Centred text on a panel",
+            example: "centred sample text",
+            params: "text, width, height, bg_color",
+        },
+        GeneratorInfo {
+            name: "solid",
+            category: "image",
+            description: "One flat colour",
+            example: "a single fill",
+            params: "width, height, bg_color",
+        },
+        GeneratorInfo {
+            name: "plasma",
+            category: "image",
+            description: "Smooth multi-frequency colour field",
+            example: "photo-like colour",
+            params: "width, height, octaves, color",
+        },
+        GeneratorInfo {
+            name: "photo",
+            category: "image",
+            description: "Landscape: sky, sun and layered hills",
+            example: "a stand-in photograph",
+            params: "width, height",
+        },
+        GeneratorInfo {
+            name: "scan",
+            category: "image",
+            description: "A scanned page: ruled text, speckle, vignette",
+            example: "looks like a scan",
+            params: "width, height, cells",
+        },
+        GeneratorInfo {
+            name: "chart",
+            category: "image",
+            description: "Bar, line or area chart",
+            example: "six bars on a grid",
+            params: "width, height, kind, points",
+        },
+        GeneratorInfo {
+            name: "qr",
+            category: "image",
+            description: "QR-shaped module matrix with finders",
+            example: "not decodable",
+            params: "size, cells",
+        },
+        GeneratorInfo {
+            name: "barcode",
+            category: "image",
+            description: "Code 128-shaped bars and a number",
+            example: "12 digits",
+            params: "width, height, points",
+        },
+        GeneratorInfo {
+            name: "identicon",
+            category: "image",
+            description: "Symmetric block avatar from a seed",
+            example: "stable per seed",
+            params: "id-seed, size, cells",
+        },
+        GeneratorInfo {
+            name: "screenshot",
+            category: "image",
+            description: "Window chrome, sidebar and cards",
+            example: "light or dark",
+            params: "width, height, dark",
+        },
+        GeneratorInfo {
+            name: "heatmap",
+            category: "image",
+            description: "Cell grid over a blue-to-red ramp",
+            example: "16 by 10 cells",
+            params: "width, height, cells, rows",
+        },
+        GeneratorInfo {
+            name: "waveform",
+            category: "image",
+            description: "Mirrored audio envelope",
+            example: "speech-shaped",
+            params: "width, height, color",
+        },
+        GeneratorInfo {
+            name: "map",
+            category: "image",
+            description: "Abstract streets, blocks and a river",
+            example: "road network",
+            params: "width, height",
+        },
+        GeneratorInfo {
+            name: "blueprint",
+            category: "image",
+            description: "Technical drawing on grid paper",
+            example: "dimensioned rectangle",
+            params: "width, height",
+        },
+        // Stock documents -- `fake pdf --preset NAME`
+        // Kept in step with `PdfPreset::ALL` by a test in this module.
         // Composite types
         GeneratorInfo {
             name: "user",
@@ -578,4 +734,21 @@ pub fn get_all_generators() -> Vec<GeneratorInfo> {
             params: "",
         },
     ]
+}
+
+/// The PDF presets, as catalogue entries.
+///
+/// Read off `PdfPreset::ALL` rather than copied, so a preset added to the enum
+/// shows up in `fake list` without a second edit.
+pub fn pdf_presets() -> Vec<GeneratorInfo> {
+    ferrimock::fake_data::document::PdfPreset::ALL
+        .iter()
+        .map(|preset| GeneratorInfo {
+            name: preset.name(),
+            category: "pdf",
+            description: preset.description(),
+            example: "a composed PDF, base64",
+            params: "pages, title, page-size, orientation, font, accent, watermark",
+        })
+        .collect()
 }

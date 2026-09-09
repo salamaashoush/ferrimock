@@ -1,32 +1,62 @@
 //! Fake image generation
 
 use crate::commands::ui;
+use crate::ops::fake::Image;
 use base64::Engine;
 
-/// Generate a fake image
-#[allow(clippy::too_many_arguments)]
-pub fn generate_fake_image(
-    image_type: &str,
-    width: u32,
-    height: u32,
-    bg_color: Option<&str>,
-    text_color: Option<&str>,
-    text: Option<&str>,
-    initials: Option<&str>,
-    start_color: Option<&str>,
-    end_color: Option<&str>,
-    direction: &str,
-    image_format: &str,
-    quality: u8,
-    output: Option<&str>,
-    as_base64: bool,
-    as_data_uri: bool,
-    colored: bool,
-    open_file: bool,
-) -> anyhow::Result<()> {
+/// Every `fake image TYPE`, for the error message and the listing.
+pub const IMAGE_TYPES: [(&str, &str); 21] = [
+    ("placeholder", "size label on a flat panel"),
+    ("avatar", "initials on a coloured disc"),
+    ("gradient", "two-stop linear gradient"),
+    ("mesh", "four-corner gradient mesh"),
+    ("checkerboard", "alternating squares"),
+    ("noise", "per-pixel noise, grey or coloured"),
+    ("stripes", "banded stripes"),
+    ("text", "centred text on a panel"),
+    ("solid", "one flat colour"),
+    ("plasma", "smooth multi-frequency colour field"),
+    ("photo", "landscape: sky, sun and layered hills"),
+    ("scan", "a scanned page: ruled text, speckle, vignette"),
+    ("chart", "bar, line or area chart"),
+    ("qr", "QR-shaped module matrix with finders"),
+    ("barcode", "Code 128-shaped bars and a number"),
+    ("identicon", "symmetric block avatar from a seed"),
+    ("screenshot", "window chrome, sidebar and cards"),
+    ("heatmap", "cell grid over a blue-to-red ramp"),
+    ("waveform", "mirrored audio envelope"),
+    ("map", "abstract streets, blocks and a river"),
+    ("blueprint", "technical drawing on grid paper"),
+];
+
+/// Where the nth image of a batch goes.
+fn output_path(template: &str, index: usize, count: usize) -> String {
+    let width = count.to_string().len();
+    if template.contains("{n}") {
+        return template.replace("{n}", &format!("{:0width$}", index + 1));
+    }
+    if count == 1 {
+        return template.to_string();
+    }
+    match template.rsplit_once('.') {
+        Some((stem, extension)) => format!("{stem}-{:0width$}.{extension}", index + 1),
+        None => format!("{template}-{:0width$}", index + 1),
+    }
+}
+
+/// Render one image of the requested type as base64 PNG.
+pub fn render(opts: &Image) -> anyhow::Result<String> {
     use ferrimock::fake_data::*;
 
-    let base64_data = match image_type.to_lowercase().as_str() {
+    let width = opts.width;
+    let height = opts.height;
+    let bg_color = opts.bg_color.as_deref();
+    let text_color = opts.text_color.as_deref();
+    let text = opts.text.as_deref();
+    let direction = opts.direction.as_str();
+    let colored = opts.colored;
+
+    let base64_data = match opts.image_type.to_lowercase().as_str() {
         "placeholder" => {
             let display_text = text.map_or_else(|| format!("{width}x{height}"), String::from);
             fake_placeholder(
@@ -38,12 +68,12 @@ pub fn generate_fake_image(
             )
         }
         "avatar" => {
-            let init = initials.unwrap_or("??");
+            let init = opts.initials.as_deref().unwrap_or("??");
             fake_avatar(Some(init), Some(width), bg_color, text_color)
         }
         "gradient" => {
-            let start = start_color.unwrap_or("#FF0000");
-            let end = end_color.unwrap_or("#0000FF");
+            let start = opts.start.as_deref().unwrap_or("#FF0000");
+            let end = opts.end.as_deref().unwrap_or("#0000FF");
             fake_image_gradient(
                 Some(width),
                 Some(height),
@@ -82,12 +112,61 @@ pub fn generate_fake_image(
             )
         }
         "solid" | "color" => fake_png(Some(width), Some(height), bg_color),
-        _ => {
+        "mesh" => fake_image_mesh(Some(width), Some(height)),
+        "plasma" => fake_image_plasma(Some(width), Some(height), opts.octaves, bg_color),
+        "photo" => fake_image_photo(Some(width), Some(height)),
+        "scan" => fake_image_scan(Some(width), Some(height), opts.cells),
+        "chart" => fake_image_chart(
+            Some(width),
+            Some(height),
+            opts.kind.as_deref(),
+            opts.points,
+            bg_color,
+        ),
+        "qr" => fake_image_qr(Some(width.min(height)), opts.cells),
+        "barcode" => fake_image_barcode(Some(width), Some(height), opts.points),
+        "identicon" => {
+            fake_image_identicon(opts.seed.as_deref(), Some(width.min(height)), opts.cells)
+        }
+        "screenshot" => fake_image_screenshot(Some(width), Some(height), Some(opts.dark)),
+        "heatmap" => fake_image_heatmap(Some(width), Some(height), opts.cells, opts.rows),
+        "waveform" => fake_image_waveform(Some(width), Some(height), bg_color),
+        "map" => fake_image_map(Some(width), Some(height)),
+        "blueprint" => fake_image_blueprint(Some(width), Some(height)),
+        other => {
+            let names: Vec<&str> = IMAGE_TYPES.iter().map(|(name, _)| *name).collect();
             anyhow::bail!(
-                "Unknown image type: '{image_type}'. Available: placeholder, avatar, gradient, checkerboard, noise, stripes, text, solid"
+                "Unknown image type {other:?}. Available: {}",
+                names.join(", ")
             );
         }
     };
+
+    Ok(base64_data)
+}
+
+/// Generate a fake image, or a batch of them.
+pub fn generate_fake_image(opts: &Image) -> anyhow::Result<()> {
+    let count = opts.count.max(1);
+    if count > 1 && opts.output.is_none() && !opts.base64 && !opts.data_uri {
+        anyhow::bail!("--count {count} needs --output, or every image goes to its own temp file");
+    }
+    for index in 0..count {
+        write_one(opts, index, count)?;
+    }
+    Ok(())
+}
+
+fn write_one(opts: &Image, index: usize, count: usize) -> anyhow::Result<()> {
+    use ferrimock::fake_data::png_to_jpeg;
+
+    let base64_data = render(opts)?;
+    let image_format = opts.format.as_str();
+    let quality = opts.quality;
+    let output = opts.output.as_deref();
+    let as_base64 = opts.base64;
+    let as_data_uri = opts.data_uri;
+    let open_file = opts.open;
 
     // Convert to JPEG if requested
     let final_data =
@@ -106,14 +185,20 @@ pub fn generate_fake_image(
 
     // Output handling
     if let Some(path) = output {
+        let path = output_path(path, index, count);
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(&final_data)
             .map_err(|e| anyhow::anyhow!("Failed to decode base64: {e}"))?;
-        std::fs::write(path, &bytes)?;
-        crate::say!("{}", ui::success(&format!("Saved to {}", ui::path(path))));
+        if let Some(parent) = std::path::Path::new(&path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, &bytes)?;
+        crate::say!("{}", ui::success(&format!("Saved to {}", ui::path(&path))));
 
         if open_file {
-            let _ = open::that(path);
+            let _ = open::that(&path);
         }
     } else if as_data_uri {
         println!("data:{mime};base64,{final_data}");

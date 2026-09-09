@@ -94,7 +94,7 @@ enum Command {
 
     /// Fake data generation: data, images, PDFs, templates, HTTP server
     #[command(visible_alias = "f")]
-    Fake(FakeCommand),
+    Fake(Box<FakeCommand>),
 
     /// The entity world a mocks directory builds: what is in it, and from where
     #[command(visible_alias = "w")]
@@ -315,7 +315,7 @@ async fn main() -> ExitCode {
 
     let result: Result<()> = match cli.command {
         Command::Mock(cmd) => ferrimock_cli::commands::execute(cmd).await,
-        Command::Fake(cmd) => ferrimock_cli::commands::fake::execute(cmd).await,
+        Command::Fake(cmd) => ferrimock_cli::commands::fake::execute(*cmd).await,
         Command::World(cmd) => ferrimock_cli::commands::world::execute(cmd).await,
         Command::Proxy {
             upstream,

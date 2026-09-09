@@ -6,7 +6,7 @@ High-performance HTTP mocking engine for Node.js, powered by Rust. Drop-in repla
 
 - **Faster than MSW** -- 1.4-1.7x on node, 1.1-1.5x on bun; Rust matching engine + NAPI FunctionRef optimization ([method](#performance))
 - **MSW drop-in API** -- `setupServer`, `http.get()`, `HttpResponse.json()`, `graphql.link()`, `server.use()`, lifecycle events
-- **Declarative mocks** -- YAML/JSON/HAR files with Tera templates and 115+ fake data generators
+- **Declarative mocks** -- YAML/JSON/HAR files with Tera templates and 150+ fake data generators
 - **Zero-config interceptor** -- Patches `fetch`, `XMLHttpRequest`, and `http.ClientRequest`, works with any test runner
 
 ## Performance
@@ -309,7 +309,7 @@ server.events.on('response:bypass', ({ request, requestId, response }) => { ... 
 server.events.on('unhandledException', ({ request, requestId, error }) => { ... })
 ```
 
-### Fake Data (115+ generators)
+### Fake Data (150+ generators)
 
 ```ts
 import { fake } from 'ferrimock'
@@ -325,6 +325,56 @@ fake.creditCard()   // '4111111111111111'
 fake.jwt()          // 'eyJhbGciOiJIUzI1NiJ9...'
 fake.sentence()     // 'The quick brown fox...'
 // ... 100+ more
+```
+
+### Documents and images
+
+Twenty stock documents and twenty-one image kinds, composed in process. No asset
+on disk, no network, and everything under the same seed as the rest of the
+generators.
+
+```bash
+ferrimock fake pdf --preset invoice -o invoice.pdf
+ferrimock fake pdf --preset statement --pages 4 --page-size letter -o s.pdf
+ferrimock fake pdf --preset report --chart bar:12 --table 8x4 --watermark DRAFT -o r.pdf
+ferrimock fake pdf --preset certificate --orientation landscape --font times -o c.pdf
+ferrimock --seed 42 fake pdf --preset payslip --count 50 -o payslips/{n}.pdf
+
+ferrimock fake image photo -W 1200 -H 800 -o hero.jpg -F jpeg
+ferrimock fake image scan -W 620 -H 877 -o scanned-page.png
+ferrimock fake image screenshot --dark -W 1440 -H 900 -o app.png
+ferrimock fake image identicon --id-seed sashoush -s 256 -o avatar.png
+ferrimock fake list --category pdf     # every preset
+ferrimock fake list --category image   # every image kind
+```
+
+`--preset` picks the document: `invoice`, `statement`, `payslip`, `receipt`,
+`purchase-order`, `packing-slip`, `contract`, `nda`, `letter`, `memo`, `report`,
+`manual`, `newsletter`, `resume`, `form`, `timesheet`, `lab-report`,
+`certificate`, `slides`, `plain`. Text is measured against the page with the
+Adobe base-14 metrics, so content flows onto as many pages as it needs and a
+table broken across a page repeats its header row.
+
+Page furniture and typography are yours: `--page-size`, `--orientation`,
+`--font`, `--accent`, `--margin`, `--header`, `--footer`, `--watermark`,
+`--no-page-numbers`, and the `--author` / `--subject` / `--keywords` that land in
+the PDF `Info` dictionary. Stack extra content on any preset with
+`--paragraphs`, `--table ROWSxCOLS`, `--chart KIND:POINTS`, `--image WxH`,
+`--list N`, `--kv N`, `--callouts N` and `--columns COLSxPARAS`.
+
+The same surface is in templates and in scripts, under the names the CLI uses:
+
+```jinja
+{{ fake_document(preset="invoice", pages=2, watermark="COPY") }}
+{{ fake_document_data_uri(preset="receipt", font="courier") }}
+{{ fake_image_photo(width=1200, height=420) }}
+{{ fake_image_chart(kind="line", points=12) }}
+{{ fake_image_identicon(seed=user.id, size=128) }}
+```
+
+```ts
+fake.document({ preset: 'lab-report', pageSize: 'letter' })
+fake.imageScreenshot({ width: 1440, height: 900, dark: true })
 ```
 
 Seed the generators to make a run reproducible — same values, same order, every

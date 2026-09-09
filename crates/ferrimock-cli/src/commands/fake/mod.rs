@@ -54,7 +54,7 @@ pub enum FakeAction {
     /// Write a placeholder, avatar, gradient, or noise image
     #[command(visible_alias = "img")]
     Image {
-        /// Type of image: placeholder, avatar, gradient, checkerboard, noise, stripes
+        /// Type of image; `fake image --help` lists all 21
         #[arg(value_name = "TYPE", default_value = "placeholder")]
         image_type: String,
         /// Image width in pixels
@@ -105,20 +105,116 @@ pub enum FakeAction {
         /// Generate colored noise (vs grayscale)
         #[arg(long)]
         colored: bool,
+        /// Detail octaves for `plasma`
+        #[arg(long)]
+        octaves: Option<u32>,
+        /// Grid or module count: `qr`, `heatmap`, `identicon`, `scan`
+        #[arg(long)]
+        cells: Option<u32>,
+        /// Row count for `heatmap`
+        #[arg(long)]
+        rows: Option<u32>,
+        /// Chart shape for `chart`: bar, line, area
+        #[arg(long)]
+        kind: Option<String>,
+        /// Data points for `chart`, digits for `barcode`
+        #[arg(long)]
+        points: Option<u32>,
+        /// Seed string an `identicon` is derived from
+        #[arg(long = "id-seed")]
+        id_seed: Option<String>,
+        /// Dark chrome for `screenshot`
+        #[arg(long)]
+        dark: bool,
+        /// How many images to write; needs --output with a {n} or an extension
+        #[arg(short = 'n', long, default_value = "1")]
+        count: usize,
         /// Open generated image in default viewer
         #[arg(long)]
         open: bool,
     },
 
-    /// Write a PDF with generated text
+    /// Write a PDF: one of twenty stock documents, or your own blocks
     #[command(visible_alias = "doc")]
     Pdf {
-        /// Number of pages
+        /// Least number of pages; longer content flows past it
         #[arg(short = 'p', long, default_value = "1")]
         pages: u32,
-        /// Custom text content
+        /// Custom text content, one source line per line
         #[arg(short = 't', long)]
         text: Option<String>,
+        /// Heading at the top of the document
+        #[arg(long)]
+        title: Option<String>,
+        /// Stock document; `fake list --category pdf` lists all twenty
+        #[arg(long, default_value = "plain")]
+        preset: String,
+        /// Repeat the preset body to fill --pages rather than padding blanks
+        #[arg(long)]
+        repeat: bool,
+        /// Generated prose paragraphs to add
+        #[arg(long, default_value = "0")]
+        paragraphs: usize,
+        /// Table to add, as ROWSxCOLS (repeatable)
+        #[arg(long, value_name = "ROWSxCOLS")]
+        table: Vec<String>,
+        /// Image to embed, as WIDTHxHEIGHT in pixels (repeatable)
+        #[arg(long, value_name = "WxH")]
+        image: Vec<String>,
+        /// Chart to draw, as KIND:POINTS such as bar:8 (repeatable)
+        #[arg(long, value_name = "KIND:POINTS")]
+        chart: Vec<String>,
+        /// Bulleted list to add, by item count (repeatable)
+        #[arg(long, value_name = "ITEMS")]
+        list: Vec<usize>,
+        /// Label and value block to add, by pair count (repeatable)
+        #[arg(long = "kv", value_name = "PAIRS")]
+        key_values: Vec<usize>,
+        /// Tinted callouts to add
+        #[arg(long, default_value = "0")]
+        callouts: usize,
+        /// Newspaper-column prose, as COLUMNSxPARAGRAPHS
+        #[arg(long, value_name = "COLSxPARAS")]
+        columns: Option<String>,
+        /// Paper: a4, a3, a5, letter, legal, tabloid
+        #[arg(long, default_value = "a4")]
+        page_size: String,
+        /// portrait or landscape; unset takes the preset's choice
+        #[arg(long)]
+        orientation: Option<String>,
+        /// Body font: helvetica, times, courier
+        #[arg(long)]
+        font: Option<String>,
+        /// Accent colour as hex; unset draws one from the seed
+        #[arg(long)]
+        accent: Option<String>,
+        /// Page margin in points
+        #[arg(long)]
+        margin: Option<f64>,
+        /// Diagonal stamp on every page
+        #[arg(long)]
+        watermark: Option<String>,
+        /// Running head; pass an empty string to drop the preset's
+        #[arg(long)]
+        header: Option<String>,
+        /// Running foot; pass an empty string to drop the preset's
+        #[arg(long)]
+        footer: Option<String>,
+        /// Leave `Page n of m` off the footer
+        #[arg(long)]
+        no_page_numbers: bool,
+        /// PDF Info author
+        #[arg(long)]
+        author: Option<String>,
+        /// PDF Info subject
+        #[arg(long)]
+        subject: Option<String>,
+        /// PDF Info keywords
+        #[arg(long)]
+        keywords: Option<String>,
+        /// How many documents to write; needs --output with a {n} or an extension
+        #[arg(short = 'n', long, default_value = "1")]
+        count: usize,
         /// Output file path
         #[arg(short = 'o', long)]
         output: Option<String>,
@@ -239,6 +335,14 @@ pub async fn execute(cmd: FakeCommand) -> anyhow::Result<()> {
             base64,
             data_uri,
             colored,
+            octaves,
+            cells,
+            rows,
+            kind,
+            points,
+            id_seed,
+            dark,
+            count,
             open,
         } => {
             let (width, height) = size.map_or((width, height), |s| (s, s));
@@ -259,12 +363,44 @@ pub async fn execute(cmd: FakeCommand) -> anyhow::Result<()> {
                 base64,
                 data_uri,
                 colored,
+                octaves,
+                cells,
+                rows,
+                kind,
+                points,
+                seed: id_seed,
+                dark,
+                count,
                 open,
             })
         }
         FakeAction::Pdf {
             pages,
             text,
+            title,
+            preset,
+            repeat,
+            paragraphs,
+            table,
+            image,
+            chart,
+            list,
+            key_values,
+            callouts,
+            columns,
+            page_size,
+            orientation,
+            font,
+            accent,
+            margin,
+            watermark,
+            header,
+            footer,
+            no_page_numbers,
+            author,
+            subject,
+            keywords,
+            count,
             output,
             base64,
             data_uri,
@@ -272,6 +408,30 @@ pub async fn execute(cmd: FakeCommand) -> anyhow::Result<()> {
         } => ops::pdf(&ops::Pdf {
             pages,
             text,
+            title,
+            preset,
+            repeat,
+            paragraphs,
+            tables: table,
+            images: image,
+            charts: chart,
+            lists: list,
+            key_values,
+            callouts,
+            columns,
+            page_size,
+            orientation,
+            font,
+            accent,
+            margin,
+            watermark,
+            header,
+            footer,
+            no_page_numbers,
+            author,
+            subject,
+            keywords,
+            count,
             output,
             base64,
             data_uri,

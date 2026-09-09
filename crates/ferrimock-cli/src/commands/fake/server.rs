@@ -102,8 +102,6 @@ pub async fn serve_fake_data(
         Path(image_type): Path<String>,
         Query(params): Query<HashMap<String, String>>,
     ) -> Response {
-        use ferrimock::fake_data::*;
-
         let width: u32 = params
             .get("width")
             .and_then(|v| v.parse().ok())
@@ -123,32 +121,28 @@ pub async fn serve_fake_data(
         let text = params.get("text").map(String::as_str);
         let initials = params.get("initials").map(String::as_str);
 
-        let base64_data = match image_type.as_str() {
-            "placeholder" => {
-                let display_text = text.map_or_else(|| format!("{width}x{height}"), String::from);
-                fake_placeholder(
-                    Some(width),
-                    Some(height),
-                    Some(&display_text),
-                    bg_color,
-                    text_color,
-                )
-            }
-            "avatar" => fake_avatar(initials, Some(width), bg_color, text_color),
-            "gradient" => {
-                fake_image_gradient(Some(width), Some(height), bg_color, text_color, None)
-            }
-            "checkerboard" => {
-                fake_image_checkerboard(Some(width), Some(height), bg_color, text_color, Some(20))
-            }
-            "noise" => fake_image_noise(Some(width), Some(height), Some(false)),
-            _ => fake_placeholder(
-                Some(width),
-                Some(height),
-                Some(&format!("{width}x{height}")),
-                bg_color,
-                text_color,
-            ),
+        // The CLI's dispatch, rather than a second copy of it: an image type
+        // added there is served here without a further edit.
+        let opts = crate::ops::fake::Image {
+            image_type,
+            width,
+            height,
+            bg_color: bg_color.map(ToString::to_string),
+            text_color: text_color.map(ToString::to_string),
+            text: text.map(ToString::to_string),
+            initials: initials.map(ToString::to_string),
+            octaves: params.get("octaves").and_then(|v| v.parse().ok()),
+            cells: params.get("cells").and_then(|v| v.parse().ok()),
+            rows: params.get("rows").and_then(|v| v.parse().ok()),
+            kind: params.get("kind").cloned(),
+            points: params.get("points").and_then(|v| v.parse().ok()),
+            seed: params.get("seed").cloned(),
+            dark: params.get("dark").is_some_and(|v| v != "false"),
+            ..crate::ops::fake::Image::default()
+        };
+        let base64_data = match super::image::render(&opts) {
+            Ok(data) => data,
+            Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
         };
 
         let bytes = match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
@@ -163,13 +157,39 @@ pub async fn serve_fake_data(
 
     // PDF handler
     async fn fake_pdf_handler(Query(params): Query<HashMap<String, String>>) -> Response {
-        let pages: u32 = params
-            .get("pages")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
-        let text = params.get("text").map(String::as_str);
+        let opts = crate::ops::fake::Pdf {
+            pages: params
+                .get("pages")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1),
+            text: params.get("text").cloned(),
+            title: params.get("title").cloned(),
+            preset: params
+                .get("preset")
+                .cloned()
+                .unwrap_or_else(|| "plain".to_string()),
+            page_size: params
+                .get("page_size")
+                .cloned()
+                .unwrap_or_else(|| "a4".to_string()),
+            orientation: params.get("orientation").cloned(),
+            font: params.get("font").cloned(),
+            accent: params.get("accent").cloned(),
+            watermark: params.get("watermark").cloned(),
+            header: params.get("header").cloned(),
+            footer: params.get("footer").cloned(),
+            paragraphs: params
+                .get("paragraphs")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+            ..crate::ops::fake::Pdf::default()
+        };
+        let spec = match super::pdf::build_spec(&opts) {
+            Ok(spec) => spec,
+            Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        };
+        let base64_data = ferrimock::fake_data::document::fake_pdf_document(&spec).base64;
 
-        let base64_data = ferrimock::fake_data::fake_pdf(text, Some(pages));
         let bytes = match base64::engine::general_purpose::STANDARD.decode(&base64_data) {
             Ok(b) => b,
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

@@ -205,6 +205,22 @@ pub mod fake {
         pub data_uri: bool,
         /// Coloured rather than grey noise.
         pub colored: bool,
+        /// Octaves of detail, for `plasma`.
+        pub octaves: Option<u32>,
+        /// Grid or module counts, for `qr`, `heatmap`, `identicon` and `scan`.
+        pub cells: Option<u32>,
+        /// Rows, for `heatmap`.
+        pub rows: Option<u32>,
+        /// Chart shape, for `chart`: `bar`, `line` or `area`.
+        pub kind: Option<String>,
+        /// Data points, for `chart`, and digits, for `barcode`.
+        pub points: Option<u32>,
+        /// Seed string an `identicon` is derived from.
+        pub seed: Option<String>,
+        /// Dark rather than light chrome, for `screenshot`.
+        pub dark: bool,
+        /// How many images to write. Above one, `output` needs a `{n}`.
+        pub count: usize,
         /// Open the result in the default viewer.
         pub open: bool,
     }
@@ -228,6 +244,14 @@ pub mod fake {
                 base64: false,
                 data_uri: false,
                 colored: false,
+                octaves: None,
+                cells: None,
+                rows: None,
+                kind: None,
+                points: None,
+                seed: None,
+                dark: false,
+                count: 1,
                 open: false,
             }
         }
@@ -235,32 +259,54 @@ pub mod fake {
 
     /// Write, print, or open the image `opts` describes.
     pub fn image(opts: &Image) -> anyhow::Result<()> {
-        image::generate_fake_image(
-            &opts.image_type,
-            opts.width,
-            opts.height,
-            opts.bg_color.as_deref(),
-            opts.text_color.as_deref(),
-            opts.text.as_deref(),
-            opts.initials.as_deref(),
-            opts.start.as_deref(),
-            opts.end.as_deref(),
-            &opts.direction,
-            &opts.format,
-            opts.quality,
-            opts.output.as_deref(),
-            opts.base64,
-            opts.data_uri,
-            opts.colored,
-            opts.open,
-        )
+        image::generate_fake_image(opts)
     }
 
     /// What `fake pdf` needs to write one document.
     #[derive(Debug, Clone)]
     pub struct Pdf {
+        /// Lower bound on pages; longer content flows past it.
         pub pages: u32,
         pub text: Option<String>,
+        pub title: Option<String>,
+        /// One of the names `PdfPreset::ALL` carries.
+        pub preset: String,
+        /// Repeat the preset body to fill `pages` rather than padding blanks.
+        pub repeat: bool,
+        pub paragraphs: usize,
+        /// Tables to add, each `ROWSxCOLS`.
+        pub tables: Vec<String>,
+        /// Images to embed, each `WIDTHxHEIGHT` in pixels.
+        pub images: Vec<String>,
+        /// Charts to draw, each `KIND:POINTS`, as `bar:8`.
+        pub charts: Vec<String>,
+        /// Bulleted lists, by item count.
+        pub lists: Vec<usize>,
+        /// Label and value blocks, by pair count.
+        pub key_values: Vec<usize>,
+        pub callouts: usize,
+        /// Newspaper columns, as `COLUMNSxPARAGRAPHS`.
+        pub columns: Option<String>,
+        /// `a4`, `letter`, `legal`, `a3`, `a5` or `tabloid`.
+        pub page_size: String,
+        /// `portrait` or `landscape`; unset takes the preset's choice.
+        pub orientation: Option<String>,
+        /// `helvetica`, `times` or `courier`; unset takes the preset's choice.
+        pub font: Option<String>,
+        /// Accent colour as hex; unset draws one from the seed.
+        pub accent: Option<String>,
+        pub margin: Option<f64>,
+        pub watermark: Option<String>,
+        /// Running head; empty suppresses the preset's.
+        pub header: Option<String>,
+        /// Running foot; empty suppresses the preset's.
+        pub footer: Option<String>,
+        pub no_page_numbers: bool,
+        pub author: Option<String>,
+        pub subject: Option<String>,
+        pub keywords: Option<String>,
+        /// How many documents to write. Above one, `output` needs a `{n}`.
+        pub count: usize,
         pub output: Option<String>,
         pub base64: bool,
         pub data_uri: bool,
@@ -272,6 +318,30 @@ pub mod fake {
             Self {
                 pages: 1,
                 text: None,
+                title: None,
+                preset: "plain".to_string(),
+                repeat: false,
+                paragraphs: 0,
+                tables: Vec::new(),
+                images: Vec::new(),
+                charts: Vec::new(),
+                lists: Vec::new(),
+                key_values: Vec::new(),
+                callouts: 0,
+                columns: None,
+                page_size: "a4".to_string(),
+                orientation: None,
+                font: None,
+                accent: None,
+                margin: None,
+                watermark: None,
+                header: None,
+                footer: None,
+                no_page_numbers: false,
+                author: None,
+                subject: None,
+                keywords: None,
+                count: 1,
                 output: None,
                 base64: false,
                 data_uri: false,
@@ -282,14 +352,7 @@ pub mod fake {
 
     /// Write, print, or open the PDF `opts` describes.
     pub fn pdf(opts: &Pdf) -> anyhow::Result<()> {
-        pdf::generate_fake_pdf(
-            opts.pages,
-            opts.text.as_deref(),
-            opts.output.as_deref(),
-            opts.base64,
-            opts.data_uri,
-            opts.open,
-        )
+        pdf::generate_fake_pdf(opts)
     }
 
     /// What `fake preview` needs to render a template.

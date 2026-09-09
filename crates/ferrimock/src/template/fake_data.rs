@@ -12,6 +12,128 @@ use std::collections::HashMap;
 /// Named arguments passed to a generator.
 pub type Args = HashMap<String, Value>;
 
+/// Parse one document argument, naming it in the error the way the caller
+/// spelled it. A closure would monomorphise to a single target type.
+fn parse_arg<T>(key: &str, value: &str) -> Result<T>
+where
+    T: std::str::FromStr<Err = String>,
+{
+    value
+        .parse()
+        .map_err(|e: String| FerrimockError::Template(format!("{key}: {e}")))
+}
+
+/// Build a [`PdfSpec`](crate::fake_data::document::PdfSpec) from template
+/// arguments and compose it.
+///
+/// Every argument is optional and an unknown value is an error rather than a
+/// silent fallback: a template that misspells a preset wants to be told, not to
+/// be handed a plain document.
+fn document_from_args(args: &Args) -> Result<crate::fake_data::pdf::Composed> {
+    use crate::fake_data::document::{Extras, PdfSpec, fake_pdf_document};
+    use crate::fake_data::pdf::{ChartKind, Meta, Rgb};
+
+    let text_of = |key: &str| args.get(key).and_then(Value::as_str);
+    let u32_of = |key: &str| {
+        args.get(key)
+            .and_then(Value::as_u64)
+            .map(|v| u32::try_from(v).unwrap_or(u32::MAX))
+    };
+    let size_of = |key: &str| {
+        args.get(key)
+            .and_then(Value::as_u64)
+            .map_or(0, |v| usize::try_from(v).unwrap_or(usize::MAX))
+    };
+
+    let preset = match text_of("preset") {
+        Some(value) => parse_arg("preset", value)?,
+        None => crate::fake_data::document::PdfPreset::default(),
+    };
+    let page_size = match text_of("page_size") {
+        Some(value) => parse_arg("page_size", value)?,
+        None => crate::fake_data::pdf::PageSize::default(),
+    };
+    let orientation = match text_of("orientation") {
+        Some(value) => Some(parse_arg("orientation", value)?),
+        None => None,
+    };
+    let family = match text_of("font") {
+        Some(value) => Some(parse_arg("font", value)?),
+        None => None,
+    };
+    let accent = match text_of("accent") {
+        Some(value) => Some(Rgb::parse(value).ok_or_else(|| {
+            FerrimockError::Template(format!("accent wants a hex colour, got {value:?}"))
+        })?),
+        None => None,
+    };
+    let charts = match text_of("chart") {
+        Some(value) => {
+            let (kind, points) = value.split_once(':').unwrap_or((value, "8"));
+            let kind: ChartKind = parse_arg("chart", kind)?;
+            let points = points.trim().parse::<usize>().map_err(|_| {
+                FerrimockError::Template(format!("chart wants KIND:POINTS, got {value:?}"))
+            })?;
+            vec![(kind, points)]
+        }
+        None => Vec::new(),
+    };
+
+    let mut extras = Extras {
+        paragraphs: size_of("paragraphs"),
+        callouts: size_of("callouts"),
+        charts,
+        ..Extras::default()
+    };
+    if let Some(rows) = args.get("table_rows").and_then(Value::as_u64) {
+        let columns = args
+            .get("table_columns")
+            .and_then(Value::as_u64)
+            .unwrap_or(3);
+        extras.tables.push((
+            usize::try_from(rows).unwrap_or(usize::MAX),
+            usize::try_from(columns).unwrap_or(usize::MAX),
+        ));
+    }
+    if size_of("list") > 0 {
+        extras.lists.push(size_of("list"));
+    }
+    if size_of("key_values") > 0 {
+        extras.key_values.push(size_of("key_values"));
+    }
+    if let Some(columns) = args.get("columns").and_then(Value::as_u64) {
+        extras.columns = Some((
+            usize::try_from(columns).unwrap_or(usize::MAX),
+            size_of("column_paragraphs").max(4),
+        ));
+    }
+
+    Ok(fake_pdf_document(&PdfSpec {
+        pages: u32_of("pages").unwrap_or(1),
+        text: text_of("text").map(ToString::to_string),
+        title: text_of("title").map(ToString::to_string),
+        preset,
+        repeat: args.get("repeat").and_then(Value::as_bool).unwrap_or(false),
+        extras,
+        page_size,
+        orientation,
+        family,
+        accent,
+        margin: args.get("margin").and_then(Value::as_f64),
+        watermark: text_of("watermark").map(ToString::to_string),
+        header: text_of("header").map(ToString::to_string),
+        footer: text_of("footer").map(ToString::to_string),
+        page_numbers: args.get("page_numbers").and_then(Value::as_bool),
+        meta: Meta {
+            title: text_of("title").map(ToString::to_string),
+            author: text_of("author").map(ToString::to_string),
+            subject: text_of("subject").map(ToString::to_string),
+            keywords: text_of("keywords").map(ToString::to_string),
+            creator: None,
+        },
+    }))
+}
+
 /// A fake data generator: named arguments in, JSON out.
 pub type Generator = fn(&Args) -> Result<Value>;
 
@@ -607,6 +729,147 @@ fn build_registry() -> HashMap<&'static str, Generator> {
             start_color,
             end_color,
             direction,
+        )))
+    });
+
+    // ---- Structured imagery ----
+    register("fake_image_plasma", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        let octaves = args
+            .get("octaves")
+            .and_then(Value::as_u64)
+            .map(|v| v as u32);
+        let palette = args.get("color").and_then(Value::as_str);
+        Ok(Value::from(crate::fake_data::files::fake_image_plasma(
+            width, height, octaves, palette,
+        )))
+    });
+
+    register("fake_image_mesh", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_mesh(
+            width, height,
+        )))
+    });
+
+    register("fake_image_photo", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_photo(
+            width, height,
+        )))
+    });
+
+    register("fake_image_scan", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        let lines = args.get("lines").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_scan(
+            width, height, lines,
+        )))
+    });
+
+    register("fake_image_chart", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        let kind = args.get("kind").and_then(Value::as_str);
+        let points = args.get("points").and_then(Value::as_u64).map(|v| v as u32);
+        let color = args.get("color").and_then(Value::as_str);
+        Ok(Value::from(crate::fake_data::files::fake_image_chart(
+            width, height, kind, points, color,
+        )))
+    });
+
+    register("fake_image_qr", |args: &Args| -> Result<Value> {
+        let size = args.get("size").and_then(Value::as_u64).map(|v| v as u32);
+        let modules = args
+            .get("modules")
+            .and_then(Value::as_u64)
+            .map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_qr(
+            size, modules,
+        )))
+    });
+
+    register("fake_image_barcode", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        let digits = args.get("digits").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_barcode(
+            width, height, digits,
+        )))
+    });
+
+    register("fake_image_identicon", |args: &Args| -> Result<Value> {
+        let seed = args.get("seed").and_then(Value::as_str);
+        let size = args.get("size").and_then(Value::as_u64).map(|v| v as u32);
+        let cells = args.get("cells").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_identicon(
+            seed, size, cells,
+        )))
+    });
+
+    register("fake_image_screenshot", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        let dark = args.get("dark").and_then(Value::as_bool);
+        Ok(Value::from(crate::fake_data::files::fake_image_screenshot(
+            width, height, dark,
+        )))
+    });
+
+    register("fake_image_heatmap", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        let columns = args
+            .get("columns")
+            .and_then(Value::as_u64)
+            .map(|v| v as u32);
+        let rows = args.get("rows").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_heatmap(
+            width, height, columns, rows,
+        )))
+    });
+
+    register("fake_image_waveform", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        let color = args.get("color").and_then(Value::as_str);
+        Ok(Value::from(crate::fake_data::files::fake_image_waveform(
+            width, height, color,
+        )))
+    });
+
+    register("fake_image_map", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_map(
+            width, height,
+        )))
+    });
+
+    register("fake_image_blueprint", |args: &Args| -> Result<Value> {
+        let width = args.get("width").and_then(Value::as_u64).map(|v| v as u32);
+        let height = args.get("height").and_then(Value::as_u64).map(|v| v as u32);
+        Ok(Value::from(crate::fake_data::files::fake_image_blueprint(
+            width, height,
+        )))
+    });
+
+    // ---- Stock documents ----
+    // The whole `PdfSpec` behind one function, so a template can ask for an
+    // invoice without reaching for the CLI.
+    register("fake_document", |args: &Args| -> Result<Value> {
+        Ok(Value::from(document_from_args(args)?.base64))
+    });
+
+    register("fake_document_data_uri", |args: &Args| -> Result<Value> {
+        let composed = document_from_args(args)?;
+        Ok(Value::from(format!(
+            "data:application/pdf;base64,{}",
+            composed.base64
         )))
     });
 

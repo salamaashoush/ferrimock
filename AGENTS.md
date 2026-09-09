@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Ferrimock is a high-performance HTTP mocking engine for Node.js, powered by Rust via NAPI. It provides an MSW-compatible API that is 1.1-1.7x faster than MSW on the interception path (see Benchmarking), plus declarative YAML/JSON mocks with Tera template rendering and 115+ fake data generators.
+Ferrimock is a high-performance HTTP mocking engine for Node.js, powered by Rust via NAPI. It provides an MSW-compatible API that is 1.1-1.7x faster than MSW on the interception path (see Benchmarking), plus declarative YAML/JSON mocks with Tera template rendering and 150+ fake data generators.
 
 ## Workspace Structure
 
@@ -26,8 +26,15 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
   ranked near misses. Evaluates through the matcher's own predicates — never
   reimplement matching logic in a renderer (the CLI used to, and drifted)
 - `handler` - MSW-style handler builder API (http::get, graphql::query, etc.)
-- `template` - Tera template rendering with 115+ fake data functions
+- `template` - Tera template rendering with 150+ fake data functions
 - `fake_data` - Fake data generators: names, emails, UUIDs, images, PDFs
+- `fake_data::pdf` - The PDF layout engine: base-14 AFM metrics, wrapping,
+  tables, charts, images, and the pagination that flows a document onto as many
+  pages as it needs. Knows nothing about what a document *is*
+- `fake_data::document` - The twenty stock documents (invoice, statement,
+  payslip, ...) composed onto that engine, plus the `PdfSpec` the CLI, templates
+  and JS all build. A new preset goes in `PdfPreset::ALL` and nowhere else:
+  `fake list`, `--preset` parsing and its error message all read the enum
 - `fake_data::rng` - Seedable random source behind every generator, template
   function and filter. Unseeded it delegates to `rand::rng()`; seeded, draws come
   from a thread-scoped stream (installed per mock id by `template::renderer`) or
@@ -85,7 +92,7 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 - `handler_bridge.rs` - HandlerFn (TSFN for server) + FunctionRef (direct call for interceptor)
 - `request_context.rs` - RequestInfo / GraphQLRequestInfo resolver info (MSW shapes; `request` is a real Fetch Request)
 - `server.rs` - FerrimockServer with FunctionRef-optimized matchRequest (fall-through/exclude support), use/resetHandlers/resetRuntimeHandlers/listHandlers
-- `fake_ns.rs` - 115+ fake data generators exposed to JS
+- `fake_ns.rs` - 150+ fake data generators exposed to JS
 - `world_ns.rs` - `world.types/count/get/list/related/create/update/replace/delete/reset/pendingWrites`
   over the engine's entity world, mirroring the QuickJS `world.*` surface so a
   handler behaves the same on either runtime. Synchronous (a DashMap read behind
