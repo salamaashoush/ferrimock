@@ -338,7 +338,7 @@ ferrimock fake pdf --preset invoice -o invoice.pdf
 ferrimock fake pdf --preset statement --pages 4 --page-size letter -o s.pdf
 ferrimock fake pdf --preset report --chart bar:12 --table 8x4 --watermark DRAFT -o r.pdf
 ferrimock fake pdf --preset certificate --orientation landscape --font times -o c.pdf
-ferrimock --seed 42 fake pdf --preset payslip --count 50 -o payslips/{n}.pdf
+ferrimock --seed 42 fake pdf --preset payslip --count 50 -o payslips/%n.pdf
 
 ferrimock fake image photo -W 1200 -H 800 -o hero.jpg -F jpeg
 ferrimock fake image scan -W 620 -H 877 -o scanned-page.png

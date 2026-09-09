@@ -219,7 +219,7 @@ pub mod fake {
         pub seed: Option<String>,
         /// Dark rather than light chrome, for `screenshot`.
         pub dark: bool,
-        /// How many images to write. Above one, `output` needs a `{n}`.
+        /// How many images to write. Above one, `output` needs a `%n`.
         pub count: usize,
         /// Open the result in the default viewer.
         pub open: bool,
@@ -305,7 +305,7 @@ pub mod fake {
         pub author: Option<String>,
         pub subject: Option<String>,
         pub keywords: Option<String>,
-        /// How many documents to write. Above one, `output` needs a `{n}`.
+        /// How many documents to write. Above one, `output` needs a `%n`.
         pub count: usize,
         pub output: Option<String>,
         pub base64: bool,

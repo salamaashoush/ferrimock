@@ -126,7 +126,7 @@ pub enum FakeAction {
         /// Dark chrome for `screenshot`
         #[arg(long)]
         dark: bool,
-        /// How many images to write; needs --output with a {n} or an extension
+        /// How many images to write; needs --output with a %n or an extension
         #[arg(short = 'n', long, default_value = "1")]
         count: usize,
         /// Open generated image in default viewer
@@ -212,7 +212,7 @@ pub enum FakeAction {
         /// PDF Info keywords
         #[arg(long)]
         keywords: Option<String>,
-        /// How many documents to write; needs --output with a {n} or an extension
+        /// How many documents to write; needs --output with a %n or an extension
         #[arg(short = 'n', long, default_value = "1")]
         count: usize,
         /// Output file path

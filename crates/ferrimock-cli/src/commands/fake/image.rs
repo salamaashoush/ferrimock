@@ -29,11 +29,11 @@ pub const IMAGE_TYPES: [(&str, &str); 21] = [
     ("blueprint", "technical drawing on grid paper"),
 ];
 
-/// Where the nth image of a batch goes.
+/// Where the nth image of a batch goes. `%n` in the path is the index.
 fn output_path(template: &str, index: usize, count: usize) -> String {
     let width = count.to_string().len();
-    if template.contains("{n}") {
-        return template.replace("{n}", &format!("{:0width$}", index + 1));
+    if template.contains("%n") {
+        return template.replace("%n", &format!("{:0width$}", index + 1));
     }
     if count == 1 {
         return template.to_string();

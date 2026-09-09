@@ -106,12 +106,15 @@ pub fn build_spec(opts: &Pdf) -> anyhow::Result<PdfSpec> {
     })
 }
 
-/// Where the nth document of a batch goes. `{n}` in the path is the index, so a
+/// Where the nth document of a batch goes. `%n` in the path is the index, so a
 /// batch does not write every document over the same file.
+///
+/// `%n` rather than `{n}`: clap reads `{n}` in a help string as its own newline
+/// token, so a placeholder spelled that way could never be documented.
 fn output_path(template: &str, index: usize, count: usize) -> String {
-    if template.contains("{n}") {
+    if template.contains("%n") {
         return template.replace(
-            "{n}",
+            "%n",
             &format!("{:0width$}", index + 1, width = width(count)),
         );
     }
@@ -247,7 +250,9 @@ mod tests {
     fn a_batch_numbers_its_own_paths() {
         assert_eq!(output_path("out/doc.pdf", 0, 1), "out/doc.pdf");
         assert_eq!(output_path("out/doc.pdf", 4, 12), "out/doc-05.pdf");
-        assert_eq!(output_path("out/{n}-doc.pdf", 0, 9), "out/1-doc.pdf");
+        assert_eq!(output_path("out/%n-doc.pdf", 0, 9), "out/1-doc.pdf");
+        // The old spelling is not magic, so it lands as a literal.
+        assert_eq!(output_path("out/{n}.pdf", 0, 1), "out/{n}.pdf");
         assert_eq!(output_path("doc", 2, 3), "doc-3");
     }
 
