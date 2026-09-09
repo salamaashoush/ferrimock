@@ -23,17 +23,23 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_lossless)]
+// Pixel and cell coordinates are derived from unsigned dimensions and clamped
+// or floored to a non-negative value before the cast, so there is no sign to
+// lose; the lint cannot see the clamp.
+#![allow(clippy::cast_sign_loss)]
 
 pub mod company;
 pub mod contact;
 pub mod datetime;
 pub mod distribution;
+pub mod document;
 pub mod files;
 pub mod finance;
 pub mod identifiers;
 pub mod identity;
 pub mod internet;
 pub mod location;
+pub mod pdf;
 pub mod place;
 pub mod prose;
 pub mod rng;
@@ -44,6 +50,7 @@ pub mod web;
 pub use company::*;
 pub use contact::*;
 pub use datetime::*;
+pub use document::{Extras as PdfExtras, PdfPreset, PdfSpec, fake_pdf_document};
 pub use files::*;
 pub use finance::*;
 pub use identifiers::*;
