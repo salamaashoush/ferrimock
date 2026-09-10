@@ -118,6 +118,16 @@ jobs:
         if: matrix.cross
         uses: taiki-e/install-action@cross
 
+      # openssl-src shells out to `perl`, and `shell: bash` on Windows puts
+      # MSYS perl ahead of Strawberry Perl. MSYS perl has no
+      # Locale::Maketext::Simple, so OpenSSL's ./Configure aborts and the
+      # vendored build fails. Point openssl-src at the runner's Strawberry
+      # Perl, which has it.
+      - name: Use Strawberry Perl to configure vendored OpenSSL
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl.exe" >> "$GITHUB_ENV"
+
       - name: Build binary
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
