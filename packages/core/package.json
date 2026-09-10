@@ -1,6 +1,6 @@
 {
   "name": "ferrimock",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "High-performance HTTP mocking engine -- core library",
   "type": "module",
   "main": "./dist/index.mjs",
