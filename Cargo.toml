@@ -154,7 +154,14 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
   "logging",
 ] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12", "logging"] }
-rcgen = "0.14"
+# `aws_lc_rs` rather than rcgen's default `ring`: rustls already links AWS-LC,
+# so the certificate generator shares it instead of pulling a second crypto
+# library in for one job.
+rcgen = { version = "0.14", default-features = false, features = [
+  "crypto",
+  "pem",
+  "aws_lc_rs",
+] }
 pin-project-lite = "0.2"
 
 # Serialization
