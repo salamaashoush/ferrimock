@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Salama Ashoush <salamaashoush@gmail.com>"]
 edition = "2024"
 # Verified floor for the stable feature set. `scripting` (ferrijs plus
@@ -235,11 +235,11 @@ tera-contrib = { version = "0.3", features = ["json", "date", "rand"] }
 # rolldown bundler; ferrimock adds only its MSW-shaped host bindings.
 # `fetch` is compiled in for the multipart codec and the stream bridge;
 # the runtime itself is built `without_fetch`.
-ferrijs = { version = "0.3.0", default-features = false, features = ["fetch"] }
-ferrijs-bundle = "0.3.0"
-ferrijs-fetch = "0.3.0"
-ferrijs-serde = "0.3.0"
-ferrijs-std = "0.3.0"
+ferrijs = { version = "0.4.0", default-features = false, features = ["fetch"] }
+ferrijs-bundle = "0.4.0"
+ferrijs-fetch = "0.4.0"
+ferrijs-serde = "0.4.0"
+ferrijs-std = "0.4.0"
 # The same feature set ferrijs enables, so the workspace links one rquickjs.
 # `full-async` does NOT imply `parallel`; without it AsyncRuntime is !Send/!Sync
 # and HandlerFn closures (Send + Sync) cannot reach the VM.
