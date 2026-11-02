@@ -15,7 +15,7 @@ edition = "2024"
 # Verified floor for the stable feature set. `scripting` (ferrijs plus
 # rolldown's oxc tree) builds on current stable but is not verified at
 # the floor.
-rust-version = "1.91"
+rust-version = "1.99"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/salamaashoush/ferrimock"
 description = "A high-performance HTTP mocking engine with templates, recording, consolidation, and GraphQL support"

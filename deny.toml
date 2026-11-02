@@ -1,0 +1,6 @@
+# Checked with `cargo deny --all-features check advisories`, which walks the
+# graph a build can reach rather than every lockfile entry: an optional backend
+# nothing here enables (burn's LibTorch, with its zip 0.6) cannot fail it.
+[advisories]
+# An unmaintained crate fails only when a workspace crate depends on it directly.
+unmaintained = "workspace"
