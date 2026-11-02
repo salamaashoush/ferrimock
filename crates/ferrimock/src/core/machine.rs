@@ -241,6 +241,287 @@ impl Machine {
     }
 }
 
+/// What firing an event did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fired {
+    Moved {
+        from: LeanString,
+        to: LeanString,
+    },
+    /// Nothing leads out of here on that event.
+    NoEdge {
+        from: LeanString,
+    },
+    /// The edge is there and its guard said no.
+    Refused {
+        from: LeanString,
+        guard: LeanString,
+    },
+    NoSuchMachine,
+}
+
+/// What a run has actually exercised.
+///
+/// Counted rather than derived, because the point of declaring edges is that
+/// they can be counted: a state nothing reached and an edge nothing took are
+/// answerable questions here and are not answerable at all when the edges are
+/// implied by an ordering.
+#[derive(Debug, Clone, Default)]
+pub struct Seen {
+    pub states: FxHashSet<(LeanString, LeanString)>,
+    pub edges: FxHashSet<(LeanString, LeanString, LeanString)>,
+}
+
+/// The machines something declared, and where each instance of them is.
+///
+/// Instances live in a [`PersistenceStore`] rather than in a census: a census
+/// is a known population derived from a seed, and a machine instance does not
+/// exist until a request asks for one, with no meaningful count and a key the
+/// caller chose.
+#[derive(Debug)]
+pub struct Machines {
+    /// Behind a lock and merged rather than replaced, because a directory holds
+    /// several collections and each may declare its own: installing one
+    /// collection's machines by overwriting the map made whichever loaded last
+    /// the only one that existed. Instances live beside this and outlive a
+    /// redeclaration, so a hot reload does not put every order back at the
+    /// start.
+    declared: RwLock<FxHashMap<LeanString, Arc<Machine>>>,
+    instances: PersistenceStore,
+    seen: RwLock<Seen>,
+}
+
+impl Machines {
+    #[must_use]
+    pub fn new(declared: impl IntoIterator<Item = (LeanString, Machine)>) -> Self {
+        Self {
+            declared: RwLock::new(
+                declared
+                    .into_iter()
+                    .map(|(name, machine)| (name, Arc::new(machine)))
+                    .collect(),
+            ),
+            instances: PersistenceStore::new(),
+            seen: RwLock::new(Seen::default()),
+        }
+    }
+
+    /// Add one machine, replacing any of the same name. Instances are untouched.
+    pub fn declare(&self, name: impl Into<LeanString>, machine: Machine) {
+        self.declared.write().insert(name.into(), Arc::new(machine));
+    }
+
+    /// Drop every declaration, keeping instances. What a reload does before it
+    /// reads the collections again, so a machine deleted from a file stops
+    /// existing.
+    pub fn forget_declarations(&self) {
+        self.declared.write().clear();
+    }
+
+    #[must_use]
+    pub fn get(&self, machine: &str) -> Option<Arc<Machine>> {
+        self.declared.read().get(machine).map(Arc::clone)
+    }
+
+    #[must_use]
+    pub fn names(&self) -> Vec<LeanString> {
+        let mut names: Vec<LeanString> = self.declared.read().keys().cloned().collect();
+        names.sort_unstable();
+        names
+    }
+
+    /// A machine name is barred from holding the separator, so splitting an
+    /// instance key at the first one is unambiguous.
+    fn slot(machine: &str, key: &str) -> String {
+        format!("{machine}#{key}")
+    }
+
+    /// Where one instance is, which is its initial state until it moves.
+    ///
+    /// A stored value the machine no longer has — a state renamed under a
+    /// running world — reads as unstarted rather than as an error, because the
+    /// declaration is the truth and the store is a cache of where things got to.
+    #[must_use]
+    pub fn state_of(&self, machine: &str, key: &str) -> Option<LeanString> {
+        self.state_at(machine, key, now_millis())
+    }
+
+    /// [`Self::state_of`] against a stated clock.
+    ///
+    /// Public because a timer that only fires against wall-clock time is a
+    /// timer nothing can test, and because replaying a recording wants the
+    /// recording's clock rather than this one.
+    #[must_use]
+    pub fn state_at(&self, machine: &str, key: &str, now: u64) -> Option<LeanString> {
+        /// A chain of timers can fire on one read; this stops a cycle of them
+        /// from spinning.
+        const CHAIN: usize = 32;
+
+        let declared = self.get(machine)?;
+        let (held, arrived) = self.held(machine, key);
+        let mut at = held
+            .filter(|held| declared.get(held.as_str()).is_some())
+            .or_else(|| declared.initial().map(|state| state.name.clone()))?;
+        // An instance that has never been observed starts its clock now, and
+        // that has to be written down: a timer measured from a fresh `now` on
+        // every read is a timer that never elapses.
+        let mut since = arrived.unwrap_or_else(|| {
+            self.remember(machine, key, &at, now);
+            now
+        });
+
+        for _ in 0..CHAIN {
+            let waited = now.saturating_sub(since);
+            let Some(timer) = declared.get(at.as_str()).and_then(|state| {
+                state
+                    .after
+                    .iter()
+                    .filter(|timer| millis_of(timer.after) <= waited)
+                    // The soonest, because a state naming two means the earlier
+                    // one already happened.
+                    .min_by_key(|timer| timer.after)
+            }) else {
+                break;
+            };
+            let to = timer.target.clone();
+            since = since.saturating_add(millis_of(timer.after));
+            self.remember(machine, key, &to, since);
+            self.took(machine, &at, &LeanString::from(WAITED));
+            at = to;
+        }
+
+        self.saw_state(machine, &at);
+        Some(at)
+    }
+
+    fn held(&self, machine: &str, key: &str) -> (Option<LeanString>, Option<u64>) {
+        match self.instances.get(&Self::slot(machine, key)) {
+            // A bare string is an instance stored before timers existed.
+            Some(JsonValue::String(state)) => (Some(LeanString::from(state.as_str())), None),
+            Some(JsonValue::Object(held)) => (
+                held.get("state")
+                    .and_then(JsonValue::as_str)
+                    .map(LeanString::from),
+                held.get("since").and_then(JsonValue::as_u64),
+            ),
+            _ => (None, None),
+        }
+    }
+
+    fn remember(&self, machine: &str, key: &str, state: &LeanString, since: u64) {
+        self.instances.set(
+            Self::slot(machine, key),
+            serde_json::json!({ "state": state.as_str(), "since": since }),
+        );
+    }
+
+    /// Move one instance along the edge an event names.
+    ///
+    /// Whether a guard holds is answered by the caller: a guard is a name here
+    /// and resolving it is somebody else's job, which is what keeps the edge
+    /// countable even when the condition is opaque.
+    pub fn fire(
+        &self,
+        machine: &str,
+        key: &str,
+        event: &str,
+        allows: impl Fn(&str) -> bool,
+    ) -> Fired {
+        let Some(declared) = self.get(machine) else {
+            return Fired::NoSuchMachine;
+        };
+        let Some(from) = self.state_of(machine, key) else {
+            return Fired::NoSuchMachine;
+        };
+        let Some(edge) = declared.edge(from.as_str(), event) else {
+            return Fired::NoEdge { from };
+        };
+        if let Some(guard) = &edge.guard
+            && !allows(guard.as_str())
+        {
+            return Fired::Refused {
+                from,
+                guard: guard.clone(),
+            };
+        }
+        let to = edge.target.clone();
+        self.remember(machine, key, &to, now_millis());
+        self.took(machine, &from, &edge.event);
+        self.saw_state(machine, &to);
+        Fired::Moved { from, to }
+    }
+
+    /// Put every instance back where it started. Instances are shared, so they
+    /// leak between tests exactly the way world writes do.
+    pub fn reset(&self) {
+        self.instances.clear();
+        *self.seen.write() = Seen::default();
+    }
+
+    #[must_use]
+    pub fn seen(&self) -> Seen {
+        self.seen.read().clone()
+    }
+
+    /// States and edges a run declared and never exercised.
+    #[must_use]
+    pub fn unreached(&self) -> Seen {
+        let seen = self.seen.read();
+        let mut missing = Seen::default();
+        for (name, machine) in self.declared.read().iter() {
+            for state in machine.states() {
+                if !seen.states.contains(&(name.clone(), state.name.clone())) {
+                    missing.states.insert((name.clone(), state.name.clone()));
+                }
+                for edge in machine.edges_from(state.name.as_str()) {
+                    let taken = (name.clone(), state.name.clone(), edge.event.clone());
+                    if !seen.edges.contains(&taken) {
+                        missing.edges.insert(taken);
+                    }
+                }
+                if !state.after.is_empty() {
+                    let waited = (name.clone(), state.name.clone(), LeanString::from(WAITED));
+                    if !seen.edges.contains(&waited) {
+                        missing.edges.insert(waited);
+                    }
+                }
+            }
+        }
+        missing
+    }
+
+    fn took(&self, machine: &str, from: &LeanString, event: &LeanString) {
+        self.seen
+            .write()
+            .edges
+            .insert((LeanString::from(machine), from.clone(), event.clone()));
+    }
+
+    fn saw_state(&self, machine: &str, state: &LeanString) {
+        self.seen
+            .write()
+            .states
+            .insert((LeanString::from(machine), state.clone()));
+    }
+}
+
+/// The event name a timed move is counted under, so waiting is coverable the
+/// same way an event is.
+pub const WAITED: &str = "<after>";
+
+fn millis_of(span: std::time::Duration) -> u64 {
+    u64::try_from(span.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Wall-clock milliseconds, or zero before the epoch, which cannot happen.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
@@ -564,285 +845,4 @@ mod tests {
             .count();
         assert!(common > 900, "99 against 1 landed common {common} times");
     }
-}
-
-/// What firing an event did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Fired {
-    Moved {
-        from: LeanString,
-        to: LeanString,
-    },
-    /// Nothing leads out of here on that event.
-    NoEdge {
-        from: LeanString,
-    },
-    /// The edge is there and its guard said no.
-    Refused {
-        from: LeanString,
-        guard: LeanString,
-    },
-    NoSuchMachine,
-}
-
-/// What a run has actually exercised.
-///
-/// Counted rather than derived, because the point of declaring edges is that
-/// they can be counted: a state nothing reached and an edge nothing took are
-/// answerable questions here and are not answerable at all when the edges are
-/// implied by an ordering.
-#[derive(Debug, Clone, Default)]
-pub struct Seen {
-    pub states: FxHashSet<(LeanString, LeanString)>,
-    pub edges: FxHashSet<(LeanString, LeanString, LeanString)>,
-}
-
-/// The machines something declared, and where each instance of them is.
-///
-/// Instances live in a [`PersistenceStore`] rather than in a census: a census
-/// is a known population derived from a seed, and a machine instance does not
-/// exist until a request asks for one, with no meaningful count and a key the
-/// caller chose.
-#[derive(Debug)]
-pub struct Machines {
-    /// Behind a lock and merged rather than replaced, because a directory holds
-    /// several collections and each may declare its own: installing one
-    /// collection's machines by overwriting the map made whichever loaded last
-    /// the only one that existed. Instances live beside this and outlive a
-    /// redeclaration, so a hot reload does not put every order back at the
-    /// start.
-    declared: RwLock<FxHashMap<LeanString, Arc<Machine>>>,
-    instances: PersistenceStore,
-    seen: RwLock<Seen>,
-}
-
-impl Machines {
-    #[must_use]
-    pub fn new(declared: impl IntoIterator<Item = (LeanString, Machine)>) -> Self {
-        Self {
-            declared: RwLock::new(
-                declared
-                    .into_iter()
-                    .map(|(name, machine)| (name, Arc::new(machine)))
-                    .collect(),
-            ),
-            instances: PersistenceStore::new(),
-            seen: RwLock::new(Seen::default()),
-        }
-    }
-
-    /// Add one machine, replacing any of the same name. Instances are untouched.
-    pub fn declare(&self, name: impl Into<LeanString>, machine: Machine) {
-        self.declared.write().insert(name.into(), Arc::new(machine));
-    }
-
-    /// Drop every declaration, keeping instances. What a reload does before it
-    /// reads the collections again, so a machine deleted from a file stops
-    /// existing.
-    pub fn forget_declarations(&self) {
-        self.declared.write().clear();
-    }
-
-    #[must_use]
-    pub fn get(&self, machine: &str) -> Option<Arc<Machine>> {
-        self.declared.read().get(machine).map(Arc::clone)
-    }
-
-    #[must_use]
-    pub fn names(&self) -> Vec<LeanString> {
-        let mut names: Vec<LeanString> = self.declared.read().keys().cloned().collect();
-        names.sort_unstable();
-        names
-    }
-
-    /// A machine name is barred from holding the separator, so splitting an
-    /// instance key at the first one is unambiguous.
-    fn slot(machine: &str, key: &str) -> String {
-        format!("{machine}#{key}")
-    }
-
-    /// Where one instance is, which is its initial state until it moves.
-    ///
-    /// A stored value the machine no longer has — a state renamed under a
-    /// running world — reads as unstarted rather than as an error, because the
-    /// declaration is the truth and the store is a cache of where things got to.
-    #[must_use]
-    pub fn state_of(&self, machine: &str, key: &str) -> Option<LeanString> {
-        self.state_at(machine, key, now_millis())
-    }
-
-    /// [`Self::state_of`] against a stated clock.
-    ///
-    /// Public because a timer that only fires against wall-clock time is a
-    /// timer nothing can test, and because replaying a recording wants the
-    /// recording's clock rather than this one.
-    #[must_use]
-    pub fn state_at(&self, machine: &str, key: &str, now: u64) -> Option<LeanString> {
-        /// A chain of timers can fire on one read; this stops a cycle of them
-        /// from spinning.
-        const CHAIN: usize = 32;
-
-        let declared = self.get(machine)?;
-        let (held, arrived) = self.held(machine, key);
-        let mut at = held
-            .filter(|held| declared.get(held.as_str()).is_some())
-            .or_else(|| declared.initial().map(|state| state.name.clone()))?;
-        // An instance that has never been observed starts its clock now, and
-        // that has to be written down: a timer measured from a fresh `now` on
-        // every read is a timer that never elapses.
-        let mut since = arrived.unwrap_or_else(|| {
-            self.remember(machine, key, &at, now);
-            now
-        });
-
-        for _ in 0..CHAIN {
-            let waited = now.saturating_sub(since);
-            let Some(timer) = declared.get(at.as_str()).and_then(|state| {
-                state
-                    .after
-                    .iter()
-                    .filter(|timer| millis_of(timer.after) <= waited)
-                    // The soonest, because a state naming two means the earlier
-                    // one already happened.
-                    .min_by_key(|timer| timer.after)
-            }) else {
-                break;
-            };
-            let to = timer.target.clone();
-            since = since.saturating_add(millis_of(timer.after));
-            self.remember(machine, key, &to, since);
-            self.took(machine, &at, &LeanString::from(WAITED));
-            at = to;
-        }
-
-        self.saw_state(machine, &at);
-        Some(at)
-    }
-
-    fn held(&self, machine: &str, key: &str) -> (Option<LeanString>, Option<u64>) {
-        match self.instances.get(&Self::slot(machine, key)) {
-            // A bare string is an instance stored before timers existed.
-            Some(JsonValue::String(state)) => (Some(LeanString::from(state.as_str())), None),
-            Some(JsonValue::Object(held)) => (
-                held.get("state")
-                    .and_then(JsonValue::as_str)
-                    .map(LeanString::from),
-                held.get("since").and_then(JsonValue::as_u64),
-            ),
-            _ => (None, None),
-        }
-    }
-
-    fn remember(&self, machine: &str, key: &str, state: &LeanString, since: u64) {
-        self.instances.set(
-            Self::slot(machine, key),
-            serde_json::json!({ "state": state.as_str(), "since": since }),
-        );
-    }
-
-    /// Move one instance along the edge an event names.
-    ///
-    /// Whether a guard holds is answered by the caller: a guard is a name here
-    /// and resolving it is somebody else's job, which is what keeps the edge
-    /// countable even when the condition is opaque.
-    pub fn fire(
-        &self,
-        machine: &str,
-        key: &str,
-        event: &str,
-        allows: impl Fn(&str) -> bool,
-    ) -> Fired {
-        let Some(declared) = self.get(machine) else {
-            return Fired::NoSuchMachine;
-        };
-        let Some(from) = self.state_of(machine, key) else {
-            return Fired::NoSuchMachine;
-        };
-        let Some(edge) = declared.edge(from.as_str(), event) else {
-            return Fired::NoEdge { from };
-        };
-        if let Some(guard) = &edge.guard
-            && !allows(guard.as_str())
-        {
-            return Fired::Refused {
-                from,
-                guard: guard.clone(),
-            };
-        }
-        let to = edge.target.clone();
-        self.remember(machine, key, &to, now_millis());
-        self.took(machine, &from, &edge.event);
-        self.saw_state(machine, &to);
-        Fired::Moved { from, to }
-    }
-
-    /// Put every instance back where it started. Instances are shared, so they
-    /// leak between tests exactly the way world writes do.
-    pub fn reset(&self) {
-        self.instances.clear();
-        *self.seen.write() = Seen::default();
-    }
-
-    #[must_use]
-    pub fn seen(&self) -> Seen {
-        self.seen.read().clone()
-    }
-
-    /// States and edges a run declared and never exercised.
-    #[must_use]
-    pub fn unreached(&self) -> Seen {
-        let seen = self.seen.read();
-        let mut missing = Seen::default();
-        for (name, machine) in self.declared.read().iter() {
-            for state in machine.states() {
-                if !seen.states.contains(&(name.clone(), state.name.clone())) {
-                    missing.states.insert((name.clone(), state.name.clone()));
-                }
-                for edge in machine.edges_from(state.name.as_str()) {
-                    let taken = (name.clone(), state.name.clone(), edge.event.clone());
-                    if !seen.edges.contains(&taken) {
-                        missing.edges.insert(taken);
-                    }
-                }
-                if !state.after.is_empty() {
-                    let waited = (name.clone(), state.name.clone(), LeanString::from(WAITED));
-                    if !seen.edges.contains(&waited) {
-                        missing.edges.insert(waited);
-                    }
-                }
-            }
-        }
-        missing
-    }
-
-    fn took(&self, machine: &str, from: &LeanString, event: &LeanString) {
-        self.seen
-            .write()
-            .edges
-            .insert((LeanString::from(machine), from.clone(), event.clone()));
-    }
-
-    fn saw_state(&self, machine: &str, state: &LeanString) {
-        self.seen
-            .write()
-            .states
-            .insert((LeanString::from(machine), state.clone()));
-    }
-}
-
-/// The event name a timed move is counted under, so waiting is coverable the
-/// same way an event is.
-pub const WAITED: &str = "<after>";
-
-fn millis_of(span: std::time::Duration) -> u64 {
-    u64::try_from(span.as_millis()).unwrap_or(u64::MAX)
-}
-
-/// Wall-clock milliseconds, or zero before the epoch, which cannot happen.
-fn now_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
 }

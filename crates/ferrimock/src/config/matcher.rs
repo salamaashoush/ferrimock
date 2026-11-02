@@ -553,120 +553,6 @@ impl BodyMatcherConfig {
     }
 }
 
-#[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    clippy::needless_collect
-)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_header_match_simple() {
-        let yaml = r#"
-url_patterns:
-  - "/test"
-headers:
-  content-type: "application/json"
-"#;
-
-        let config: RequestConfig =
-            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
-        let matcher = config
-            .into_request_matcher()
-            .expect("Failed to convert to request matcher");
-
-        assert_eq!(matcher.header_matchers.len(), 1);
-    }
-
-    #[test]
-    fn test_body_matcher_contains() {
-        let mut body_map = FxHashMap::default();
-        body_map.insert("@test".to_string(), serde_json::Value::Bool(true));
-
-        let config = RequestConfig {
-            methods: vec![],
-            url_patterns: vec![],
-            headers: FxHashMap::default(),
-            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
-            query: FxHashMap::default(),
-            graphql_matcher: None,
-        };
-
-        let matcher = config
-            .into_request_matcher()
-            .expect("Failed to convert to request matcher");
-        assert!(matcher.body_matcher.is_some());
-        assert!(
-            matcher
-                .body_matcher
-                .expect("body_matcher should exist")
-                .matches(b"this is a test", None)
-        );
-    }
-
-    #[test]
-    fn test_body_matcher_regex() {
-        let mut body_map = FxHashMap::default();
-        body_map.insert(
-            r"~\d{3}-\d{3}-\d{4}".to_string(),
-            serde_json::Value::Bool(true),
-        );
-
-        let config = RequestConfig {
-            methods: vec![],
-            url_patterns: vec![],
-            headers: FxHashMap::default(),
-            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
-            query: FxHashMap::default(),
-            graphql_matcher: None,
-        };
-
-        let matcher = config
-            .into_request_matcher()
-            .expect("Failed to convert to request matcher");
-        assert!(matcher.body_matcher.is_some());
-        assert!(
-            matcher
-                .body_matcher
-                .expect("body_matcher should exist")
-                .matches(b"Phone: 123-456-7890", None)
-        );
-    }
-
-    #[test]
-    fn test_body_matcher_json_path() {
-        let mut body_map = FxHashMap::default();
-        body_map.insert(
-            "$.user.name".to_string(),
-            serde_json::Value::String("John".to_string()),
-        );
-
-        let config = RequestConfig {
-            methods: vec![],
-            url_patterns: vec![],
-            headers: FxHashMap::default(),
-            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
-            query: FxHashMap::default(),
-            graphql_matcher: None,
-        };
-
-        let matcher = config
-            .into_request_matcher()
-            .expect("Failed to convert to request matcher");
-        assert!(matcher.body_matcher.is_some());
-        assert!(
-            matcher
-                .body_matcher
-                .expect("body_matcher should exist")
-                .matches(br#"{"user":{"name":"John"}}"#, None)
-        );
-    }
-}
-
 /// GraphQL matcher configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -892,5 +778,119 @@ impl GraphQLMatchConfig {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::needless_collect
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_header_match_simple() {
+        let yaml = r#"
+url_patterns:
+  - "/test"
+headers:
+  content-type: "application/json"
+"#;
+
+        let config: RequestConfig =
+            serde_yaml_ng::from_str(yaml).expect("Failed to parse YAML config");
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
+
+        assert_eq!(matcher.header_matchers.len(), 1);
+    }
+
+    #[test]
+    fn test_body_matcher_contains() {
+        let mut body_map = FxHashMap::default();
+        body_map.insert("@test".to_string(), serde_json::Value::Bool(true));
+
+        let config = RequestConfig {
+            methods: vec![],
+            url_patterns: vec![],
+            headers: FxHashMap::default(),
+            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
+            query: FxHashMap::default(),
+            graphql_matcher: None,
+        };
+
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
+        assert!(matcher.body_matcher.is_some());
+        assert!(
+            matcher
+                .body_matcher
+                .expect("body_matcher should exist")
+                .matches(b"this is a test", None)
+        );
+    }
+
+    #[test]
+    fn test_body_matcher_regex() {
+        let mut body_map = FxHashMap::default();
+        body_map.insert(
+            r"~\d{3}-\d{3}-\d{4}".to_string(),
+            serde_json::Value::Bool(true),
+        );
+
+        let config = RequestConfig {
+            methods: vec![],
+            url_patterns: vec![],
+            headers: FxHashMap::default(),
+            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
+            query: FxHashMap::default(),
+            graphql_matcher: None,
+        };
+
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
+        assert!(matcher.body_matcher.is_some());
+        assert!(
+            matcher
+                .body_matcher
+                .expect("body_matcher should exist")
+                .matches(b"Phone: 123-456-7890", None)
+        );
+    }
+
+    #[test]
+    fn test_body_matcher_json_path() {
+        let mut body_map = FxHashMap::default();
+        body_map.insert(
+            "$.user.name".to_string(),
+            serde_json::Value::String("John".to_string()),
+        );
+
+        let config = RequestConfig {
+            methods: vec![],
+            url_patterns: vec![],
+            headers: FxHashMap::default(),
+            body_matcher: Some(BodyMatcherConfig::Inline(body_map)),
+            query: FxHashMap::default(),
+            graphql_matcher: None,
+        };
+
+        let matcher = config
+            .into_request_matcher()
+            .expect("Failed to convert to request matcher");
+        assert!(matcher.body_matcher.is_some());
+        assert!(
+            matcher
+                .body_matcher
+                .expect("body_matcher should exist")
+                .matches(br#"{"user":{"name":"John"}}"#, None)
+        );
     }
 }

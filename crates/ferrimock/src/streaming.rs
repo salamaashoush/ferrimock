@@ -1,15 +1,15 @@
 //! Streaming connection runtime shared by every handler lane.
 //!
-//! [`drive_ws_connection`](crate::streaming::drive_ws_connection) is the
+//! [`drive_ws_connection`] is the
 //! per-connection host loop behind the QuickJS and NAPI WebSocket
 //! handler bridges: it owns the upstream passthrough connection and the
 //! MSW forwarding semantics (client frames flow upstream unless a
 //! listener prevented them, upstream frames flow to the client unless
 //! prevented), so a lane only supplies an event-dispatch callback. The
 //! SSE half mirrors it with
-//! [`run_sse_upstream`](crate::streaming::run_sse_upstream) and
-//! [`SseFrameParser`](crate::streaming::SseFrameParser).
-//! [`StreamingConnections`](crate::streaming::StreamingConnections)
+//! [`run_sse_upstream`] and
+//! [`SseFrameParser`].
+//! [`StreamingConnections`]
 //! tracks live connections per mock id so registry reload paths can
 //! tear them down.
 

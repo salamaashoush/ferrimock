@@ -453,7 +453,7 @@ impl ResponseConfig {
     }
 
     /// Backward-compatibility alias for `into_resolved_response`
-    #[deprecated(note = "Use into_resolved_response() instead")]
+    #[deprecated(since = "0.1.0", note = "Use into_resolved_response() instead")]
     pub fn into_response_config(self) -> ResolvedResponse {
         self.into_resolved_response()
     }
