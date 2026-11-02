@@ -295,43 +295,42 @@ pub fn build_handler_fn(
                 timeout: Some(engine.config().handler_timeout),
                 ..RunOptions::default()
             };
-            let run = engine
-                .runtime()
-                .run(
-                    options,
-                    Box::new(move |ctx| {
-                        Box::pin(async move {
-                            let pending = if is_generator {
-                                begin_generator_step(&ctx, slot, request, kind)?
-                            } else {
-                                let func = restore_handler(&ctx, slot)?;
-                                let req = request_value(&ctx, kind, request)?;
-                                func.call((req,)).catch(&ctx).map_err(|e| caught(&ctx, e))?
-                            };
+            // ferrijs poisons a realm whose armed run is dropped, and a client that hangs
+            // up drops this future; on its own task the run finishes inside its timeout.
+            let running = Arc::clone(&engine);
+            let body: ferrijs::RunBody<DynamicResponse> = Box::new(move |ctx| {
+                Box::pin(async move {
+                    let pending = if is_generator {
+                        begin_generator_step(&ctx, slot, request, kind)?
+                    } else {
+                        let func = restore_handler(&ctx, slot)?;
+                        let req = request_value(&ctx, kind, request)?;
+                        func.call((req,)).catch(&ctx).map_err(|e| caught(&ctx, e))?
+                    };
 
-                            let resolved = await_js!(&ctx, pending);
+                    let resolved = await_js!(&ctx, pending);
 
-                            let resolved = if is_generator {
-                                finish_generator_step(&ctx, slot, resolved)?
-                            } else {
-                                resolved
-                            };
+                    let resolved = if is_generator {
+                        finish_generator_step(&ctx, slot, resolved)?
+                    } else {
+                        resolved
+                    };
 
-                            let (mut meta, stream) =
-                                match value_to_dynamic_response(&ctx, resolved)? {
-                                    ConvertedResponse::Ready(response) => return Ok(response),
-                                    ConvertedResponse::Streaming { meta, stream } => (meta, stream),
-                                };
+                    let (mut meta, stream) = match value_to_dynamic_response(&ctx, resolved)? {
+                        ConvertedResponse::Ready(response) => return Ok(response),
+                        ConvertedResponse::Streaming { meta, stream } => (meta, stream),
+                    };
 
-                            let stream_value = stream.restore(&ctx).map_err(|e| {
-                                ScriptError::internal(format!("restore stream: {e}"))
-                            })?;
-                            meta.body = bytes::Bytes::from(drain_stream!(&ctx, stream_value));
-                            Ok::<DynamicResponse, ScriptError>(meta)
-                        })
-                    }),
-                )
-                .await;
+                    let stream_value = stream
+                        .restore(&ctx)
+                        .map_err(|e| ScriptError::internal(format!("restore stream: {e}")))?;
+                    meta.body = bytes::Bytes::from(drain_stream!(&ctx, stream_value));
+                    Ok::<DynamicResponse, ScriptError>(meta)
+                })
+            });
+            let run = tokio::spawn(async move { running.runtime().run(options, body).await })
+                .await
+                .map_err(|e| FerrimockError::Script(format!("script handler task failed: {e}")))?;
             run.result.map_err(|e| remap_error(e, &bundle))
         })
     })

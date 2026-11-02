@@ -371,6 +371,41 @@ async fn once_option_is_carried_onto_the_mock() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_client_hanging_up_mid_handler_leaves_the_engine_serving() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write_mock(
+        dir.path(),
+        "slow.mjs",
+        r"
+http.get('/slow', async () => {
+    await delay(200);
+    return 'late';
+});
+http.get('/fine', () => 'ok');
+",
+    );
+
+    let host = ScriptHost::new();
+    let mocks = host.load_file(&path, None).await.expect("load");
+
+    // A disconnecting client drops the handler's future, which is what this does.
+    let abandoned = tokio::time::timeout(
+        std::time::Duration::from_millis(20),
+        call_handler(&mocks[0], request("GET", "/slow")),
+    )
+    .await;
+    assert!(
+        abandoned.is_err(),
+        "the slow handler should still be running"
+    );
+
+    let resp = call_handler(&mocks[1], request("GET", "/fine"))
+        .await
+        .expect("the next request is answered, not refused as poisoned");
+    assert_eq!(&resp.body[..], b"ok");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn runaway_loop_is_halted_and_poisons_the_engine() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write_mock(
