@@ -832,13 +832,12 @@ impl DuplicateKey {
         let response = mock.response_config.as_ref();
         let mut response_headers: Vec<(String, String)> = response
             .and_then(crate::config::ResponseConfig::headers)
-            .map(|headers| {
+            .map_or_default(|headers| {
                 headers
                     .iter()
                     .map(|(name, value)| (name.clone(), value.clone()))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         response_headers.sort_unstable();
 
         Self {

@@ -181,8 +181,9 @@ impl<'a> MergeCandidate<'a> {
                 mock.response_config
                     .as_ref()
                     .and_then(crate::config::ResponseConfig::headers)
-                    .map(|headers| headers.keys().map(|key| key.to_lowercase()).collect())
-                    .unwrap_or_default()
+                    .map_or_default(|headers| {
+                        headers.keys().map(|key| key.to_lowercase()).collect()
+                    })
             })
             .collect();
         mean_pairwise_jaccard(&headers)
@@ -383,8 +384,7 @@ fn response_json(mock: &MockConfig) -> Option<JsonValue> {
 fn top_level_keys(value: Option<&JsonValue>) -> FxHashSet<String> {
     value
         .and_then(JsonValue::as_object)
-        .map(|object| object.keys().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|object| object.keys().cloned().collect())
 }
 
 /// Mean Jaccard overlap over every pair of sets, in `[0, 1]`.

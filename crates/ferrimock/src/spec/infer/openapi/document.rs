@@ -483,14 +483,13 @@ pub fn parse_openapi(source: &str) -> crate::Result<(OperationTable, Vec<SpecDef
     let servers = root
         .get("servers")
         .and_then(JsonValue::as_array)
-        .map(|servers| {
+        .map_or_default(|servers| {
             servers
                 .iter()
                 .filter_map(|server| server.get("url").and_then(JsonValue::as_str))
                 .map(LeanString::from)
                 .collect()
-        })
-        .unwrap_or_default();
+        });
 
     let components = root.get("components").and_then(JsonValue::as_object);
     let schemas = read_schema_book(components, &mut defects);
@@ -653,13 +652,12 @@ fn read_schema(value: &JsonValue, location: &str, defects: &mut Vec<SpecDefect>)
     let required: Vec<&str> = object
         .get("required")
         .and_then(JsonValue::as_array)
-        .map(|names| names.iter().filter_map(JsonValue::as_str).collect())
-        .unwrap_or_default();
+        .map_or_default(|names| names.iter().filter_map(JsonValue::as_str).collect());
 
     let properties = object
         .get("properties")
         .and_then(JsonValue::as_object)
-        .map(|properties| {
+        .map_or_default(|properties| {
             properties
                 .iter()
                 .filter_map(|(name, schema)| {
@@ -672,8 +670,7 @@ fn read_schema(value: &JsonValue, location: &str, defects: &mut Vec<SpecDefect>)
                     })
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
 
     let items = object
         .get("items")
@@ -682,7 +679,7 @@ fn read_schema(value: &JsonValue, location: &str, defects: &mut Vec<SpecDefect>)
     let enum_values = object
         .get("enum")
         .and_then(JsonValue::as_array)
-        .map(|values| {
+        .map_or_default(|values| {
             values
                 .iter()
                 .filter_map(|value| match value {
@@ -691,8 +688,7 @@ fn read_schema(value: &JsonValue, location: &str, defects: &mut Vec<SpecDefect>)
                     other => Some(LeanString::from(other.to_string())),
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
 
     let all_of = read_composition(object, "allOf", location, defects);
     let mut one_of = read_composition(object, "oneOf", location, defects);
@@ -1047,7 +1043,7 @@ fn read_links(response: &JsonValue) -> Vec<SpecLink> {
             parameters: link
                 .get("parameters")
                 .and_then(JsonValue::as_object)
-                .map(|parameters| {
+                .map_or_default(|parameters| {
                     parameters
                         .iter()
                         .filter_map(|(key, value)| {
@@ -1057,8 +1053,7 @@ fn read_links(response: &JsonValue) -> Vec<SpecLink> {
                             ))
                         })
                         .collect()
-                })
-                .unwrap_or_default(),
+                }),
         })
         .collect()
 }

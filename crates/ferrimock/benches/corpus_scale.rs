@@ -59,9 +59,7 @@ fn mock(id: usize, url: &str, once: bool, pinned: Option<(&str, &str)>) -> MockD
             methods: smallvec![Method::GET],
             url_patterns: smallvec![UrlPattern::exact(url)],
             header_matchers: smallvec![],
-            query_matchers: pinned
-                .map(|(k, v)| smallvec![QueryMatcher::exact(k, v)])
-                .unwrap_or_default(),
+            query_matchers: pinned.map_or_default(|(k, v)| smallvec![QueryMatcher::exact(k, v)]),
             body_matcher: None,
             graphql_matcher: None,
         },

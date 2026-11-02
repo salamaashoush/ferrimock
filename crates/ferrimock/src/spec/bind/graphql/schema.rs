@@ -1114,8 +1114,7 @@ fn selection_from_args(
     let entity_fields: Vec<String> = store
         .graph()
         .get(entity)
-        .map(|def| def.fields.iter().map(|f| f.name.to_string()).collect())
-        .unwrap_or_default();
+        .map_or_default(|def| def.fields.iter().map(|f| f.name.to_string()).collect());
 
     for (name, accessor) in ctx.args.iter() {
         let value = accessor.as_value();

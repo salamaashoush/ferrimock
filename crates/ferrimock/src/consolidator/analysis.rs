@@ -465,18 +465,14 @@ fn request_identity(mock: &MockConfig) -> String {
         .collect();
     body.sort_unstable();
 
-    let graphql = match_config
-        .graphql
-        .as_ref()
-        .map(|graphql| {
-            let mut variables: Vec<String> = ResponseAnalyzer::extract_graphql_variables(graphql)
-                .into_iter()
-                .map(|(name, value)| format!("{name}={value}"))
-                .collect();
-            variables.sort_unstable();
-            variables.join("&")
-        })
-        .unwrap_or_default();
+    let graphql = match_config.graphql.as_ref().map_or_default(|graphql| {
+        let mut variables: Vec<String> = ResponseAnalyzer::extract_graphql_variables(graphql)
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        variables.sort_unstable();
+        variables.join("&")
+    });
 
     format!(
         "{:?} {:?} {:?} {:?} {} {} {}",

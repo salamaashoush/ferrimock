@@ -561,8 +561,7 @@ pub(super) fn analyze_pagination_pattern(values: &[&str]) -> Option<PaginationUr
         let sample_cursor = first_url
             .query_pairs()
             .find(|(k, _)| k == *cursor_key)
-            .map(|(_, v)| v.to_string())
-            .unwrap_or_default();
+            .map_or_default(|(_, v)| v.to_string());
 
         return Some(PaginationUrlPattern {
             base_url,

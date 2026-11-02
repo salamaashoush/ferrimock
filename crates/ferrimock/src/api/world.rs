@@ -79,16 +79,13 @@ impl ListParams {
                     (field, value)
                 })
                 .collect(),
-            sort: self
-                .sort
-                .map(|raw| {
-                    raw.split(',')
-                        .map(str::trim)
-                        .filter(|part| !part.is_empty())
-                        .map(ToString::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
+            sort: self.sort.map_or_default(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(ToString::to_string)
+                    .collect()
+            }),
             skip: self.skip.unwrap_or(0),
             limit: self.limit,
         }

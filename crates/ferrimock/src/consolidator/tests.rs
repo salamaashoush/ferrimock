@@ -720,8 +720,7 @@ async fn a_merged_template_is_not_outranked_by_a_recording_it_was_built_from() {
     let matcher_of = |mock: &MockConfig| {
         mock.match_config
             .as_ref()
-            .map(|m| format!("{:?}{:?}", m.methods, m.urls))
-            .unwrap_or_default()
+            .map_or_default(|m| format!("{:?}{:?}", m.methods, m.urls))
     };
 
     let mut by_matcher: FxHashMap<String, Vec<u32>> = FxHashMap::default();
@@ -2124,8 +2123,7 @@ mod generalizing {
             .first()
             .and_then(|mock| mock.response_config.as_ref())
             .and_then(|response| response.template())
-            .map(ToString::to_string)
-            .unwrap_or_default()
+            .map_or_default(ToString::to_string)
     }
 
     fn url_of(collection: &MockCollectionConfig) -> String {
@@ -2278,8 +2276,7 @@ mod generalizing {
             .first()
             .and_then(|mock| mock.response_config.as_ref())
             .and_then(|response| response.template().or_else(|| response.body()))
-            .map(ToString::to_string)
-            .unwrap_or_default();
+            .map_or_default(ToString::to_string);
 
         for kept in [
             r#""enabled": true"#,

@@ -561,8 +561,7 @@ fn normalize_tera_block(block: &str) -> String {
 
     let inner: String = chars
         .get(inner_start..inner_end)
-        .map(|slice| slice.iter().collect())
-        .unwrap_or_default();
+        .map_or_default(|slice| slice.iter().collect());
 
     // Check for trim markers
     let (open_trim, content_start) = if let Some(stripped) = inner.strip_prefix('-') {

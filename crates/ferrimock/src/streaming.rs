@@ -180,7 +180,7 @@ pub fn requested_protocols(request: &RequestContext) -> Vec<String> {
     request
         .headers
         .get("sec-websocket-protocol")
-        .map(|value| {
+        .map_or_default(|value| {
             value
                 .split(',')
                 .map(str::trim)
@@ -188,7 +188,6 @@ pub fn requested_protocols(request: &RequestContext) -> Vec<String> {
                 .map(str::to_string)
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 #[cfg(feature = "server")]

@@ -621,14 +621,12 @@ impl MockConsolidator {
     /// parameters the converter pinned one by one.
     fn query_of(mock: &MockConfig) -> Vec<(String, String)> {
         let url = pattern::request_url(mock);
-        let mut parameters: Vec<(String, String)> = url
-            .split_once('?')
-            .map(|(_, query)| {
+        let mut parameters: Vec<(String, String)> =
+            url.split_once('?').map_or_default(|(_, query)| {
                 url::form_urlencoded::parse(query.as_bytes())
                     .map(|(name, value)| (name.into_owned(), value.into_owned()))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
 
         if let Some(match_config) = mock.match_config.as_ref() {
             parameters.extend(

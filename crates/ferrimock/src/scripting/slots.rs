@@ -183,8 +183,7 @@ impl HandlerSlots {
     pub fn ws_link_listeners(&self, link: u64) -> Vec<Persistent<Function<'static>>> {
         self.ws_links
             .get(&link)
-            .map(|l| l.listeners.clone())
-            .unwrap_or_default()
+            .map_or_default(|l| l.listeners.clone())
     }
 
     pub fn new_ws_connection(&mut self) -> u64 {
@@ -220,7 +219,7 @@ impl HandlerSlots {
     ) -> Vec<Persistent<Function<'static>>> {
         self.ws_connections
             .get(&connection)
-            .map(|entry| match event {
+            .map_or_default(|entry| match event {
                 "message" => entry.message.clone(),
                 "close" => entry.close.clone(),
                 "server-open" => entry.server_open.clone(),
@@ -229,7 +228,6 @@ impl HandlerSlots {
                 "server-close" => entry.server_close.clone(),
                 _ => Vec::new(),
             })
-            .unwrap_or_default()
     }
 
     /// Drop a closed connection's listeners (Persistent leak guard).

@@ -10,7 +10,7 @@
     },
     "crates/ferrimock-napi": {
       "name": "@ferrimock/node",
-      "version": "0.4.1",
+      "version": "0.10.0",
       "devDependencies": {
         "@napi-rs/cli": "~3.6.1",
       },
@@ -25,9 +25,9 @@
     },
     "packages/core": {
       "name": "ferrimock",
-      "version": "0.4.1",
+      "version": "0.10.0",
       "dependencies": {
-        "@ferrimock/node": "0.3.0",
+        "@ferrimock/node": "0.5.0",
         "@mswjs/interceptors": "^0.41.9",
         "jiti": "^2.6.1",
       },
@@ -38,10 +38,10 @@
     },
     "packages/playwright": {
       "name": "@ferrimock/playwright",
-      "version": "0.4.1",
+      "version": "0.10.0",
       "peerDependencies": {
         "@playwright/test": ">=1.40.0",
-        "ferrimock": "0.3.0",
+        "ferrimock": "0.5.0",
       },
     },
   },
@@ -55,6 +55,18 @@
     "@faker-js/faker": ["@faker-js/faker@10.6.0", "", {}, "sha512-3RQHgEtvL1Frl/d1cSreo7qhJ3Gk1OdNUai/CtZ8G+wYeRQnJih3s9xJ9/kgYekPQRdwgh0HXRPqMlzWGwivIQ=="],
 
     "@ferrimock/node": ["@ferrimock/node@workspace:crates/ferrimock-napi"],
+
+    "@ferrimock/node-darwin-arm64": ["@ferrimock/node-darwin-arm64@0.4.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-6ZwG+xoLnLuUqERcLRVnszdi4KOhrUUfO/yHtcbQa+euIe4to90gBKWlGWYKDYcvJKnP07yeM2s46jAysgdfow=="],
+
+    "@ferrimock/node-darwin-x64": ["@ferrimock/node-darwin-x64@0.4.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-XIkIGTRRENpzcmpA/Ycuf/C3xdSB75D9VeyDRyQFeFvYFVg3Ct3RNKPItr5RJVPCtOpQG42xt3rswyxiagGUAA=="],
+
+    "@ferrimock/node-linux-arm64-gnu": ["@ferrimock/node-linux-arm64-gnu@0.4.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-QJeCUPpW+WdtM/1nwIgZeg9HOD51pW57QsNI3bAWA/Kb1x3RMzxpUO2FtDZYi3RX1rJ9t6xaZ6wYknesykVsgQ=="],
+
+    "@ferrimock/node-linux-x64-gnu": ["@ferrimock/node-linux-x64-gnu@0.4.1", "", { "os": "linux", "cpu": "x64" }, "sha512-rwzlR6S1HKvl7DKDwzKLZvlqsgmn/W0ER64CKLSAl38XiZrPl5beXVPt3pKpxREhf0RmgbO24eopYAC6n+4RFA=="],
+
+    "@ferrimock/node-win32-arm64-msvc": ["@ferrimock/node-win32-arm64-msvc@0.4.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-SI8XFq4MkYJHfUciZ5Dk6hvwuC+nOFQ7t/jJDXXkX1lsGqi/5CoAA+RBpUMkjxqz7A32P+wp5W7JaI5NTGB+Ig=="],
+
+    "@ferrimock/node-win32-x64-msvc": ["@ferrimock/node-win32-x64-msvc@0.4.1", "", { "os": "win32", "cpu": "x64" }, "sha512-zm9x5+UT6la8Vmsb9AxN+V9BM4PRhUD4E8PU/W3BGCO6+F6WZ+jkDuPl6QOdkkfelJeR7PtoSfiahcAlWyr0JA=="],
 
     "@ferrimock/playwright": ["@ferrimock/playwright@workspace:packages/playwright"],
 
@@ -513,6 +525,8 @@
     "@octokit/plugin-paginate-rest/@octokit/types": ["@octokit/types@16.0.0", "", { "dependencies": { "@octokit/openapi-types": "^27.0.0" } }, "sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg=="],
 
     "@octokit/plugin-rest-endpoint-methods/@octokit/types": ["@octokit/types@16.0.0", "", { "dependencies": { "@octokit/openapi-types": "^27.0.0" } }, "sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg=="],
+
+    "ferrimock/@ferrimock/node": ["@ferrimock/node@0.5.0", "", { "optionalDependencies": { "@ferrimock/node-darwin-arm64": "0.4.1", "@ferrimock/node-darwin-x64": "0.4.1", "@ferrimock/node-linux-arm64-gnu": "0.4.1", "@ferrimock/node-linux-x64-gnu": "0.4.1", "@ferrimock/node-win32-arm64-msvc": "0.4.1", "@ferrimock/node-win32-x64-msvc": "0.4.1" } }, "sha512-OmvwUyAEmVr6EEumlxohQp10S9AcbksvfRSm1tA+1o/YfdvSoBgxyFAODQq/r/QxHeruzjieYdC0uuWMogFZkA=="],
 
     "@napi-rs/lzma-wasm32-wasi/@emnapi/core/@emnapi/wasi-threads": ["@emnapi/wasi-threads@1.2.2", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA=="],
 

@@ -294,8 +294,7 @@ mod tests {
         let mut entries: Vec<(String, JsonValue)> = mock
             .match_config
             .as_ref()
-            .map(|m| m.body.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
+            .map_or_default(|m| m.body.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries
     }

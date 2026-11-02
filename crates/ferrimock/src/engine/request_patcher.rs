@@ -89,8 +89,7 @@ impl RequestPatcher {
                     }
                     let body_str = raw_body
                         .as_ref()
-                        .map(|b| String::from_utf8_lossy(b).into_owned())
-                        .unwrap_or_default();
+                        .map_or_default(|b| String::from_utf8_lossy(b).into_owned());
                     let result = pattern.replace_all(&body_str, replacement.as_str());
                     raw_body = Some(Bytes::from(result.into_owned()));
                 }

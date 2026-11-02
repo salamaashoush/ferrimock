@@ -880,8 +880,7 @@ impl EntityStore {
         let mut keys: Vec<EntityKey> = self
             .census
             .get(entity)
-            .map(|c| c.derived.clone())
-            .unwrap_or_default();
+            .map_or_default(|c| c.derived.clone());
         if let Some(created) = self.created.read().keys_of(entity) {
             keys.extend(created.iter().cloned());
         }

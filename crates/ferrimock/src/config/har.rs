@@ -119,7 +119,7 @@ fn graphql_matcher(entry: &v1_2::Entries) -> Option<GraphQLMatchConfig> {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
         .and_then(|body| body.get("variables").cloned())
         .and_then(|variables| variables.as_object().cloned())
-        .map(|variables| {
+        .map_or_default(|variables| {
             variables
                 .into_iter()
                 .filter(|(_, value)| {
@@ -131,8 +131,7 @@ fn graphql_matcher(entry: &v1_2::Entries) -> Option<GraphQLMatchConfig> {
                     )
                 })
                 .collect::<FxHashMap<String, serde_json::Value>>()
-        })
-        .unwrap_or_default();
+        });
 
     if variables.is_empty() {
         return Some(GraphQLMatchConfig::Simple(operation));

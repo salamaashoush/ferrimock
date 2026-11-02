@@ -243,13 +243,12 @@ where
         arrays
             .iter()
             .max_by_key(|arr| arr.len())
-            .map(|arr| {
+            .map_or_default(|arr| {
                 arr.iter()
                     .take(MAX_MIXED_ELEMENTS)
                     .map(|element| detect_type_from_values(&[element]).0)
                     .collect()
             })
-            .unwrap_or_default()
     };
 
     (

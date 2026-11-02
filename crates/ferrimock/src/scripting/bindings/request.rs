@@ -359,8 +359,7 @@ impl Request {
             .inner
             .headers
             .get("content-type")
-            .map(String::as_str)
-            .unwrap_or_default();
+            .map_or_default(String::as_str);
         // body_as_bytes: binary multipart bodies only exist as body_bytes.
         let body = self.inner.body_as_bytes().unwrap_or_default();
         let form = parse_form_body(content_type, body)

@@ -402,8 +402,7 @@ impl FerrimockServer {
             .map_err(|e| Error::from_reason(format!("Invalid WebSocket URL: {e}")))?;
         let host = uri
             .authority()
-            .map(std::string::ToString::to_string)
-            .unwrap_or_default();
+            .map_or_default(std::string::ToString::to_string);
         let path = uri.path().to_string();
         let query = uri.query().map(str::to_string);
         // The intercepted connection URL carries the real scheme, so

@@ -138,16 +138,13 @@ fn query_from(kwargs: &Kwargs) -> TeraResult<EntityQuery> {
         None => serde_json::Map::new(),
     };
 
-    let sort = kwargs
-        .get::<&str>("sort")?
-        .map(|raw| {
-            raw.split(',')
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
+    let sort = kwargs.get::<&str>("sort")?.map_or_default(|raw| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(ToString::to_string)
+            .collect()
+    });
 
     Ok(EntityQuery {
         filter,

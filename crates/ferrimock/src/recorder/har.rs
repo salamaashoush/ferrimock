@@ -36,11 +36,8 @@ pub fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
         .collect();
 
     // Parse query string into HAR format
-    let query_string: Vec<v1_2::QueryString> = interaction
-        .request
-        .query
-        .as_ref()
-        .map(|q| {
+    let query_string: Vec<v1_2::QueryString> =
+        interaction.request.query.as_ref().map_or_default(|q| {
             q.split('&')
                 .filter_map(|pair| {
                     let mut parts = pair.splitn(2, '=');
@@ -53,8 +50,7 @@ pub fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
                     })
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
 
     // Calculate body sizes
     let request_body_size = interaction

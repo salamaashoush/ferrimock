@@ -93,7 +93,7 @@ impl RequestData {
         self.ctx
             .headers
             .get("cookie")
-            .map(|cookie_header| {
+            .map_or_default(|cookie_header| {
                 cookie_header
                     .split(';')
                     .filter_map(|pair| {
@@ -110,7 +110,6 @@ impl RequestData {
                     })
                     .collect()
             })
-            .unwrap_or_default()
     }
 }
 
