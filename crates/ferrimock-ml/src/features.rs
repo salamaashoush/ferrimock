@@ -924,10 +924,10 @@ mod tests {
     #[test]
     fn a_keyword_matches_a_word_not_a_substring() {
         // The lesson `account_number` taught the heuristic detector.
-        assert_eq!(feature("account_number", &["1"], "name.kw.count"), 0.0);
-        assert_eq!(feature("total_count", &["1"], "name.kw.count"), 1.0);
-        assert_eq!(feature("identifier", &["1"], "name.kw.id"), 0.0);
-        assert_eq!(feature("user_id", &["1"], "name.kw.id"), 1.0);
+        assert!(feature("account_number", &["1"], "name.kw.count").abs() < f32::EPSILON);
+        assert!((feature("total_count", &["1"], "name.kw.count") - 1.0).abs() < f32::EPSILON);
+        assert!(feature("identifier", &["1"], "name.kw.id").abs() < f32::EPSILON);
+        assert!((feature("user_id", &["1"], "name.kw.id") - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -953,17 +953,17 @@ mod tests {
 
     #[test]
     fn a_shared_prefix_is_recognised() {
-        assert_eq!(
-            feature(
+        assert!(
+            (feature(
                 "x",
                 &["file_001", "file_002", "file_003"],
                 "value.prefix_shared"
-            ),
-            1.0
+            ) - 1.0)
+                .abs()
+                < f32::EPSILON
         );
-        assert_eq!(
-            feature("x", &["alpha", "beta", "gamma"], "value.prefix_shared"),
-            0.0
+        assert!(
+            feature("x", &["alpha", "beta", "gamma"], "value.prefix_shared").abs() < f32::EPSILON
         );
     }
 

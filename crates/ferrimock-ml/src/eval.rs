@@ -567,9 +567,12 @@ mod tests {
         let evaluation = evaluate(&Silent, &corpus);
 
         assert_eq!(evaluation.abstained, 10);
-        assert_eq!(evaluation.coverage_accuracy(), 0.0);
-        assert_eq!(evaluation.accuracy(), 0.0, "nothing was answered");
-        assert_eq!(evaluation.macro_f1(), 0.0);
+        assert!(evaluation.coverage_accuracy().abs() < f64::EPSILON);
+        assert!(
+            evaluation.accuracy().abs() < f64::EPSILON,
+            "nothing was answered"
+        );
+        assert!(evaluation.macro_f1().abs() < f64::EPSILON);
     }
 
     #[test]
@@ -650,7 +653,7 @@ mod tests {
             .iter()
             .find(|score| score.source == "good-family")
             .unwrap();
-        assert_eq!(bad.macro_f1, 0.0);
+        assert!(bad.macro_f1.abs() < f64::EPSILON);
         assert!(good.macro_f1 > 0.99);
         assert!(
             evaluate(&Always(FieldLabel::Email, 0.9), &corpus).coverage_accuracy() > 0.8,

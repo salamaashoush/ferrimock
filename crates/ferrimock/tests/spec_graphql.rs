@@ -590,7 +590,7 @@ async fn a_schema_with_no_entities_still_builds_and_answers() {
     let data = run(&backend, "{ ping count }").await;
     assert!(data["ping"].is_string());
     assert!(data["count"].is_number());
-    assert_eq!(backend.coverage().ratio(), 0.0);
+    assert!(backend.coverage().ratio().abs() < f64::EPSILON);
 }
 
 #[tokio::test]

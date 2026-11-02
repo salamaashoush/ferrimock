@@ -177,7 +177,7 @@ mod tests {
         ]);
         assert!(hex > 0.6, "{hex}");
         assert!(prose < 0.5, "{prose}");
-        assert_eq!(agreement(&[]), 0.0);
-        assert_eq!(agreement(&["one"]), 1.0);
+        assert!(agreement(&[]).abs() < f64::EPSILON);
+        assert!((agreement(&["one"]) - 1.0).abs() < f64::EPSILON);
     }
 }

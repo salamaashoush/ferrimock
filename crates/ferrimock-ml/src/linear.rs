@@ -306,7 +306,7 @@ mod tests {
         // assertion about how busy the machine is, which it fails under a
         // parallel `cargo test` on hardware that is otherwise fine.
         assert!(
-            best < std::time::Duration::from_micros(1_000),
+            best < std::time::Duration::from_millis(1),
             "a field cost {best:?} at best, so a recording of ten thousand fields would cost seconds"
         );
         println!("one field costs {best:?}");

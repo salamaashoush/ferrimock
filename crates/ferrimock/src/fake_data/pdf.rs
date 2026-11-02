@@ -2058,10 +2058,11 @@ mod tests {
     #[test]
     fn courier_is_monospaced_and_times_is_not() {
         let courier = Face::REGULAR.in_family(Family::Courier);
-        assert_eq!(
+        let (narrow, wide) = (
             text_width("iii", courier, 10.0),
-            text_width("WWW", courier, 10.0)
+            text_width("WWW", courier, 10.0),
         );
+        assert!((narrow - wide).abs() < f64::EPSILON, "{narrow} vs {wide}");
         let times = Face::REGULAR.in_family(Family::Times);
         assert!(text_width("iii", times, 10.0) < text_width("WWW", times, 10.0));
     }

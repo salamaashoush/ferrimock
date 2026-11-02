@@ -283,7 +283,7 @@ pub struct UpstreamConfig {
 impl Default for UpstreamConfig {
     fn default() -> Self {
         Self {
-            timeout: Some(Duration::from_secs(60)),
+            timeout: Some(Duration::from_mins(1)),
             pool_max_idle_per_host: 32,
             pool_idle_timeout: Duration::from_secs(90),
             accept_invalid_certs: false,

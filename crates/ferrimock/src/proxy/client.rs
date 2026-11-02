@@ -40,7 +40,7 @@ impl UpstreamClient {
         // Nagle batches a small write against the next one, which on a proxy
         // means holding a request until the following frame shows up.
         http.set_nodelay(true);
-        http.set_keepalive(Some(Duration::from_secs(60)));
+        http.set_keepalive(Some(Duration::from_mins(1)));
         http.set_connect_timeout(config.connect_timeout);
         // A dual-stack `localhost` resolves to ::1 and 127.0.0.1, and a dev
         // server bound to one of them refuses the other. Racing the two costs
