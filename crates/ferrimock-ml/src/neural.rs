@@ -22,20 +22,17 @@ use crate::corpus::Corpus;
 use crate::features::{FEATURE_COUNT, FEATURE_LAYOUT_VERSION};
 use crate::label::FieldLabel;
 
-use burn::backend::Autodiff;
-use burn::backend::ndarray::{NdArray, NdArrayDevice};
-use burn::module::{AutodiffModule, Module};
+use burn::module::Module;
 use burn::nn::loss::CrossEntropyLossConfig;
 use burn::nn::{Linear, LinearConfig, Relu};
-use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::tensor::backend::Backend;
-use burn::tensor::{Int, Tensor, TensorData};
+use burn::optim::{AdamConfig, GradientsParams};
+use burn::tensor::{Device, Int, Tensor, TensorData};
 
-/// CPU backend. Training here is seconds on a corpus this size, and a mock
-/// server has no business pulling in a GPU runtime to type a field.
-pub type Cpu = NdArray<f32>;
-/// The same backend with gradients, for fitting.
-pub type Training = Autodiff<Cpu>;
+/// The pure-Rust CPU backend. Training here is seconds on a corpus this size,
+/// and a mock server has no business pulling in a GPU runtime to type a field.
+fn cpu() -> Device {
+    Device::flex()
+}
 
 /// Knobs for fitting the network.
 #[derive(Debug, Clone)]
@@ -61,15 +58,15 @@ impl Default for NeuralConfig {
 
 /// Two dense layers over the same features the linear model sees.
 #[derive(Module, Debug)]
-pub struct Mlp<B: Backend> {
-    input: Linear<B>,
-    hidden: Linear<B>,
-    output: Linear<B>,
+pub struct Mlp {
+    input: Linear,
+    hidden: Linear,
+    output: Linear,
     activation: Relu,
 }
 
-impl<B: Backend> Mlp<B> {
-    pub fn new(device: &B::Device, hidden: usize) -> Self {
+impl Mlp {
+    pub fn new(device: &Device, hidden: usize) -> Self {
         Self {
             input: LinearConfig::new(FEATURE_COUNT, hidden).init(device),
             hidden: LinearConfig::new(hidden, hidden).init(device),
@@ -78,7 +75,7 @@ impl<B: Backend> Mlp<B> {
         }
     }
 
-    pub fn forward(&self, features: Tensor<B, 2>) -> Tensor<B, 2> {
+    pub fn forward(&self, features: Tensor<2>) -> Tensor<2> {
         let x = self.activation.forward(self.input.forward(features));
         let x = self.activation.forward(self.hidden.forward(x));
         self.output.forward(x)
@@ -87,8 +84,8 @@ impl<B: Backend> Mlp<B> {
 
 /// A fitted network, ready to be scored like any other classifier.
 pub struct NeuralClassifier {
-    model: Mlp<Cpu>,
-    device: NdArrayDevice,
+    model: Mlp,
+    device: Device,
     /// Layout the weights were fitted against. A model read against a different
     /// one would reinterpret every dimension and keep answering confidently.
     pub feature_layout_version: u32,
@@ -97,8 +94,9 @@ pub struct NeuralClassifier {
 impl NeuralClassifier {
     /// Fit on a corpus.
     pub fn train(corpus: &Corpus, config: &NeuralConfig) -> Self {
-        let device = NdArrayDevice::default();
-        let mut model: Mlp<Training> = Mlp::new(&device, config.hidden);
+        let device = cpu();
+        let training = device.clone().autodiff();
+        let mut model = Mlp::new(&training, config.hidden);
 
         let rows: Vec<(Vec<f32>, usize)> = corpus
             .examples
@@ -136,16 +134,16 @@ impl NeuralClassifier {
                     continue;
                 }
 
-                let inputs: Tensor<Training, 2> = Tensor::from_data(
+                let inputs: Tensor<2> = Tensor::from_data(
                     TensorData::new(features, [targets.len(), FEATURE_COUNT]),
-                    &device,
+                    &training,
                 );
-                let expected: Tensor<Training, 1, Int> =
-                    Tensor::from_data(TensorData::new(targets.clone(), [targets.len()]), &device);
+                let expected: Tensor<1, Int> =
+                    Tensor::from_data(TensorData::new(targets.clone(), [targets.len()]), &training);
 
                 let logits = model.forward(inputs);
                 let loss = CrossEntropyLossConfig::new()
-                    .init(&device)
+                    .init(&training)
                     .forward(logits, expected);
 
                 let gradients = GradientsParams::from_grads(loss.backward(), &model);
@@ -162,7 +160,7 @@ impl NeuralClassifier {
 
     /// Class probabilities for one feature vector.
     fn probabilities(&self, features: &[f32]) -> Vec<f32> {
-        let inputs: Tensor<Cpu, 2> = Tensor::from_data(
+        let inputs: Tensor<2> = Tensor::from_data(
             TensorData::new(features.to_vec(), [1, FEATURE_COUNT]),
             &self.device,
         );
@@ -170,7 +168,7 @@ impl NeuralClassifier {
         let probabilities = burn::tensor::activation::softmax(logits, 1);
         probabilities
             .into_data()
-            .into_vec()
+            .try_into_vec::<f32>()
             .unwrap_or_else(|_| vec![0.0; FieldLabel::ALL.len()])
     }
 }

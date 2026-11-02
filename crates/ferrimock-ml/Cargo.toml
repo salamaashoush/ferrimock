@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Learned field-type classification for ferrimock's consolidation engine"
 
 [dependencies]
-burn = { version = "0.21.0", default-features = false, features = ["ndarray", "autodiff"] }
+burn = { version = "0.22.1", default-features = false, features = ["std", "flex", "optim"] }
 ferrimock = { version = "0.9.0", path = "../ferrimock", features = ["engine"] }
 regex = { workspace = true }
 rustc-hash = { workspace = true }

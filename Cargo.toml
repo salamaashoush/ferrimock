@@ -127,7 +127,7 @@ multiple_crate_versions = "allow"
 [workspace.dependencies]
 # Async runtime
 futures = "0.3"
-tokio = { version = "1.53", features = ["full"] }
+tokio = { version = "1.54", features = ["full"] }
 
 # Web framework
 axum = { version = "0.8", features = ["ws"] }
@@ -138,7 +138,7 @@ tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 # Proxy. axum serves the connection; these are the pieces it has no opinion
 # about -- an upstream client, TLS material, and a body combinator for the
 # recording tee.
-hyper = { version = "1.11", features = ["http1", "http2", "client"] }
+hyper = { version = "1.12", features = ["http1", "http2", "client"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "http2", "tokio"] }
 http-body = "1"
 http-body-util = "0.1"
@@ -184,8 +184,8 @@ flate2 = "1.1"
 globset = "0.4"
 har = "0.9"
 json-patch = "4.2"
-lean_string = { version = "0.7", features = ["serde"] }
-lru = "0.18"
+lean_string = { version = "0.8", features = ["serde"] }
+lru = "0.19"
 nohash-hasher = "0.2"
 notify = "8.2"
 parking_lot = "0.12"
@@ -196,7 +196,7 @@ sha2 = "0.11"
 smallvec = { version = "1.16", features = ["serde", "union", "const_generics"] }
 url = "2.5"
 urlencoding = "2.1.3"
-uuid = { version = "1.26", features = ["v4", "serde"] }
+uuid = { version = "1.29", features = ["v4", "serde"] }
 
 # CLI
 clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
@@ -220,11 +220,11 @@ imageproc = { version = "0.27.0", default-features = false, features = ["rayon",
 # default-features pull lopdf's datetime integrations (time/jiff/chrono
 # interop, currently broken against newer `time`); fake_pdf only writes
 # documents and needs none of them.
-lopdf = { version = "0.44", default-features = false }
+lopdf = { version = "0.46", default-features = false }
 # No "compression" feature: it pulls include-flate -> proc-macro-error2,
 # which trips a future-incompat lint (E0365) with no fixed release. The
 # only embedded asset is one font; the size trade is acceptable.
-rust-embed = { version = "8.12" }
+rust-embed = { version = "8.13" }
 
 # GraphQL execution (spec feature): dynamic schema built at runtime from a
 # parsed spec, plus the SDL parser (arrives transitively, pinned for clarity).
@@ -232,7 +232,7 @@ async-graphql = { version = "7.2", default-features = false, features = ["dynami
 async-graphql-parser = "7.2"
 
 # Template engine
-tera = "2.3"
+tera = "2.4"
 # Tera 2 moved its dependency-heavy built-ins out of core; json_encode, date,
 # now and get_random are part of the documented mock template surface.
 tera-contrib = { version = "0.3", features = ["json", "date", "rand"] }
@@ -242,15 +242,15 @@ tera-contrib = { version = "0.3", features = ["json", "date", "rand"] }
 # rolldown bundler; ferrimock adds only its MSW-shaped host bindings.
 # `fetch` is compiled in for the multipart codec and the stream bridge;
 # the runtime itself is built `without_fetch`.
-ferrijs = { version = "0.5.0", default-features = false, features = ["fetch"] }
-ferrijs-bundle = "0.5.0"
-ferrijs-fetch = "0.5.0"
-ferrijs-serde = "0.5.0"
-ferrijs-std = "0.5.0"
+ferrijs = { version = "0.8.0", default-features = false, features = ["fetch"] }
+ferrijs-bundle = "0.8.0"
+ferrijs-fetch = "0.8.0"
+ferrijs-serde = "0.8.0"
+ferrijs-std = "0.8.0"
 # The same feature set ferrijs enables, so the workspace links one rquickjs.
 # `full-async` does NOT imply `parallel`; without it AsyncRuntime is !Send/!Sync
 # and HandlerFn closures (Send + Sync) cannot reach the VM.
-rquickjs = { version = "0.13", features = [
+rquickjs = { version = "0.14", features = [
   "full-async",
   "parallel",
   "macro",
@@ -268,7 +268,7 @@ dunce = "1"
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 tempfile = "3.27"
 serial_test = "3.5"
-proptest = "1.11"
+proptest = "1.12"
 
 # HTTP
 http = "1"
