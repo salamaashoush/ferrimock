@@ -1220,8 +1220,8 @@ async fn test_try_match_patch_mode() {
             assert_eq!(mock_id, "test");
             assert_eq!(response_patches.len(), 0);
         }
-        MockAction::FullMock(_) | MockAction::NetworkError { .. } => {
-            panic!("Expected PatchUpstream action")
+        other => {
+            panic!("Expected PatchUpstream action, got {other:?}")
         }
     }
 }
@@ -1259,8 +1259,8 @@ async fn test_try_match_template_structured_response() {
             assert_eq!(response.headers().get("X-Custom").unwrap(), "value");
             assert!(response.headers().get("X-Mock-Id").is_some());
         }
-        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
-            panic!("Expected FullMock action")
+        other => {
+            panic!("Expected FullMock action, got {other:?}")
         }
     }
 }
@@ -1442,8 +1442,8 @@ async fn test_try_match_with_post_body() {
                 "Should have mock ID header"
             );
         }
-        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
-            panic!("Expected FullMock action")
+        other => {
+            panic!("Expected FullMock action, got {other:?}")
         }
     }
 }
@@ -1505,8 +1505,8 @@ async fn test_try_match_template_error() {
             assert_eq!(response.headers().get("X-Mock-Error").unwrap(), "true");
             assert_eq!(response.headers().get("X-Mock-Id").unwrap(), "test");
         }
-        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
-            panic!("Expected FullMock error response")
+        other => {
+            panic!("Expected FullMock error response, got {other:?}")
         }
     }
 }
@@ -1545,8 +1545,8 @@ async fn test_try_match_static_response() {
             assert_eq!(response.headers().get("X-Custom").unwrap(), "static-value");
             assert_eq!(response.headers().get("X-Mock-Id").unwrap(), "test");
         }
-        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
-            panic!("Expected FullMock action")
+        other => {
+            panic!("Expected FullMock action, got {other:?}")
         }
     }
 }

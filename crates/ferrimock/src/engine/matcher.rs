@@ -25,7 +25,11 @@ pub struct MockMatch {
 }
 
 /// Action to take after mock matching
+///
+/// Non-exhaustive: a host matches the actions it knows and forwards the request
+/// on any other, so a new action is not a breaking change.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MockAction {
     /// Return a complete mock response (no upstream call needed)
     FullMock(http::Response<bytes::Bytes>),
