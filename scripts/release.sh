@@ -61,16 +61,16 @@ if n != 1:
 open(path, "w").write(updated)
 print(f"bumped {path}")
 
-# ferrimock-cli's registry pin on the ferrimock dependency.
-path = "crates/ferrimock-cli/Cargo.toml"
-src = open(path).read()
-updated, n = re.subn(
-    rf'ferrimock = \{{ version = "{re.escape(current)}"', f'ferrimock = {{ version = "{new}"', src, count=1
-)
-if n != 1:
-    raise SystemExit(f"{path}: ferrimock dep pin {current} not found")
-open(path, "w").write(updated)
-print(f"bumped {path}")
+# Each published crate's registry pin on the ferrimock dependency.
+for path in ("crates/ferrimock-cli/Cargo.toml", "crates/ferrimock-ml/Cargo.toml"):
+    src = open(path).read()
+    updated, n = re.subn(
+        rf'ferrimock = \{{ version = "{re.escape(current)}"', f'ferrimock = {{ version = "{new}"', src, count=1
+    )
+    if n != 1:
+        raise SystemExit(f"{path}: ferrimock dep pin {current} not found")
+    open(path, "w").write(updated)
+    print(f"bumped {path}")
 
 # npm packages, including platform-package pins in optionalDependencies.
 for path in (
@@ -116,6 +116,7 @@ fi
 
 git add Cargo.toml Cargo.lock bun.lock CHANGELOG.md \
     crates/ferrimock-cli/Cargo.toml \
+    crates/ferrimock-ml/Cargo.toml \
     crates/ferrimock-napi/package.json \
     crates/ferrimock-cli/npm-shim/package.json \
     packages/core/package.json \
