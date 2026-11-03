@@ -9,7 +9,7 @@ description = "Learned field-type classification for ferrimock's consolidation e
 
 [dependencies]
 burn = { version = "0.22.1", default-features = false, features = ["std", "flex", "optim"] }
-ferrimock = { version = "0.10.0", path = "../ferrimock", features = ["engine"] }
+ferrimock = { version = "0.11.0", path = "../ferrimock", features = ["engine"] }
 regex = { workspace = true }
 rustc-hash = { workspace = true }
 serde = { workspace = true }

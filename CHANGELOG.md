@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-11-03
+
+### Bug Fixes
+
+- Satisfy rustdoc and clippy on the current nightly ([530275e](https://github.com/salamaashoush/ferrimock/commit/530275e194140a7625d7fe45849e151aba497ebf))
+- Use Option::map_or_default where clippy now asks for it ([5e18b86](https://github.com/salamaashoush/ferrimock/commit/5e18b86f6056a0e9a5ad80b0fec940d856bca011))
+- *(engine)* Give try_match_parts the server's handler semantics ([74b5e70](https://github.com/salamaashoush/ferrimock/commit/74b5e708f76322d7867d411730995c8eb27a2fd5))
+- *(release)* Bump ferrimock-ml's ferrimock pin with the others ([21df501](https://github.com/salamaashoush/ferrimock/commit/21df5019ba6dd752ff36477dd0573b53302e75cf))
+
+### CI
+
+- Audit the graph a build reaches and raise the MSRV to 1.99 ([dc286b2](https://github.com/salamaashoush/ferrimock/commit/dc286b27314095e58c33b62bce4e7def68200f67))
+
+### Refactoring
+
+- *(engine)* Make MockAction non-exhaustive ([3db490a](https://github.com/salamaashoush/ferrimock/commit/3db490abe2077e150c9e0e57b87506642cfa4c81))
+
 ## [Unreleased]
 
 The scripting lane now runs on the ferrijs runtime (`../ferrijs`, a path
