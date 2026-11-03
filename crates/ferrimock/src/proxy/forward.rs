@@ -98,6 +98,9 @@ pub async fn handle(
             };
             patch_upstream(state, parts, path, query, pending, patch).await
         }
+        Some(MockAction::NetworkError { mock_id }) => {
+            crate::services::serve::network_error_response(mock_id.as_str())
+        }
         None => forward(state, parts, path, query, pending, client).await,
     }
 }
