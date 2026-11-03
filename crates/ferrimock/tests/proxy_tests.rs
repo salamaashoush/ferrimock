@@ -408,6 +408,85 @@ mocks:
 }
 
 #[tokio::test]
+async fn a_passthrough_handler_forwards_to_the_upstream() {
+    let upstream = upstream::start().await;
+    let registry = registry_from(
+        r#"
+mocks:
+  - id: passes
+    priority: 200
+    match:
+      GET: /api/users
+    response:
+      template: '{"headers": {"x-ferrimock-passthrough": "1"}, "body": ""}'
+  - id: behind
+    match:
+      GET: /api/users
+    response:
+      json: { from: behind }
+"#,
+    )
+    .await;
+
+    let proxy = proxy_with(
+        &[&format!("/={}", upstream.url())],
+        Some(MockMatcher::new(registry)),
+    )
+    .await;
+
+    let response = client()
+        .get(format!("{}/api/users", proxy.url()))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(response.headers().get("x-mock-id").is_none());
+    assert!(response.headers().get("x-ferrimock-passthrough").is_none());
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["path"], "/api/users");
+    assert_eq!(upstream.hit_count(), 1);
+}
+
+#[tokio::test]
+async fn a_fall_through_handler_is_answered_by_the_next_mock() {
+    let upstream = upstream::start().await;
+    let registry = registry_from(
+        r#"
+mocks:
+  - id: falls
+    priority: 200
+    match:
+      GET: /api/users
+    response:
+      template: '{"headers": {"x-ferrimock-fallthrough": "1"}, "body": ""}'
+  - id: behind
+    match:
+      GET: /api/users
+    response:
+      json: { from: behind }
+"#,
+    )
+    .await;
+
+    let proxy = proxy_with(
+        &[&format!("/={}", upstream.url())],
+        Some(MockMatcher::new(registry)),
+    )
+    .await;
+
+    let response = client()
+        .get(format!("{}/api/users", proxy.url()))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.headers().get("x-mock-id").unwrap(), "behind");
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["from"], "behind");
+    assert_eq!(upstream.hit_count(), 0);
+}
+
+#[tokio::test]
 async fn a_patch_mock_rewrites_what_the_upstream_said() {
     let upstream = upstream::start().await;
     let registry = registry_from(
