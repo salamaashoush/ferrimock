@@ -61,6 +61,7 @@ pub fn register_template_function(name: impl Into<String>, func: impl TemplateFu
 }
 
 /// Look up a plugin function by name.
+#[cfg(feature = "scripting")]
 pub(crate) fn lookup(name: &str) -> Option<Arc<dyn TemplateFunction>> {
     let functions = PLUGIN_FUNCTIONS.lock().ok()?;
     functions
