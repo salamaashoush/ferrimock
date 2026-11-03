@@ -16,7 +16,8 @@ Monorepo with Cargo workspace (3 Rust crates) + bun workspaces (3 JS packages).
 - `types` - Core types: RequestContext, URL patterns, matchers, body sources, HandlerFn
 - `config` - Mock configuration parsing (YAML/JSON), HAR file loading.
   `network_error: true` desugars to the marker-header template the server and the
-  interceptor already honour — faults add no runtime path
+  interceptor already honour; `try_match_parts` turns the marker into
+  `MockAction::NetworkError` so an embedder never has to read marker headers
 - `engine` - MockRegistry, MockMatcher, validation, scopes, call tracking
 - `engine::registry` match counting - every match increments a monotonic per-mock
   counter (always on, one relaxed add). `match_count`/`verify` are the assertion

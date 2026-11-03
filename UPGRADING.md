@@ -15,8 +15,9 @@ A handler that falls through hands the request to the next matching mock,
 `FullMock` carrying a marker header.
 
 `MockAction` is now `#[non_exhaustive]`, so a host needs an arm for `NetworkError`
-and a wildcard arm; forwarding the request there is the safe answer to an action it
-does not know, and later actions will not break it again.
+and a wildcard arm, and later actions will not break its build again. Fail the
+request in the wildcard arm rather than forwarding it: a mock matched, so forwarding
+sends a request meant to stay local (a simulated outage, say) to the real upstream.
 `ferrimock::services::serve::network_error_response(mock_id)` builds the response
 that tears the connection down, which is what the server and the proxy send.
 
