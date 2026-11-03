@@ -478,10 +478,6 @@ pub async fn respond(
         response
     }
 
-    fn marker_set(headers: Option<&rustc_hash::FxHashMap<String, String>>, name: &str) -> bool {
-        headers.is_some_and(|h| h.get(name).is_some_and(|v| v == "1"))
-    }
-
     // Fall-through loop: a handler returning undefined excludes its mock
     // and re-matches, so the next candidate (or the 404) gets the request
     // (MSW semantics). Bounded by the number of registered mocks.
@@ -563,17 +559,17 @@ pub async fn respond(
 
         return match dynamic {
             Ok(resp) => {
-                if marker_set(resp.headers.as_ref(), crate::types::FALLTHROUGH_HEADER) {
+                if resp.is_fallthrough() {
                     if mock_def.once {
                         matcher.reenable_mock(mock_def.id.as_str());
                     }
                     exclude.push(mock_def.id.to_string());
                     continue;
                 }
-                if marker_set(resp.headers.as_ref(), crate::types::PASSTHROUGH_HEADER) {
+                if resp.is_passthrough() {
                     return unmatched(matcher, method, path, query, headers, body, true);
                 }
-                if marker_set(resp.headers.as_ref(), crate::types::NETWORK_ERROR_HEADER) {
+                if resp.is_network_error() {
                     return network_error_response(mock_def.id.as_str());
                 }
                 let status = resp.status.unwrap_or(mock_def.response.status);
@@ -581,21 +577,7 @@ pub async fn respond(
                 for (key, value) in &mock_def.response.headers {
                     response = response.header(key.as_str(), value.as_str());
                 }
-                if let Some(dyn_headers) = &resp.headers {
-                    for (key, value) in dyn_headers {
-                        // Multiple Set-Cookie values arrive newline-joined
-                        // (single-valued header maps upstream); emit each
-                        // as its own header.
-                        if key.eq_ignore_ascii_case("set-cookie") && value.contains('\n') {
-                            for cookie in value.split('\n').filter(|c| !c.is_empty()) {
-                                response = response.header(key.as_str(), cookie);
-                            }
-                        } else {
-                            response = response.header(key.as_str(), value.as_str());
-                        }
-                    }
-                }
-                response
+                resp.append_headers(response)
                     .header("X-Mock-Id", mock_def.id.as_str())
                     .body(Body::from(resp.body))
                     .unwrap_or_else(|_| {

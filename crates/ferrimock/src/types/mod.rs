@@ -1139,6 +1139,41 @@ impl DynamicResponse {
             .is_some_and(|h| h.get(marker).is_some_and(|v| v == "1"))
     }
 
+    /// Append these headers to `builder`, after the mock definition's own.
+    ///
+    /// Several Set-Cookie values arrive newline-joined, since the map holds one
+    /// value per name, and each goes out as its own header. A name or value that
+    /// is not a valid header is dropped with a warning rather than failing the
+    /// whole response.
+    pub fn append_headers(&self, mut builder: http::response::Builder) -> http::response::Builder {
+        let Some(headers) = &self.headers else {
+            return builder;
+        };
+        for (key, value) in headers {
+            let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
+                tracing::warn!(header = %key, "dropping a response header with an invalid name");
+                continue;
+            };
+            let values: SmallVec<[&str; 2]> = if name == http::header::SET_COOKIE {
+                value
+                    .split('\n')
+                    .filter(|cookie| !cookie.is_empty())
+                    .collect()
+            } else {
+                smallvec::smallvec![value.as_str()]
+            };
+            for value in values {
+                match HeaderValue::from_str(value) {
+                    Ok(value) => builder = builder.header(name.clone(), value),
+                    Err(_) => {
+                        tracing::warn!(header = %key, "dropping a response header with an invalid value");
+                    }
+                }
+            }
+        }
+        builder
+    }
+
     /// Parse a JSON value into a DynamicResponse
     ///
     /// This is the unified parsing logic used by both templates and scripts.

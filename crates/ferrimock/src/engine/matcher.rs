@@ -26,8 +26,9 @@ pub struct MockMatch {
 
 /// Action to take after mock matching
 ///
-/// Non-exhaustive: a host matches the actions it knows and forwards the request
-/// on any other, so a new action is not a breaking change.
+/// Non-exhaustive, so a new action does not break a host's build. It still
+/// reaches the host's wildcard arm, and a mock claimed the request: fail it there
+/// rather than forwarding it to an upstream the mock was standing in for.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum MockAction {
@@ -65,8 +66,13 @@ pub enum MockAction {
     },
 }
 
-/// Why a matched mock did not answer a request.
-enum Unanswered {
+/// What one matched mock did with a request.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "returned once and matched at once; boxing the common answer costs an allocation per request"
+)]
+enum Resolution {
+    Answer(MockAction),
     /// The handler returned nothing: the next matching mock gets the request.
     FallThrough,
     /// The handler called `passthrough()`: no mock answers.
@@ -908,9 +914,9 @@ impl MockMatcher {
                 .resolve_match(mock_match, method, path, query, headers, body)
                 .await?
             {
-                Ok(action) => return Some(action),
-                Err(Unanswered::Passthrough) => return None,
-                Err(Unanswered::FallThrough) => {
+                Resolution::Answer(action) => return Some(action),
+                Resolution::Passthrough => return None,
+                Resolution::FallThrough => {
                     if mock.once {
                         self.reenable_mock(mock.id.as_str());
                     }
@@ -929,7 +935,7 @@ impl MockMatcher {
         query: Option<&str>,
         headers: &HeaderMap,
         body: Option<&[u8]>,
-    ) -> Option<Result<MockAction, Unanswered>> {
+    ) -> Option<Resolution> {
         use bytes::Bytes;
         use http::Response;
         use http::header::HeaderValue;
@@ -967,7 +973,7 @@ impl MockMatcher {
             // post_delay comes from response.delay in PatchUpstream mode
             let post_delay = mock_def.response.delay;
 
-            return Some(Ok(MockAction::PatchUpstream {
+            return Some(Resolution::Answer(MockAction::PatchUpstream {
                 response_patches,
                 request_patches,
                 pre_delay,
@@ -1039,18 +1045,18 @@ impl MockMatcher {
                     }
                 };
 
-                return Some(Ok(MockAction::FullMock(error_response)));
+                return Some(Resolution::Answer(MockAction::FullMock(error_response)));
             }
         };
 
         if dynamic_response.is_fallthrough() {
-            return Some(Err(Unanswered::FallThrough));
+            return Some(Resolution::FallThrough);
         }
         if dynamic_response.is_passthrough() {
-            return Some(Err(Unanswered::Passthrough));
+            return Some(Resolution::Passthrough);
         }
         if dynamic_response.is_network_error() {
-            return Some(Ok(MockAction::NetworkError {
+            return Some(Resolution::Answer(MockAction::NetworkError {
                 mock_id: mock_def.id.clone(),
             }));
         }
@@ -1068,32 +1074,13 @@ impl MockMatcher {
             }
         }
 
-        // Then add/override with dynamic headers from script/template
-        if let Some(dynamic_headers) = &dynamic_response.headers {
-            for (key, value) in dynamic_headers {
-                // Multiple Set-Cookie values arrive newline-joined (the map holds
-                // one value per name); each goes out as its own header.
-                let values: Vec<&str> = if key.eq_ignore_ascii_case("set-cookie") {
-                    value
-                        .split('\n')
-                        .filter(|cookie| !cookie.is_empty())
-                        .collect()
-                } else {
-                    vec![value.as_str()]
-                };
-                for value in values {
-                    if let Ok(header_value) = HeaderValue::from_str(value) {
-                        response = response.header(key.as_str(), header_value);
-                    }
-                }
-            }
-        }
+        response = dynamic_response.append_headers(response);
 
         // Always add X-Mock-Id header so the proxy can log it if needed
         response = response.header("X-Mock-Id", mock_def.id.as_str());
 
         let final_response = response.body(dynamic_response.body).ok()?;
-        Some(Ok(MockAction::FullMock(final_response)))
+        Some(Resolution::Answer(MockAction::FullMock(final_response)))
     }
 
     /// Apply patches to an upstream response

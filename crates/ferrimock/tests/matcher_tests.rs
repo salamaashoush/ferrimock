@@ -1366,6 +1366,27 @@ async fn test_try_match_splits_newline_joined_set_cookie() {
     }
 }
 
+/// A header that cannot go on the wire is dropped; the rest of the answer survives.
+#[tokio::test]
+async fn test_try_match_drops_an_invalid_header_and_keeps_the_response() {
+    let registry = MockRegistry::new();
+    registry.add_mock(template_mock(
+        "bad-header",
+        100,
+        r#"{"status": 201, "headers": {"x-bad": "a\u0001b", "bad name": "v", "x-good": "yes"}, "body": ""}"#,
+    ));
+
+    match act(registry).await {
+        Some(MockAction::FullMock(response)) => {
+            assert_eq!(response.status(), 201);
+            assert_eq!(response.headers().get("x-good").unwrap(), "yes");
+            assert!(response.headers().get("x-bad").is_none());
+            assert_eq!(response.headers().len(), 2, "x-good and X-Mock-Id only");
+        }
+        other => panic!("Expected FullMock, got {other:?}"),
+    }
+}
+
 /// Test async try_match_parts with disabled registry
 #[tokio::test]
 async fn test_try_match_disabled_registry() {
