@@ -1220,7 +1220,9 @@ async fn test_try_match_patch_mode() {
             assert_eq!(mock_id, "test");
             assert_eq!(response_patches.len(), 0);
         }
-        MockAction::FullMock(_) => panic!("Expected PatchUpstream action"),
+        MockAction::FullMock(_) | MockAction::NetworkError { .. } => {
+            panic!("Expected PatchUpstream action")
+        }
     }
 }
 
@@ -1257,7 +1259,110 @@ async fn test_try_match_template_structured_response() {
             assert_eq!(response.headers().get("X-Custom").unwrap(), "value");
             assert!(response.headers().get("X-Mock-Id").is_some());
         }
-        MockAction::PatchUpstream { .. } => panic!("Expected FullMock action"),
+        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
+            panic!("Expected FullMock action")
+        }
+    }
+}
+
+fn template_mock(id: &str, priority: u32, template: &str) -> MockDefinition {
+    let mut mock = create_test_mock(
+        id,
+        priority,
+        smallvec![Method::GET],
+        smallvec![UrlPattern::exact("/test")],
+        smallvec![],
+        smallvec![],
+        None,
+    );
+    mock.response.set_body(BodySource::template(template));
+    mock
+}
+
+async fn act(registry: MockRegistry) -> Option<MockAction> {
+    MockMatcher::new(registry)
+        .try_match_parts(&Method::GET, "/test", None, &HeaderMap::new(), None)
+        .await
+}
+
+/// An embedder is told to drop the connection, as the standalone server does.
+#[tokio::test]
+async fn test_try_match_network_error_marker_drops_the_connection() {
+    let registry = MockRegistry::new();
+    registry.add_mock(template_mock(
+        "down",
+        100,
+        r#"{"headers": {"x-ferrimock-network-error": "1"}, "body": ""}"#,
+    ));
+
+    match act(registry).await {
+        Some(MockAction::NetworkError { mock_id }) => assert_eq!(mock_id, "down"),
+        other => panic!("Expected NetworkError, got {other:?}"),
+    }
+}
+
+/// A handler that falls through hands the request to the next matching mock.
+#[tokio::test]
+async fn test_try_match_fall_through_reaches_the_next_mock() {
+    let registry = MockRegistry::new();
+    registry.add_mock(template_mock(
+        "first",
+        200,
+        r#"{"headers": {"x-ferrimock-fallthrough": "1"}, "body": ""}"#,
+    ));
+    registry.add_mock(template_mock(
+        "second",
+        100,
+        r#"{"status": 200, "body": {"from": "second"}}"#,
+    ));
+
+    match act(registry).await {
+        Some(MockAction::FullMock(response)) => {
+            assert_eq!(response.headers().get("X-Mock-Id").unwrap(), "second");
+        }
+        other => panic!("Expected the second mock's answer, got {other:?}"),
+    }
+}
+
+/// `passthrough()` leaves the request unmatched, even with another mock behind it.
+#[tokio::test]
+async fn test_try_match_passthrough_leaves_the_request_unmatched() {
+    let registry = MockRegistry::new();
+    registry.add_mock(template_mock(
+        "first",
+        200,
+        r#"{"headers": {"x-ferrimock-passthrough": "1"}, "body": ""}"#,
+    ));
+    registry.add_mock(template_mock(
+        "second",
+        100,
+        r#"{"status": 200, "body": {"from": "second"}}"#,
+    ));
+
+    assert!(act(registry).await.is_none());
+}
+
+/// Newline-joined Set-Cookie values go out as one header each.
+#[tokio::test]
+async fn test_try_match_splits_newline_joined_set_cookie() {
+    let registry = MockRegistry::new();
+    registry.add_mock(template_mock(
+        "cookies",
+        100,
+        r#"{"headers": {"set-cookie": "a=1\nb=2"}, "body": ""}"#,
+    ));
+
+    match act(registry).await {
+        Some(MockAction::FullMock(response)) => {
+            let cookies: Vec<_> = response
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .map(|value| value.to_str().unwrap())
+                .collect();
+            assert_eq!(cookies, ["a=1", "b=2"]);
+        }
+        other => panic!("Expected FullMock, got {other:?}"),
     }
 }
 
@@ -1337,7 +1442,9 @@ async fn test_try_match_with_post_body() {
                 "Should have mock ID header"
             );
         }
-        MockAction::PatchUpstream { .. } => panic!("Expected FullMock action"),
+        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
+            panic!("Expected FullMock action")
+        }
     }
 }
 
@@ -1398,7 +1505,9 @@ async fn test_try_match_template_error() {
             assert_eq!(response.headers().get("X-Mock-Error").unwrap(), "true");
             assert_eq!(response.headers().get("X-Mock-Id").unwrap(), "test");
         }
-        MockAction::PatchUpstream { .. } => panic!("Expected FullMock error response"),
+        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
+            panic!("Expected FullMock error response")
+        }
     }
 }
 
@@ -1436,7 +1545,9 @@ async fn test_try_match_static_response() {
             assert_eq!(response.headers().get("X-Custom").unwrap(), "static-value");
             assert_eq!(response.headers().get("X-Mock-Id").unwrap(), "test");
         }
-        MockAction::PatchUpstream { .. } => panic!("Expected FullMock action"),
+        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => {
+            panic!("Expected FullMock action")
+        }
     }
 }
 

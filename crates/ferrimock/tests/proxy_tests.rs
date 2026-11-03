@@ -375,6 +375,39 @@ mocks:
 }
 
 #[tokio::test]
+async fn a_network_error_mock_drops_the_connection() {
+    let upstream = upstream::start().await;
+    let registry = registry_from(
+        r"
+mocks:
+  - id: offline
+    match:
+      GET: /api/users
+    network_error: true
+",
+    )
+    .await;
+
+    let proxy = proxy_with(
+        &[&format!("/={}", upstream.url())],
+        Some(MockMatcher::new(registry)),
+    )
+    .await;
+
+    let outcome = match client()
+        .get(format!("{}/api/users", proxy.url()))
+        .send()
+        .await
+    {
+        Ok(response) => response.bytes().await.map(|_| ()),
+        Err(error) => Err(error),
+    };
+
+    assert!(outcome.is_err(), "the transfer must fail, not answer");
+    assert_eq!(upstream.hit_count(), 0);
+}
+
+#[tokio::test]
 async fn a_patch_mock_rewrites_what_the_upstream_said() {
     let upstream = upstream::start().await;
     let registry = registry_from(

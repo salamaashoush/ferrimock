@@ -4,6 +4,20 @@ Behaviour that changed between releases, and what to do about it. The
 [CHANGELOG](CHANGELOG.md) lists every commit; this lists only the ones that can
 break a working setup.
 
+## 0.10.0 to 0.11.0
+
+`MockMatcher::try_match_parts`, the entry point for a host that forwards unmatched
+requests itself, now treats a handler's markers the way the standalone server does.
+A handler that falls through hands the request to the next matching mock,
+`passthrough()` returns `None` so the host forwards the request, and
+`network_error: true` (or `HttpResponse.error()`) returns the new
+`MockAction::NetworkError { mock_id }`. Before, all three came back as an ordinary
+`FullMock` carrying a marker header.
+
+A host that matches `MockAction` exhaustively needs an arm for `NetworkError`.
+`ferrimock::services::serve::network_error_response(mock_id)` builds the response
+that tears the connection down, which is what the server and the proxy send.
+
 ## 0.3.0 to 0.4.0
 
 Six breaking changes, all of them in the state machines and the world doctor.

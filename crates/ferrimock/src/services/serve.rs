@@ -378,6 +378,32 @@ async fn buffered_respond(
     .await
 }
 
+/// A response that fails the request at the transport, for
+/// [`MockAction::NetworkError`](crate::engine::MockAction::NetworkError).
+///
+/// Headers are committed and the body stream then errors, so the connection is
+/// torn down mid-response: fetch surfaces a `TypeError`, curl an aborted transfer.
+pub fn network_error_response(mock_id: &str) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let aborted = futures::stream::once(async {
+        Err::<bytes::Bytes, std::io::Error>(std::io::Error::other(
+            "ferrimock simulated network error",
+        ))
+    });
+    http::Response::builder()
+        .status(http::StatusCode::OK)
+        .header("X-Mock-Id", mock_id)
+        .body(axum::body::Body::from_stream(aborted))
+        .unwrap_or_else(|_| {
+            (
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Response build error",
+            )
+                .into_response()
+        })
+}
+
 /// Canonical mock-response builder shared by every mock server.
 ///
 /// Used by this service, the NAPI `FerrimockServer.listen()` path, and the CLI:
@@ -548,26 +574,7 @@ pub async fn respond(
                     return unmatched(matcher, method, path, query, headers, body, true);
                 }
                 if marker_set(resp.headers.as_ref(), crate::types::NETWORK_ERROR_HEADER) {
-                    // Simulate a network failure: commit headers, then error
-                    // the body stream so the connection is torn down
-                    // mid-response (fetch surfaces a TypeError, curl an
-                    // aborted transfer).
-                    let aborted = futures::stream::once(async {
-                        Err::<bytes::Bytes, std::io::Error>(std::io::Error::other(
-                            "ferrimock simulated network error",
-                        ))
-                    });
-                    return http::Response::builder()
-                        .status(http::StatusCode::OK)
-                        .header("X-Mock-Id", mock_def.id.as_str())
-                        .body(Body::from_stream(aborted))
-                        .unwrap_or_else(|_| {
-                            (
-                                http::StatusCode::INTERNAL_SERVER_ERROR,
-                                "Response build error",
-                            )
-                                .into_response()
-                        });
+                    return network_error_response(mock_def.id.as_str());
                 }
                 let status = resp.status.unwrap_or(mock_def.response.status);
                 let mut response = http::Response::builder().status(status);

@@ -52,6 +52,21 @@ pub enum MockAction {
         /// Mock-level variables (for template rendering in patches)
         vars: Option<serde_json::Map<String, serde_json::Value>>,
     },
+    /// Fail the request at the transport, as `network_error: true` and
+    /// `HttpResponse.error()` ask: the embedder tears the connection down
+    /// instead of answering (see [`crate::services::serve::network_error_response`]).
+    NetworkError {
+        /// Mock ID for tracking
+        mock_id: LeanString,
+    },
+}
+
+/// Why a matched mock did not answer a request.
+enum Unanswered {
+    /// The handler returned nothing: the next matching mock gets the request.
+    FallThrough,
+    /// The handler called `passthrough()`: no mock answers.
+    Passthrough,
 }
 
 /// Whether an exact pattern that carries a query string matches this request
@@ -858,6 +873,12 @@ impl MockMatcher {
     /// Returns None if no mock matches, or Some(MockAction) indicating what to do:
     /// - FullMock: Complete response ready to return (no upstream call needed)
     /// - PatchUpstream: Instructions to fetch from upstream and apply patches
+    /// - NetworkError: Fail the request at the transport
+    ///
+    /// A handler's markers mean here what they mean to the standalone server
+    /// ([`crate::services::serve::respond`]): one that falls through hands the
+    /// request to the next matching mock, and `passthrough()` leaves it unmatched,
+    /// so the embedder forwards it.
     ///
     /// Automatically adds X-Mock-Id header
     pub async fn try_match_parts(
@@ -868,17 +889,46 @@ impl MockMatcher {
         headers: &HeaderMap,
         body: Option<&[u8]>,
     ) -> Option<MockAction> {
-        use bytes::Bytes;
-        use http::Response;
-        use http::header::HeaderValue;
-
         // Return None if the mock system is disabled
         if !self.registry.is_enabled() {
             return None;
         }
 
-        // Find a matching mock using the existing find_match logic
-        let mock_match = self.find_match(method, path, query, headers, body)?;
+        // Bounded by the number of registered mocks: each pass excludes one.
+        let mut exclude: Vec<String> = Vec::new();
+        loop {
+            let mock_match =
+                self.find_match_excluding(method, path, query, headers, body, &exclude)?;
+            let mock = Arc::clone(&mock_match.mock);
+            match self
+                .resolve_match(mock_match, method, path, query, headers, body)
+                .await?
+            {
+                Ok(action) => return Some(action),
+                Err(Unanswered::Passthrough) => return None,
+                Err(Unanswered::FallThrough) => {
+                    if mock.once {
+                        self.reenable_mock(mock.id.as_str());
+                    }
+                    exclude.push(mock.id.to_string());
+                }
+            }
+        }
+    }
+
+    /// What one matched mock does with the request.
+    async fn resolve_match(
+        &self,
+        mock_match: MockMatch,
+        method: &Method,
+        path: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+    ) -> Option<Result<MockAction, Unanswered>> {
+        use bytes::Bytes;
+        use http::Response;
+        use http::header::HeaderValue;
 
         let mock_def = &mock_match.mock;
         let captures = mock_match.captures;
@@ -913,7 +963,7 @@ impl MockMatcher {
             // post_delay comes from response.delay in PatchUpstream mode
             let post_delay = mock_def.response.delay;
 
-            return Some(MockAction::PatchUpstream {
+            return Some(Ok(MockAction::PatchUpstream {
                 response_patches,
                 request_patches,
                 pre_delay,
@@ -924,7 +974,7 @@ impl MockMatcher {
                 mock_id: mock_def.id.clone(),
                 captures,
                 vars: mock_def.vars.clone(),
-            });
+            }));
         }
 
         // For non-patch mocks, generate a full response
@@ -985,9 +1035,21 @@ impl MockMatcher {
                     }
                 };
 
-                return Some(MockAction::FullMock(error_response));
+                return Some(Ok(MockAction::FullMock(error_response)));
             }
         };
+
+        if dynamic_response.is_fallthrough() {
+            return Some(Err(Unanswered::FallThrough));
+        }
+        if dynamic_response.is_passthrough() {
+            return Some(Err(Unanswered::Passthrough));
+        }
+        if dynamic_response.is_network_error() {
+            return Some(Ok(MockAction::NetworkError {
+                mock_id: mock_def.id.clone(),
+            }));
+        }
 
         // Use dynamic status if provided, otherwise use mock definition's status
         let final_status = dynamic_response.status.unwrap_or(response_generator.status);
@@ -1005,8 +1067,20 @@ impl MockMatcher {
         // Then add/override with dynamic headers from script/template
         if let Some(dynamic_headers) = &dynamic_response.headers {
             for (key, value) in dynamic_headers {
-                if let Ok(header_value) = HeaderValue::from_str(value) {
-                    response = response.header(key.as_str(), header_value);
+                // Multiple Set-Cookie values arrive newline-joined (the map holds
+                // one value per name); each goes out as its own header.
+                let values: Vec<&str> = if key.eq_ignore_ascii_case("set-cookie") {
+                    value
+                        .split('\n')
+                        .filter(|cookie| !cookie.is_empty())
+                        .collect()
+                } else {
+                    vec![value.as_str()]
+                };
+                for value in values {
+                    if let Ok(header_value) = HeaderValue::from_str(value) {
+                        response = response.header(key.as_str(), header_value);
+                    }
                 }
             }
         }
@@ -1015,7 +1089,7 @@ impl MockMatcher {
         response = response.header("X-Mock-Id", mock_def.id.as_str());
 
         let final_response = response.body(dynamic_response.body).ok()?;
-        Some(MockAction::FullMock(final_response))
+        Some(Ok(MockAction::FullMock(final_response)))
     }
 
     /// Apply patches to an upstream response

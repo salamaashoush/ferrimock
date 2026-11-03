@@ -533,10 +533,10 @@ async fn replay_one(matcher: &MockMatcher, request: &RecordedRequest) -> Option<
                 render_failed,
             })
         }
-        // A recorded collection never produces passthrough mocks; if one shows
-        // up the replay cannot be compared to a recording, so report it as a
-        // miss rather than inventing a verdict.
-        MockAction::PatchUpstream { .. } => None,
+        // A recorded collection never produces passthrough or network-error
+        // mocks; if one shows up the replay cannot be compared to a recording,
+        // so report it as a miss rather than inventing a verdict.
+        MockAction::PatchUpstream { .. } | MockAction::NetworkError { .. } => None,
     }
 }
 

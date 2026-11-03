@@ -1120,9 +1120,23 @@ impl DynamicResponse {
 
     /// Whether this response carries the fall-through marker.
     pub fn is_fallthrough(&self) -> bool {
+        self.marks(FALLTHROUGH_HEADER)
+    }
+
+    /// Whether this response carries the passthrough marker.
+    pub fn is_passthrough(&self) -> bool {
+        self.marks(PASSTHROUGH_HEADER)
+    }
+
+    /// Whether this response carries the network-error marker.
+    pub fn is_network_error(&self) -> bool {
+        self.marks(NETWORK_ERROR_HEADER)
+    }
+
+    fn marks(&self, marker: &str) -> bool {
         self.headers
             .as_ref()
-            .is_some_and(|h| h.get(FALLTHROUGH_HEADER).is_some_and(|v| v == "1"))
+            .is_some_and(|h| h.get(marker).is_some_and(|v| v == "1"))
     }
 
     /// Parse a JSON value into a DynamicResponse
