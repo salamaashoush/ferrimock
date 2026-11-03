@@ -767,9 +767,9 @@ See `mocks/examples/` for complete examples.
 
 ## Faults
 
-`delay` slows a response down; `network_error` drops the connection instead of answering. Headers commit, then the
-body stream errors, so the caller sees a transport failure — `fetch` raises `TypeError`, curl reports an aborted
-transfer.
+`delay` slows a response down; `network_error` drops the connection instead of answering. The connection closes before
+a status line is written, so the caller sees a transport failure, as against a port nothing listens on: `fetch` raises
+`TypeError`, curl reports an empty reply.
 
 ```yaml
 - id: boom

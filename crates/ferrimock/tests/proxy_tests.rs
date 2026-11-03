@@ -405,6 +405,27 @@ mocks:
 
     assert!(outcome.is_err(), "the transfer must fail, not answer");
     assert_eq!(upstream.hit_count(), 0);
+
+    // Not even a status line: a client that checks `ok` before reading the body
+    // must fail as it would against a port nothing listens on.
+    let address = proxy.url().trim_start_matches("http://").to_string();
+    let mut socket = tokio::net::TcpStream::connect(&address)
+        .await
+        .expect("connect");
+    tokio::io::AsyncWriteExt::write_all(
+        &mut socket,
+        format!("GET /api/users HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .expect("send");
+    let mut answer = Vec::new();
+    let _ = tokio::io::AsyncReadExt::read_to_end(&mut socket, &mut answer).await;
+    assert!(
+        answer.is_empty(),
+        "nothing is written: {:?}",
+        String::from_utf8_lossy(&answer)
+    );
 }
 
 #[tokio::test]

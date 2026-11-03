@@ -867,9 +867,9 @@ pub struct MockConfig {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub once: bool,
 
-    /// Simulate a dropped connection instead of answering: headers commit,
-    /// then the body stream errors, so the caller sees a transport failure
-    /// (`fetch` raises `TypeError`, curl reports an aborted transfer).
+    /// Simulate a dropped connection instead of answering: the connection
+    /// closes before a status line is written, so the caller sees a transport
+    /// failure (`fetch` raises `TypeError`, curl reports an empty reply).
     /// Combines with `delay` to fail slowly. Exclusive with `response`,
     /// `patch`, `sse` and `ws`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -381,8 +381,9 @@ async fn buffered_respond(
 /// A response that fails the request at the transport, for
 /// [`MockAction::NetworkError`](crate::engine::MockAction::NetworkError).
 ///
-/// Headers are committed and the body stream then errors, so the connection is
-/// torn down mid-response: fetch surfaces a `TypeError`, curl an aborted transfer.
+/// The body errors on its first read, before hyper has written the head, so the
+/// connection closes with no response at all: fetch raises a `TypeError`, curl
+/// reports an empty reply, the same as a port nothing listens on.
 pub fn network_error_response(mock_id: &str) -> axum::response::Response {
     use axum::response::IntoResponse;
 
