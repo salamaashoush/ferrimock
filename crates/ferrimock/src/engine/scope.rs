@@ -4,8 +4,8 @@
 //! This is essential for test isolation - each test can create a scope,
 //! add mocks to it, and automatically clean up when done.
 
-use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use jiff::{SignedDuration, Timestamp};
 use lean_string::LeanString;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -17,9 +17,11 @@ pub struct ScopeInfo {
     /// Unique scope identifier
     pub id: LeanString,
     /// When the scope was created
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::rfc3339::serialize")]
+    pub created_at: Timestamp,
     /// When the scope will expire (if TTL is set)
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::rfc3339::serialize")]
+    pub expires_at: Option<Timestamp>,
     /// Number of mocks in this scope
     pub mock_count: usize,
 }
@@ -28,8 +30,8 @@ pub struct ScopeInfo {
 #[derive(Debug, Clone)]
 struct ScopeData {
     id: LeanString,
-    created_at: DateTime<Utc>,
-    expires_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    expires_at: Option<Timestamp>,
 }
 
 /// Manager for scope lifecycle and TTL cleanup
@@ -54,11 +56,11 @@ impl ScopeManager {
             return Err(crate::mp_err!("Scope '{id}' already exists"));
         }
 
-        let created_at = Utc::now();
+        let created_at = Timestamp::now();
         let expires_at = ttl.and_then(|duration| {
-            chrono::Duration::from_std(duration)
+            SignedDuration::try_from(duration)
                 .ok()
-                .map(|chrono_dur| created_at + chrono_dur)
+                .and_then(|duration| created_at.checked_add(duration).ok())
         });
 
         let scope_data = ScopeData {
@@ -115,7 +117,7 @@ impl ScopeManager {
     /// Clean up expired scopes
     /// Returns list of expired scope IDs that should have their mocks deleted
     pub fn cleanup_expired(&self) -> Vec<LeanString> {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let mut expired = Vec::new();
 
         // Find expired scopes
@@ -169,6 +171,30 @@ mod tests {
     }
 
     #[test]
+    fn a_scope_serializes_its_times_as_rfc3339_in_utc() -> serde_json::Result<()> {
+        let info = ScopeInfo {
+            id: "acme".into(),
+            created_at: Timestamp::constant(1_710_651_600, 120_000_000),
+            expires_at: Some(Timestamp::constant(1_710_655_200, 0)),
+            mock_count: 2,
+        };
+        assert_eq!(
+            serde_json::to_string(&info)?,
+            r#"{"id":"acme","created_at":"2024-03-17T05:00:00.120Z","expires_at":"2024-03-17T06:00:00Z","mock_count":2}"#
+        );
+
+        let open_ended = ScopeInfo {
+            expires_at: None,
+            ..info
+        };
+        assert_eq!(
+            serde_json::to_string(&open_ended)?,
+            r#"{"id":"acme","created_at":"2024-03-17T05:00:00.120Z","expires_at":null,"mock_count":2}"#
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_create_scope_with_ttl() {
         let manager = ScopeManager::new();
 
@@ -180,11 +206,14 @@ mod tests {
         assert_eq!(info.id, "test-scope");
         assert!(info.expires_at.is_some());
 
-        let expected_expiry = info.created_at + chrono::Duration::seconds(3600);
+        let expected_expiry = info.created_at + SignedDuration::from_secs(3600);
         let actual_expiry = info.expires_at.unwrap();
 
         // Allow 1 second difference for test execution time
-        let diff = (expected_expiry - actual_expiry).num_seconds().abs();
+        let diff = expected_expiry
+            .duration_since(actual_expiry)
+            .as_secs()
+            .abs();
         assert!(diff <= 1);
     }
 

@@ -146,7 +146,7 @@ fn bench_diagnostics(c: &mut Criterion) {
         });
     });
 
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let unmatched: Vec<UnmatchedRequest> = (0..50)
         .map(|i| UnmatchedRequest {
             method: "GET".to_string(),

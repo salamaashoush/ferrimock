@@ -39,7 +39,7 @@ serde_yaml_ng = { workspace = true }
 
 # Other
 base64 = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 har = { workspace = true }
 lean_string = { workspace = true }
 toml = "1.1"

@@ -40,7 +40,7 @@ fn recorded(bodies: &[JsonValue]) -> Vec<RecordedInteraction> {
         .enumerate()
         .map(|(at, body)| RecordedInteraction {
             id: at.to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             request: RecordedRequest {
                 method: "GET".to_string(),
                 uri: "/orders".to_string(),

@@ -1501,7 +1501,9 @@ fn info_dictionary(meta: &Meta) -> lopdf::Dictionary {
     let mut info = dictionary! {
       "Producer" => Object::string_literal(win_ansi("ferrimock")),
       "CreationDate" => Object::string_literal(win_ansi(
-        &chrono::Utc::now().format("D:%Y%m%d%H%M%SZ").to_string(),
+        &jiff::Timestamp::now()
+          .strftime("D:%Y%m%d%H%M%SZ")
+          .to_string(),
       )),
     };
     let mut set = |key: &str, value: &Option<String>| {

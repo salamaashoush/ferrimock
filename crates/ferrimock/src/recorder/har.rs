@@ -71,7 +71,7 @@ pub fn to_har_entry(interaction: &RecordedInteraction) -> v1_2::Entries {
 
     v1_2::Entries {
         pageref: None,
-        started_date_time: interaction.timestamp.to_rfc3339(),
+        started_date_time: crate::rfc3339::with_utc_offset(interaction.timestamp),
         time: interaction.duration.as_secs_f64() * 1000.0,
         request: v1_2::Request {
             method: interaction.request.method.clone(),
@@ -158,8 +158,10 @@ pub fn from_har_entry(index: usize, entry: &v1_2::Entries) -> RecordedInteractio
         .map(|header| (header.name.clone(), header.value.clone()))
         .collect();
 
-    let timestamp = chrono::DateTime::parse_from_rfc3339(&entry.started_date_time)
-        .map_or_else(|_| chrono::Utc::now(), |ts| ts.with_timezone(&chrono::Utc));
+    let timestamp = entry
+        .started_date_time
+        .parse::<jiff::Timestamp>()
+        .unwrap_or_else(|_| jiff::Timestamp::now());
 
     let duration = if entry.time.is_finite() && entry.time > 0.0 {
         std::time::Duration::from_secs_f64(entry.time / 1000.0)
@@ -215,4 +217,65 @@ fn status_code_to_text(code: u16) -> String {
         _ => "Unknown",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(started_date_time: &str) -> serde_json::Result<v1_2::Entries> {
+        serde_json::from_value(serde_json::json!({
+            "startedDateTime": started_date_time,
+            "time": 12.0,
+            "request": {
+                "method": "GET",
+                "url": "https://api.example.com/v1/items",
+                "httpVersion": "HTTP/1.1",
+                "cookies": [],
+                "headers": [],
+                "queryString": [],
+                "headersSize": -1,
+                "bodySize": 0
+            },
+            "response": {
+                "status": 200,
+                "statusText": "OK",
+                "httpVersion": "HTTP/1.1",
+                "cookies": [],
+                "headers": [],
+                "content": { "size": 2, "mimeType": "application/json", "text": "{}" },
+                "redirectURL": "",
+                "headersSize": -1,
+                "bodySize": 2
+            },
+            "cache": {},
+            "timings": { "send": 0.0, "wait": 12.0, "receive": 0.0 }
+        }))
+    }
+
+    #[test]
+    fn a_started_date_time_survives_a_round_trip_unchanged() -> serde_json::Result<()> {
+        for written in [
+            "2024-03-17T05:00:00+00:00",
+            "2024-03-17T05:00:00.120+00:00",
+            "2024-03-17T05:00:00.123456+00:00",
+            "2024-03-17T05:00:00.123456789+00:00",
+        ] {
+            let interaction = from_har_entry(0, &entry(written)?);
+            assert_eq!(to_har_entry(&interaction).started_date_time, written);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_started_date_time_in_another_zone_is_written_back_in_utc() -> serde_json::Result<()> {
+        for written in ["2024-03-17T05:00:00Z", "2024-03-17T10:30:00+05:30"] {
+            let interaction = from_har_entry(0, &entry(written)?);
+            assert_eq!(
+                to_har_entry(&interaction).started_date_time,
+                "2024-03-17T05:00:00+00:00"
+            );
+        }
+        Ok(())
+    }
 }

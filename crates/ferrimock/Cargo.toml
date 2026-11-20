@@ -117,7 +117,7 @@ tracing = { workspace = true }
 
 # Utilities
 bytes = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 dashmap = { workspace = true }
 flate2 = { workspace = true }
 globset = { workspace = true }

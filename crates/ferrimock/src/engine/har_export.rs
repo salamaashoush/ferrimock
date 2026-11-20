@@ -99,7 +99,7 @@ fn mock_to_har_entry(mock: &MockDefinition, _index: usize) -> v1_2::Entries {
 
     v1_2::Entries {
         pageref: None,
-        started_date_time: chrono::Utc::now().to_rfc3339(),
+        started_date_time: crate::rfc3339::with_utc_offset(jiff::Timestamp::now()),
         time: delay_ms,
         request: v1_2::Request {
             method,

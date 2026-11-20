@@ -11,7 +11,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
 use ferrimock::config::{MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig};
 use ferrimock::consolidator::{
     ConsolidatorOptions, FidelityOptions, FidelityReport, MockConsolidator,
@@ -224,7 +223,7 @@ impl Traffic {
                 let handler = self.handlers.get(*handler)?;
                 Some(RecordedInteraction {
                     id: format!("i{index}"),
-                    timestamp: Utc::now(),
+                    timestamp: jiff::Timestamp::now(),
                     request: RecordedRequest {
                         method: handler.method().to_string(),
                         uri: handler.uri(*instance),

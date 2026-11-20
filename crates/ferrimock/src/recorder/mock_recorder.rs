@@ -12,7 +12,6 @@ pub use formats::RecordingFormat;
 
 use crate::Result;
 use bytes::Bytes;
-use chrono::Utc;
 use dashmap::DashMap;
 use flate2::read::GzDecoder;
 use http::{HeaderMap, Method, StatusCode};
@@ -369,7 +368,7 @@ impl MockRecorder {
 
         let interaction = RecordedInteraction {
             id: interaction_id.clone(),
-            timestamp: Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             request: super::types::RecordedRequest {
                 method: method.to_string(),
                 uri: uri.to_string(),
@@ -1001,7 +1000,7 @@ impl MockRecorder {
             description: Some(format!(
                 "Auto-generated from recording session {} at {}",
                 self.session_id,
-                Utc::now().to_rfc3339()
+                crate::rfc3339::with_utc_offset(jiff::Timestamp::now())
             )),
             enabled: true,
             vars: None,

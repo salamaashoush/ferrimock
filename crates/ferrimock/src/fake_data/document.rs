@@ -540,23 +540,23 @@ fn digits(count: usize) -> String {
 /// A calendar date within the last two years, without the rfc3339 tail.
 fn past_date() -> String {
     let days = super::rng::rng().random_range(1..730i64);
-    (chrono::Utc::now() - chrono::Duration::days(days))
-        .format("%Y-%m-%d")
+    (jiff::Timestamp::now() - jiff::SignedDuration::from_hours(days * 24))
+        .strftime("%Y-%m-%d")
         .to_string()
 }
 
 fn days_ahead(days: i64) -> String {
-    (chrono::Utc::now() + chrono::Duration::days(days))
-        .format("%Y-%m-%d")
+    (jiff::Timestamp::now() + jiff::SignedDuration::from_hours(days * 24))
+        .strftime("%Y-%m-%d")
         .to_string()
 }
 
 fn today() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    jiff::Timestamp::now().strftime("%Y-%m-%d").to_string()
 }
 
 fn long_date() -> String {
-    chrono::Utc::now().format("%-d %B %Y").to_string()
+    jiff::Timestamp::now().strftime("%-d %B %Y").to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -897,7 +897,7 @@ fn payslip() -> Composition {
 
     let mut composition = Composition::new(vec![
         heading(
-            format!("Payslip - {}", chrono::Utc::now().format("%B %Y")),
+            format!("Payslip - {}", jiff::Timestamp::now().strftime("%B %Y")),
             1,
         ),
         Block::KeyValues(vec![

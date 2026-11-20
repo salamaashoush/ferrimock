@@ -709,7 +709,7 @@ mod tests {
     fn interaction(uri: &str) -> RecordedInteraction {
         RecordedInteraction {
             id: uri.to_string(),
-            timestamp: chrono::Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             request: ferrimock::recorder::RecordedRequest {
                 method: "GET".to_string(),
                 uri: uri.to_string(),

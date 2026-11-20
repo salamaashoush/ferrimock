@@ -1,6 +1,5 @@
 //! Types for recording HTTP interactions
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -10,7 +9,8 @@ pub struct RecordedInteraction {
     /// Unique ID for this interaction
     pub id: String,
     /// Timestamp when recorded
-    pub timestamp: DateTime<Utc>,
+    #[serde(serialize_with = "crate::rfc3339::serialize")]
+    pub timestamp: jiff::Timestamp,
     /// Recorded request
     pub request: RecordedRequest,
     /// Recorded response
@@ -54,7 +54,8 @@ pub struct RecordingSession {
     /// Session name
     pub name: String,
     /// Creation timestamp
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::rfc3339::serialize")]
+    pub created_at: jiff::Timestamp,
     /// All recorded interactions
     pub interactions: Vec<RecordedInteraction>,
 }
@@ -77,5 +78,34 @@ pub mod duration_serde {
     {
         let millis = u64::deserialize(deserializer)?;
         Ok(Duration::from_millis(millis))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_session_chrono_wrote_reads_back_and_writes_the_same_text() -> serde_json::Result<()> {
+        let written = r#"{"id":"s1","name":"acme","created_at":"2024-03-17T05:00:00Z","interactions":[{"id":"i1","timestamp":"2024-03-17T05:00:01.120Z","request":{"method":"GET","uri":"/v1/items","query":null,"headers":[],"body":null},"response":{"status":200,"headers":[],"body":"{}"},"duration":12},{"id":"i2","timestamp":"2024-03-17T05:00:02.123456Z","request":{"method":"GET","uri":"/v1/items","query":null,"headers":[],"body":null},"response":{"status":200,"headers":[],"body":"{}"},"duration":3}]}"#;
+
+        let session: RecordingSession = serde_json::from_str(written)?;
+
+        assert_eq!(session.created_at.as_second(), 1_710_651_600);
+        assert_eq!(serde_json::to_string(&session)?, written);
+        Ok(())
+    }
+
+    #[test]
+    fn a_timestamp_written_with_an_offset_reads_as_the_same_instant() -> serde_json::Result<()> {
+        let written = r#"{"id":"s1","name":"acme","created_at":"2024-03-17T14:00:00+09:00","interactions":[]}"#;
+
+        let session: RecordingSession = serde_json::from_str(written)?;
+
+        assert_eq!(
+            serde_json::to_string(&session)?,
+            r#"{"id":"s1","name":"acme","created_at":"2024-03-17T05:00:00Z","interactions":[]}"#
+        );
+        Ok(())
     }
 }

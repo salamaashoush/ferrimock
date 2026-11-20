@@ -6,7 +6,7 @@
     clippy::cast_precision_loss
 )]
 
-use chrono::{Datelike, Timelike};
+use jiff::tz::Offset;
 
 use super::*;
 
@@ -89,14 +89,15 @@ fn nothing_was_created_in_the_future() {
 /// would not cover a week at all.
 #[test]
 fn arrivals_cluster_into_working_days_and_working_hours() {
-    let drawn: Vec<chrono::DateTime<chrono::Utc>> = (0..120)
+    let drawn: Vec<jiff::civil::DateTime> = (0..120)
         .flat_map(|entity| moments(5, &format!("Entity{entity}"), 40))
-        .filter_map(|moment| chrono::DateTime::from_timestamp(moment, 0))
+        .filter_map(|moment| jiff::Timestamp::from_second(moment).ok())
+        .map(|moment| Offset::UTC.to_datetime(moment))
         .collect();
 
     let weekend = drawn
         .iter()
-        .filter(|at| at.weekday().number_from_monday() > 5)
+        .filter(|at| at.weekday().to_monday_one_offset() > 5)
         .count() as f64
         / drawn.len() as f64;
     assert!(

@@ -178,7 +178,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utilities
 bytes = "1.12"
-chrono = { version = "0.4", features = ["serde"] }
+jiff = { version = "1", features = ["serde"] }
 dashmap = "6.2"
 flate2 = "1.1"
 globset = "0.4"
@@ -208,7 +208,7 @@ indicatif = "0.18"
 open = "5.4"
 
 # Fake data
-fake = { version = "5.1", features = ["derive", "chrono", "http", "uuid"] }
+fake = { version = "5.1", features = ["derive", "http", "uuid"] }
 rand = "0.10"
 
 # Image/PDF generation

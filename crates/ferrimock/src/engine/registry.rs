@@ -9,7 +9,6 @@ use crate::core::PersistenceStore;
 use crate::engine::types::LeanString;
 use crate::engine::types::MockDefinition;
 use crate::recorder::RecordedInteraction;
-use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use nohash_hasher::BuildNoHashHasher;
 use parking_lot::{Mutex, RwLock};
@@ -70,7 +69,8 @@ impl Default for DirLoadOptions {
 /// Represents a single call to a mock
 #[derive(Clone, Debug, Serialize)]
 pub struct MockCall {
-    pub timestamp: DateTime<Utc>,
+    #[serde(serialize_with = "crate::rfc3339::serialize")]
+    pub timestamp: jiff::Timestamp,
     pub method: String,
     pub path: String,
     pub query: Option<String>,
@@ -103,7 +103,7 @@ impl MockCall {
         });
 
         Self {
-            timestamp: Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             method,
             path,
             query,
@@ -342,9 +342,11 @@ pub struct UnmatchedRequest {
     /// How many times this exact line missed.
     pub count: u64,
     /// When it first missed.
-    pub first_seen: DateTime<Utc>,
+    #[serde(serialize_with = "crate::rfc3339::serialize")]
+    pub first_seen: jiff::Timestamp,
     /// When it last missed.
-    pub last_seen: DateTime<Utc>,
+    #[serde(serialize_with = "crate::rfc3339::serialize")]
+    pub last_seen: jiff::Timestamp,
 }
 
 /// Every request the registry could not serve.
@@ -1677,7 +1679,7 @@ impl MockRegistry {
         self.unmatched_total.fetch_add(1, Ordering::Relaxed);
 
         let line = request_line(method, path, query);
-        let now = Utc::now();
+        let now = jiff::Timestamp::now();
 
         if let Some(mut entry) = self.unmatched.get_mut(&line) {
             entry.count += 1;

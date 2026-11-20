@@ -60,10 +60,9 @@ pub async fn load_interactions(path: impl AsRef<Path>) -> Result<Vec<RecordedInt
 
 /// Clone minimal data needed for export (used for auto-export on error)
 pub fn create_export_session_name(session_name: &str) -> String {
-    use chrono::Utc;
     format!(
         "{}-error-{}",
         session_name,
-        Utc::now().format("%Y%m%d-%H%M%S")
+        jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S")
     )
 }
