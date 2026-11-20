@@ -11,6 +11,8 @@ readme = "../../README.md"
 [[bin]]
 name = "ferrimock"
 path = "src/main.rs"
+# The library crate is also `ferrimock`; documenting both writes target/doc/ferrimock twice.
+doc = false
 
 [lib]
 name = "ferrimock_cli"
