@@ -671,11 +671,11 @@ fn bounded_string(constraints: &Constraints, path: &str) -> String {
 /// A record was created, then touched, then closed, so each field sits its own
 /// distance past the record's arrival and `order_lifecycle` deals the results
 /// back out in the order the names imply.
-fn moment(arrived: i64, derived: u64, path: &str) -> chrono::DateTime<chrono::Utc> {
+fn moment(arrived: i64, derived: u64, path: &str) -> jiff::Timestamp {
     let leaf = path.rsplit('.').next().unwrap_or(path);
     let stage = lifecycle_rank(leaf).unwrap_or(0);
-    chrono::DateTime::from_timestamp(clock::field_moment(arrived, derived, stage), 0)
-        .unwrap_or_else(chrono::Utc::now)
+    jiff::Timestamp::from_second(clock::field_moment(arrived, derived, stage))
+        .unwrap_or_else(|_| jiff::Timestamp::now())
 }
 
 /// How a number inside a declared range is spread.

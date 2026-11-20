@@ -7,7 +7,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
 use ferrimock::config::{MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig};
 use ferrimock::consolidator::{
     ConsolidatorOptions, FidelityOptions, FidelityReport, MockConsolidator,
@@ -72,7 +71,7 @@ fn to_interactions(recorded: Vec<Recorded>) -> Vec<RecordedInteraction> {
         .enumerate()
         .map(|(index, r)| RecordedInteraction {
             id: format!("i{}", index + 1),
-            timestamp: Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             request: RecordedRequest {
                 method: r.method.to_string(),
                 uri: r.uri,
@@ -209,7 +208,7 @@ async fn run_through_har(recorded: Vec<Recorded>) -> (usize, FidelityReport) {
                     );
                 }
                 serde_json::json!({
-                    "startedDateTime": it.timestamp.to_rfc3339(),
+                    "startedDateTime": it.timestamp.display_with_offset(jiff::tz::Offset::UTC).to_string(),
                     "time": 7.0,
                     "request": request,
                     "response": {

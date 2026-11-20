@@ -58,7 +58,7 @@ pub fn fake_download_url() -> String {
         "https://dl.example.com/d/1/{}/?token={}&expires={}",
         token.get(..16).unwrap_or(&token),
         token.get(16..).unwrap_or_default(),
-        chrono::Utc::now().timestamp() + 3600
+        jiff::Timestamp::now().as_second() + 3600
     )
 }
 

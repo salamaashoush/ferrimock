@@ -1,7 +1,6 @@
 use super::*;
 use crate::config::{MatchConfig, MockCollectionConfig, MockConfig, ReturnConfig};
 use crate::consolidator::MockConsolidator;
-use chrono::Utc;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -18,7 +17,7 @@ fn interaction(
 ) -> RecordedInteraction {
     RecordedInteraction {
         id: id.to_string(),
-        timestamp: Utc::now(),
+        timestamp: jiff::Timestamp::now(),
         request: RecordedRequest {
             method: method.to_string(),
             uri: uri.to_string(),

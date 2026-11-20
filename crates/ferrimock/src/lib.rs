@@ -106,6 +106,9 @@ pub mod services;
 #[cfg(feature = "fake-data")]
 pub mod fake_data;
 
+#[cfg(feature = "fake-data")]
+mod rfc3339;
+
 /// Semantic type detection from field names and JSON values
 #[cfg(feature = "type-detector")]
 pub mod type_detector;

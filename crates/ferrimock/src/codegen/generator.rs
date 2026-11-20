@@ -200,7 +200,8 @@ impl TemplateGenerator {
 
             if graphql_analysis
                 .varying_variables
-                .contains(&clean_part.to_string())
+                .iter()
+                .any(|variable| variable == clean_part)
             {
                 return Some(format!("{{{{ body_json.variables.{clean_part} }}}}"));
             }
@@ -211,7 +212,8 @@ impl TemplateGenerator {
             let clean_field = field.split('[').next().unwrap_or(field);
             if graphql_analysis
                 .varying_variables
-                .contains(&clean_field.to_string())
+                .iter()
+                .any(|variable| variable == clean_field)
             {
                 return Some(format!("{{{{ body_json.variables.{clean_field} }}}}"));
             }

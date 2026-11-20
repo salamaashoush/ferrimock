@@ -13,7 +13,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::Datelike;
+use jiff::civil::Date;
+use jiff::tz::Offset;
 use serde_json::Value as JsonValue;
 
 use super::algebra::{DEFAULT_PAGE_SIZE, Page, Selection};
@@ -840,11 +841,11 @@ fn reads_as_dates(stats: &FieldStats) -> bool {
 /// enough span the days past the 28th were never on offer. Missing what was
 /// never available is the calendar, not the generator.
 fn check_day_of_month(stats: &FieldStats, subject: &str, report: &mut Report) {
-    let dates: BTreeSet<chrono::NaiveDate> = stats
+    let dates: BTreeSet<Date> = stats
         .strings
         .iter()
         .filter_map(|text| calendar_of(text))
-        .filter_map(|(year, month, day)| chrono::NaiveDate::from_ymd_opt(year, month, day))
+        .filter_map(|(year, month, day)| date_of(year, month, day))
         .collect();
     let (Some(first), Some(last)) = (dates.first().copied(), dates.last().copied()) else {
         return;
@@ -875,7 +876,11 @@ fn check_day_of_month(stats: &FieldStats, subject: &str, report: &mut Report) {
         );
         return;
     }
-    let latest = dates.iter().map(chrono::Datelike::day).max().unwrap_or(0);
+    let latest = dates
+        .iter()
+        .map(|date| u32::from(date.day().unsigned_abs()))
+        .max()
+        .unwrap_or(0);
     if latest <= SHORTEST_MONTH {
         report.fail(
             Check::DayOfMonth,
@@ -894,27 +899,40 @@ fn check_day_of_month(stats: &FieldStats, subject: &str, report: &mut Report) {
 /// Walked a month at a time rather than a day at a time: a stale value can
 /// put the first date a century before the last, and the answer is the same
 /// either way.
-fn long_days_in(first: chrono::NaiveDate, last: chrono::NaiveDate) -> (u32, u32) {
+fn long_days_in(first: Date, last: Date) -> (u32, u32) {
     let span = u32::try_from(
-        (last - first)
-            .num_days()
+        days_between(first, last)
             .saturating_add(1)
             .clamp(1, i64::from(u32::MAX)),
     )
     .unwrap_or(u32::MAX);
 
     let mut beyond = 0u32;
-    let mut month = first.with_day(1);
+    let mut month = Some(first.first_of_month());
     while let Some(start) = month.filter(|start| *start <= last) {
         beyond += ((SHORTEST_MONTH + 1)..=31)
-            .filter_map(|day| start.with_day(day))
+            .filter_map(|day| i8::try_from(day).ok())
+            .filter_map(|day| Date::new(start.year(), start.month(), day).ok())
             .filter(|date| *date >= first && *date <= last)
             .count()
             .try_into()
             .unwrap_or(u32::MAX);
-        month = start.checked_add_months(chrono::Months::new(1));
+        month = start.checked_add(jiff::Span::new().months(1)).ok();
     }
     (span, beyond)
+}
+
+fn date_of(year: i32, month: u32, day: u32) -> Option<Date> {
+    Date::new(
+        i16::try_from(year).ok()?,
+        i8::try_from(month).ok()?,
+        i8::try_from(day).ok()?,
+    )
+    .ok()
+}
+
+fn days_between(first: Date, last: Date) -> i64 {
+    first.duration_until(last).as_hours() / 24
 }
 
 /// How many distinct dates it takes before never landing past the 28th is the
@@ -984,11 +1002,11 @@ fn check_crowded_day(stats: &FieldStats, subject: &str, report: &mut Report) {
     const SETTLED_DAYS: i64 = 30;
     const ENOUGH: usize = 90;
 
-    let dates: Vec<chrono::NaiveDate> = stats
+    let dates: Vec<Date> = stats
         .strings
         .iter()
         .filter_map(|text| calendar_of(text))
-        .filter_map(|(year, month, day)| chrono::NaiveDate::from_ymd_opt(year, month, day))
+        .filter_map(|(year, month, day)| date_of(year, month, day))
         .collect();
     if dates.len() < ENOUGH {
         return;
@@ -996,11 +1014,11 @@ fn check_crowded_day(stats: &FieldStats, subject: &str, report: &mut Report) {
     let (Some(first), Some(last)) = (dates.iter().min(), dates.iter().max()) else {
         return;
     };
-    if (*last - *first).num_days() < SETTLED_DAYS {
+    if days_between(*first, *last) < SETTLED_DAYS {
         return;
     }
 
-    let mut per_day: BTreeMap<chrono::NaiveDate, usize> = BTreeMap::new();
+    let mut per_day: BTreeMap<Date, usize> = BTreeMap::new();
     for date in &dates {
         *per_day.entry(*date).or_insert(0) += 1;
     }
@@ -1016,7 +1034,7 @@ fn check_crowded_day(stats: &FieldStats, subject: &str, report: &mut Report) {
                 "{held} of {} value(s) fall on {busiest}, {:.0}% of a {}-day span",
                 dates.len(),
                 share * 100.0,
-                (*last - *first).num_days()
+                days_between(*first, *last)
             ),
         );
     }
@@ -1029,7 +1047,7 @@ fn check_clock(stats: &FieldStats, subject: &str, report: &mut Report) {
         return;
     }
     let newest = years.iter().copied().max().unwrap_or(0);
-    let today = chrono::Utc::now().year();
+    let today = i32::from(Offset::UTC.to_datetime(jiff::Timestamp::now()).year());
     if newest < today {
         report.fail(
             Check::StaleClock,
@@ -1745,7 +1763,9 @@ fn epoch_year(value: f64) -> Option<i32> {
     if !(31_536_000.0..=4_102_444_800.0).contains(&value) {
         return None;
     }
-    chrono::DateTime::from_timestamp(value as i64, 0).map(|moment| moment.year())
+    jiff::Timestamp::from_second(value as i64)
+        .ok()
+        .map(|moment| i32::from(Offset::UTC.to_datetime(moment).year()))
 }
 
 /// The words of one value, lowercased, with punctuation dropped.

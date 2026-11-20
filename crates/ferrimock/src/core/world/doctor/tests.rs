@@ -949,8 +949,7 @@ fn every_check_has_been_seen_to_fail() {
                 // A year of history with half of everything on one day of it.
                 let mut strings: Vec<String> = (0..365)
                     .map(|day| {
-                        let date = chrono::NaiveDate::from_ymd_opt(2025, 1, 1).expect("a date")
-                            + chrono::Duration::days(day);
+                        let date = jiff::civil::date(2025, 1, 1) + jiff::Span::new().days(day);
                         format!("{date}T09:00:00Z")
                     })
                     .collect();
@@ -1028,8 +1027,7 @@ fn a_busy_day_is_named_and_an_ordinary_recency_weighting_is_not() {
         report
     }
     fn on(day: i64) -> String {
-        let date = chrono::NaiveDate::from_ymd_opt(2025, 1, 1).expect("a date")
-            + chrono::Duration::days(day);
+        let date = jiff::civil::date(2025, 1, 1) + jiff::Span::new().days(day);
         format!("{date}T09:00:00Z")
     }
 

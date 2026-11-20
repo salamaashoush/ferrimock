@@ -3,9 +3,9 @@
 use std::sync::OnceLock;
 
 use super::rng::rng;
-use chrono::{DateTime, Datelike, FixedOffset, Timelike, Utc};
-use fake::Fake;
-use fake::faker::chrono::en::Time;
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::{Offset, TimeZone};
+use jiff::{SignedDuration, Timestamp};
 use rand::RngExt;
 use rand::seq::IndexedRandom;
 
@@ -23,9 +23,9 @@ const SECONDS_PER_YEAR: i64 = 365 * 24 * 60 * 60;
 /// rather than per call, so two records built a second apart still agree with
 /// each other. The world clock replaces this outright when there is one.
 #[must_use]
-pub fn anchor() -> DateTime<Utc> {
-    static ANCHOR: OnceLock<DateTime<Utc>> = OnceLock::new();
-    *ANCHOR.get_or_init(Utc::now)
+pub fn anchor() -> Timestamp {
+    static ANCHOR: OnceLock<Timestamp> = OnceLock::new();
+    *ANCHOR.get_or_init(Timestamp::now)
 }
 
 /// A moment inside the window, drawn as an instant rather than as separate
@@ -36,19 +36,25 @@ pub fn anchor() -> DateTime<Utc> {
 /// real dates fall outside that, and month-end logic could never be exercised
 /// against this mock at all. Drawing the instant makes every calendar
 /// question, leap years included, someone else's problem.
-fn drawn_moment() -> DateTime<Utc> {
+fn drawn_moment() -> Timestamp {
     let back = rng().random_range(0..=(WINDOW_YEARS * SECONDS_PER_YEAR));
-    anchor() - chrono::TimeDelta::seconds(back)
+    anchor() - SignedDuration::from_secs(back)
 }
 
 /// Generate a random date in RFC3339 format
 pub fn fake_date() -> String {
-    drawn_moment().to_rfc3339()
+    crate::rfc3339::with_utc_offset(drawn_moment())
 }
 
 /// Generate a random time string
 pub fn fake_time() -> String {
-    Time().fake_with_rng(&mut rng())
+    let mut rng = rng();
+    format!(
+        "{:02}:{:02}:{:02}",
+        rng.random_range(0..24_u8),
+        rng.random_range(0..60_u8),
+        rng.random_range(0..60_u8)
+    )
 }
 
 /// Generate an ISO date (date only, no time)
@@ -67,10 +73,11 @@ pub fn fake_date_in(format: crate::type_detector::DateFormat) -> String {
 
 /// Write a moment the world already decided on as a date.
 #[must_use]
-pub fn write_date(moment: DateTime<Utc>, format: crate::type_detector::DateFormat) -> String {
+pub fn write_date(moment: Timestamp, format: crate::type_detector::DateFormat) -> String {
     use crate::type_detector::DateFormat;
 
-    let (year, month, day) = (moment.year(), moment.month(), moment.day());
+    let utc = Offset::UTC.to_datetime(moment);
+    let (year, month, day) = (utc.year(), utc.month(), utc.day());
 
     match format {
         DateFormat::Iso => format!("{year:04}-{month:02}-{day:02}"),
@@ -87,29 +94,14 @@ pub fn fake_timestamp_in(format: crate::type_detector::TimestampFormat) -> Strin
 
 /// Write a moment the world already decided on, in the field's own format.
 #[must_use]
-pub fn write_timestamp(
-    moment: DateTime<Utc>,
-    format: crate::type_detector::TimestampFormat,
-) -> String {
+pub fn write_timestamp(moment: Timestamp, format: crate::type_detector::TimestampFormat) -> String {
     use crate::type_detector::TimestampFormat;
 
     const OFFSETS: [i32; 6] = [3600, 7200, -18_000, -28_800, 19_800, 32_400];
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
 
-    let date = format!(
-        "{:04}-{:02}-{:02}",
-        moment.year(),
-        moment.month(),
-        moment.day()
-    );
-    let time = format!(
-        "{:02}:{:02}:{:02}",
-        moment.hour(),
-        moment.minute(),
-        moment.second()
-    );
+    let utc = Offset::UTC.to_datetime(moment);
+    let date = format!("{:04}-{:02}-{:02}", utc.year(), utc.month(), utc.day());
+    let time = format!("{:02}:{:02}:{:02}", utc.hour(), utc.minute(), utc.second());
 
     match format {
         TimestampFormat::Rfc3339Utc => format!("{date}T{time}Z"),
@@ -119,18 +111,18 @@ pub fn write_timestamp(
         // if it were not.
         TimestampFormat::Rfc3339Offset => {
             let seconds = OFFSETS.choose(&mut rng()).copied().unwrap_or(0);
-            FixedOffset::east_opt(seconds).map_or_else(
-                || format!("{date}T{time}Z"),
-                |zone| {
+            Offset::from_seconds(seconds).map_or_else(
+                |_| format!("{date}T{time}Z"),
+                |offset| {
                     moment
-                        .with_timezone(&zone)
-                        .format("%Y-%m-%dT%H:%M:%S%:z")
+                        .to_zoned_datetime(TimeZone::fixed(offset))
+                        .strftime("%Y-%m-%dT%H:%M:%S%:z")
                         .to_string()
                 },
             )
         }
         TimestampFormat::Rfc3339Millis => {
-            format!("{date}T{time}.{:03}Z", moment.timestamp_subsec_millis())
+            format!("{date}T{time}.{:03}Z", moment.subsec_millisecond())
         }
         TimestampFormat::Rfc3339Nanos => {
             format!(
@@ -143,26 +135,17 @@ pub fn write_timestamp(
         // independently it was wrong six times in seven, and a strict HTTP-date
         // parser rejects it outright.
         TimestampFormat::Rfc2822 | TimestampFormat::HttpDate => {
-            let weekday = moment.weekday();
-            let month_name = MONTHS
-                .get(moment.month0() as usize)
-                .copied()
-                .unwrap_or("Jan");
             let zone = if matches!(format, TimestampFormat::HttpDate) {
                 "GMT"
             } else {
                 "+0000"
             };
-            format!(
-                "{weekday}, {:02} {month_name} {:04} {time} {zone}",
-                moment.day(),
-                moment.year()
-            )
+            format!("{} {time} {zone}", utc.strftime("%a, %d %b %Y"))
         }
         TimestampFormat::EpochFractional => {
             format!(
                 "{}.{:06}",
-                moment.timestamp(),
+                moment.as_second(),
                 rng().random_range(0..1_000_000)
             )
         }
@@ -171,7 +154,7 @@ pub fn write_timestamp(
 
 /// Generate a Unix timestamp
 pub fn fake_unix_timestamp() -> i64 {
-    drawn_moment().timestamp()
+    drawn_moment().as_second()
 }
 
 /// The instant a written moment names, whatever wrote it.
@@ -182,22 +165,26 @@ pub fn fake_unix_timestamp() -> i64 {
 /// anything comparing two generated moments has to read them first.
 #[must_use]
 pub fn instant_of(text: &str) -> Option<i64> {
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
-        return Some(parsed.timestamp());
+    if let Ok(parsed) = text.parse::<Timestamp>() {
+        return Some(parsed.as_second());
     }
-    if let Ok(parsed) = DateTime::parse_from_rfc2822(text) {
-        return Some(parsed.timestamp());
+    if let Ok(parsed) = jiff::fmt::rfc2822::parse(text) {
+        return Some(parsed.timestamp().as_second());
     }
     for pattern in ["%Y-%m-%d %H:%M:%S", "%a, %d %b %Y %H:%M:%S GMT"] {
-        if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(text, pattern) {
-            return Some(parsed.and_utc().timestamp());
+        if let Ok(parsed) = DateTime::strptime(pattern, text) {
+            return Offset::UTC
+                .to_timestamp(parsed)
+                .ok()
+                .map(Timestamp::as_second);
         }
     }
     for pattern in ["%Y-%m-%d", "%d/%m/%Y", "%d.%m.%Y", "%Y%m%d"] {
-        if let Ok(parsed) = chrono::NaiveDate::parse_from_str(text, pattern) {
-            return parsed
-                .and_hms_opt(0, 0, 0)
-                .map(|at| at.and_utc().timestamp());
+        if let Ok(parsed) = Date::strptime(pattern, text) {
+            return Offset::UTC
+                .to_timestamp(parsed.to_datetime(Time::midnight()))
+                .ok()
+                .map(Timestamp::as_second);
         }
     }
     // `1710668482.000100`, where the text sorts by digit count rather than by
@@ -249,6 +236,29 @@ mod tests {
     }
 
     #[test]
+    fn a_date_is_rfc3339_with_a_utc_offset() {
+        for _ in 0..200 {
+            let date = fake_date();
+            assert!(date.ends_with("+00:00"), "`{date}` has no +00:00 offset");
+            assert!(
+                date.parse::<Timestamp>().is_ok(),
+                "`{date}` does not read back"
+            );
+        }
+    }
+
+    #[test]
+    fn a_time_is_hours_minutes_and_seconds() {
+        for _ in 0..200 {
+            let time = fake_time();
+            assert!(
+                Time::strptime("%H:%M:%S", &time).is_ok() && time.len() == 8,
+                "`{time}` is not HH:MM:SS"
+            );
+        }
+    }
+
+    #[test]
     fn test_fake_iso_date() {
         let date = fake_iso_date();
         assert!(date.contains('-'));
@@ -261,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_fake_unix_timestamp() {
-        let now = anchor().timestamp();
+        let now = anchor().as_second();
         let timestamp = fake_unix_timestamp();
         assert!(timestamp <= now, "a record was created in the future");
         assert!(timestamp >= now - WINDOW_YEARS * SECONDS_PER_YEAR);
@@ -274,10 +284,10 @@ mod tests {
     fn a_date_can_land_on_any_day_the_month_actually_has() {
         use crate::type_detector::DateFormat;
 
-        let drawn: Vec<chrono::NaiveDate> = (0..4000)
+        let drawn: Vec<Date> = (0..4000)
             .map(|_| fake_date_in(DateFormat::Iso))
             .map(|text| {
-                chrono::NaiveDate::parse_from_str(&text, "%Y-%m-%d")
+                Date::strptime("%Y-%m-%d", &text)
                     .unwrap_or_else(|e| panic!("`{text}` is not a date: {e}"))
             })
             .collect();
@@ -313,7 +323,7 @@ mod tests {
             let written = fake_timestamp_in(format);
             let read = instant_of(&written)
                 .unwrap_or_else(|| panic!("{format:?} wrote `{written}`, which nothing can read"));
-            let now = anchor().timestamp();
+            let now = anchor().as_second();
             assert!(
                 read <= now && read >= now - WINDOW_YEARS * SECONDS_PER_YEAR,
                 "{format:?} wrote `{written}`, outside the window"
@@ -347,11 +357,11 @@ mod tests {
                 let date = rest
                     .as_deref()
                     .and_then(|rest| rest.get(..11))
-                    .and_then(|date| chrono::NaiveDate::parse_from_str(date, "%d %b %Y").ok())
+                    .and_then(|date| Date::strptime("%d %b %Y", date).ok())
                     .unwrap_or_else(|| panic!("`{written}` has no readable date"));
                 assert_eq!(
                     stated,
-                    date.weekday().to_string(),
+                    date.strftime("%a").to_string(),
                     "`{written}` names a weekday its own date does not fall on"
                 );
             }

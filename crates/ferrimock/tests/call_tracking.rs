@@ -222,9 +222,9 @@ fn test_get_tracked_mock_ids() {
 
     let tracked_ids = registry.get_tracked_mock_ids();
     assert_eq!(tracked_ids.len(), 2);
-    assert!(tracked_ids.contains(&"mock-1".to_string()));
-    assert!(tracked_ids.contains(&"mock-3".to_string()));
-    assert!(!tracked_ids.contains(&"mock-2".to_string()));
+    assert!(tracked_ids.iter().any(|value| value == "mock-1"));
+    assert!(tracked_ids.iter().any(|value| value == "mock-3"));
+    assert!(!tracked_ids.iter().any(|value| value == "mock-2"));
 }
 
 #[test]

@@ -77,8 +77,8 @@ impl ProxyState {
         }
 
         let session = session_name.unwrap_or_else(|| {
-            chrono::Utc::now()
-                .format("recording-%Y%m%d-%H%M%S")
+            jiff::Timestamp::now()
+                .strftime("recording-%Y%m%d-%H%M%S")
                 .to_string()
         });
 

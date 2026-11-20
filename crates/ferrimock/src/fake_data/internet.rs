@@ -70,7 +70,7 @@ pub fn fake_search_url() -> String {
 pub fn fake_file_download_url() -> String {
     let file_id = super::rng::uuid_v4().to_string().replace('-', "");
     let token = super::rng::uuid_v4().to_string().replace('-', "");
-    let expires = chrono::Utc::now().timestamp() + 3600;
+    let expires = jiff::Timestamp::now().as_second() + 3600;
     format!(
         "https://cdn.example.com/files/{}/download?token={}&expires={}",
         file_id.get(..16).unwrap_or(&file_id),

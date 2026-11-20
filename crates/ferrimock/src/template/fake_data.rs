@@ -5,12 +5,43 @@
 //! consumers of this registry, so neither has to go through the other.
 
 use crate::error::FerrimockError;
-use chrono::{Duration, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
 
 /// Named arguments passed to a generator.
 pub type Args = HashMap<String, Value>;
+
+fn now_offset(args: &Args, sign: i64) -> Result<Value> {
+    let part = |key: &str| args.get(key).and_then(Value::as_i64).unwrap_or(0);
+    let format = args
+        .get("format")
+        .and_then(Value::as_str)
+        .unwrap_or("%Y-%m-%dT%H:%M:%S%.3fZ");
+
+    let seconds = [
+        (part("days"), 86_400),
+        (part("hours"), 3_600),
+        (part("minutes"), 60),
+        (part("seconds"), 1),
+    ]
+    .into_iter()
+    .try_fold(0_i64, |total, (count, unit)| {
+        count
+            .checked_mul(unit)
+            .and_then(|seconds| total.checked_add(seconds))
+    })
+    .and_then(|seconds| seconds.checked_mul(sign));
+    let moment = seconds
+        .and_then(|seconds| {
+            jiff::Timestamp::now()
+                .checked_add(jiff::SignedDuration::from_secs(seconds))
+                .ok()
+        })
+        .ok_or_else(|| FerrimockError::Template("date offset is out of range".to_string()))?;
+    jiff::fmt::strtime::format(format, &moment.to_zoned_datetime(jiff::tz::TimeZone::UTC))
+        .map(Value::from)
+        .map_err(|e| FerrimockError::Template(format!("format {format:?}: {e}")))
+}
 
 /// Parse one document argument, naming it in the error the way the caller
 /// spelled it. A closure would monomorphise to a single target type.
@@ -950,42 +981,14 @@ fn build_registry() -> HashMap<&'static str, Generator> {
     // Example: {{ now_plus(days=30) }} -> "2026-03-09T14:30:00.000Z"
     // Example: {{ now_plus(hours=2, format="%Y-%m-%d") }} -> "2026-02-07"
     register("now_plus", |args: &Args| -> Result<Value> {
-        let days = args.get("days").and_then(Value::as_i64).unwrap_or(0);
-        let hours = args.get("hours").and_then(Value::as_i64).unwrap_or(0);
-        let minutes = args.get("minutes").and_then(Value::as_i64).unwrap_or(0);
-        let seconds = args.get("seconds").and_then(Value::as_i64).unwrap_or(0);
-        let format = args
-            .get("format")
-            .and_then(Value::as_str)
-            .unwrap_or("%Y-%m-%dT%H:%M:%S%.3fZ");
-
-        let offset = Duration::days(days)
-            + Duration::hours(hours)
-            + Duration::minutes(minutes)
-            + Duration::seconds(seconds);
-        let result = Utc::now() + offset;
-        Ok(Value::from(result.format(format).to_string()))
+        now_offset(args, 1)
     });
 
     // now_minus(days=0, hours=0, minutes=0, seconds=0, format="%Y-%m-%dT%H:%M:%S%.3fZ")
     // Returns a date/time offset from now into the past.
     // Example: {{ now_minus(days=7) }} -> "2026-01-31T14:30:00.000Z"
     register("now_minus", |args: &Args| -> Result<Value> {
-        let days = args.get("days").and_then(Value::as_i64).unwrap_or(0);
-        let hours = args.get("hours").and_then(Value::as_i64).unwrap_or(0);
-        let minutes = args.get("minutes").and_then(Value::as_i64).unwrap_or(0);
-        let seconds = args.get("seconds").and_then(Value::as_i64).unwrap_or(0);
-        let format = args
-            .get("format")
-            .and_then(Value::as_str)
-            .unwrap_or("%Y-%m-%dT%H:%M:%S%.3fZ");
-
-        let offset = Duration::days(days)
-            + Duration::hours(hours)
-            + Duration::minutes(minutes)
-            + Duration::seconds(seconds);
-        let result = Utc::now() - offset;
-        Ok(Value::from(result.format(format).to_string()))
+        now_offset(args, -1)
     });
 
     // fake_iso_date_offset(days=0) - Generate date relative to today
@@ -993,8 +996,14 @@ fn build_registry() -> HashMap<&'static str, Generator> {
     // Example: {{ fake_iso_date_offset(days=30) }} -> "2026-03-09"
     register("fake_iso_date_offset", |args: &Args| -> Result<Value> {
         let days = args.get("days").and_then(Value::as_i64).unwrap_or(0);
-        let result = Utc::now() + Duration::days(days);
-        Ok(Value::from(result.format("%Y-%m-%d").to_string()))
+        days.checked_mul(86_400)
+            .and_then(|seconds| {
+                jiff::Timestamp::now()
+                    .checked_add(jiff::SignedDuration::from_secs(seconds))
+                    .ok()
+            })
+            .map(|moment| Value::from(moment.strftime("%Y-%m-%d").to_string()))
+            .ok_or_else(|| FerrimockError::Template("date offset is out of range".to_string()))
     });
 
     // ========== Array Generation Helper ==========
@@ -1054,5 +1063,70 @@ pub fn register_all_functions(tera: &mut tera::Tera) {
                 Ok(super::convert::to_tera(value))
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(name: &str, args: &[(&str, Value)]) -> Result<Value> {
+        let generator = generator(name)
+            .ok_or_else(|| FerrimockError::Template(format!("no generator {name}")))?;
+        generator(
+            &args
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), value.clone()))
+                .collect(),
+        )
+    }
+
+    fn text(value: &Value) -> &str {
+        value.as_str().unwrap_or_default()
+    }
+
+    #[test]
+    fn now_plus_writes_utc_with_milliseconds_by_default() -> Result<()> {
+        let written = call("now_plus", &[("days", Value::from(30))])?;
+        let parsed = jiff::civil::DateTime::strptime("%Y-%m-%dT%H:%M:%S%.3fZ", text(&written));
+        assert!(parsed.is_ok(), "`{written}` is not the default shape");
+        assert_eq!(text(&written).len(), "2026-03-09T14:30:00.000Z".len());
+        Ok(())
+    }
+
+    #[test]
+    fn now_plus_and_now_minus_move_in_opposite_directions() -> Result<()> {
+        let format = ("format", Value::from("%s"));
+        let ahead = call("now_plus", &[("hours", Value::from(2)), format.clone()])?;
+        let behind = call("now_minus", &[("hours", Value::from(2)), format])?;
+        let seconds = |value: &Value| text(value).parse::<i64>().unwrap_or_default();
+        let gap = seconds(&ahead) - seconds(&behind);
+        assert!((14_399..=14_401).contains(&gap), "gap was {gap}s");
+        Ok(())
+    }
+
+    #[test]
+    fn a_format_naming_the_zone_names_utc() -> Result<()> {
+        let written = call("now_plus", &[("format", Value::from("%Z %z"))])?;
+        assert_eq!(text(&written), "UTC +0000");
+        Ok(())
+    }
+
+    #[test]
+    fn an_unusable_format_or_offset_is_an_error_not_a_panic() {
+        assert!(call("now_plus", &[("format", Value::from("%Y-%"))]).is_err());
+        assert!(call("now_plus", &[("days", Value::from(i64::MAX))]).is_err());
+        assert!(call("now_minus", &[("seconds", Value::from(i64::MIN))]).is_err());
+        assert!(call("fake_iso_date_offset", &[("days", Value::from(i64::MAX))]).is_err());
+    }
+
+    #[test]
+    fn fake_iso_date_offset_writes_a_calendar_date() -> Result<()> {
+        let written = call("fake_iso_date_offset", &[("days", Value::from(-7))])?;
+        assert!(
+            jiff::civil::Date::strptime("%Y-%m-%d", text(&written)).is_ok(),
+            "`{written}` is not a date"
+        );
+        Ok(())
     }
 }

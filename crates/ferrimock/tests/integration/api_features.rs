@@ -231,8 +231,8 @@ fn test_multiple_mocks_independent_tracking() {
     // Get tracked mock IDs
     let tracked = registry.get_tracked_mock_ids();
     assert_eq!(tracked.len(), 2);
-    assert!(tracked.contains(&"mock-1".to_string()));
-    assert!(tracked.contains(&"mock-2".to_string()));
+    assert!(tracked.iter().any(|value| value == "mock-1"));
+    assert!(tracked.iter().any(|value| value == "mock-2"));
 }
 
 #[test]

@@ -228,14 +228,13 @@ fn walk(
 )]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use ferrimock::recorder::{RecordedRequest, RecordedResponse};
     use std::time::Duration;
 
     fn interaction(body: &str) -> RecordedInteraction {
         RecordedInteraction {
             id: "i".to_string(),
-            timestamp: Utc::now(),
+            timestamp: jiff::Timestamp::now(),
             request: RecordedRequest {
                 method: "GET".to_string(),
                 uri: "/v2/things".to_string(),

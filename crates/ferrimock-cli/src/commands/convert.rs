@@ -240,7 +240,7 @@ pub async fn convert_har(opts: ConvertHarOptions) -> anyhow::Result<()> {
         )),
         description: Some(format!(
             "Auto-converted from HAR file on {}. Static mocks with exact URL matching.",
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            jiff::Timestamp::now().strftime("%Y-%m-%d %H:%M:%S UTC")
         )),
         enabled: true,
         vars: None,

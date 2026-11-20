@@ -34,7 +34,7 @@ const EPOCH_INTO_WEEK: i64 = 3 * 86_400;
 /// The instant the world is read from.
 #[must_use]
 pub fn now() -> i64 {
-    datetime::anchor().timestamp()
+    datetime::anchor().as_second()
 }
 
 /// When the `ordinal`th instance of an entity came into being.

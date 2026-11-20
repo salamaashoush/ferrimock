@@ -31,12 +31,18 @@ pub async fn get_all_store(State(app_state): State<MockApiState>) -> impl IntoRe
             // Check if key has TTL
             if let Some(ttl_secs) = persistence_store.ttl_seconds(key) {
                 // Calculate expiration time
-                let expires_at = chrono::Utc::now()
-                    + chrono::Duration::seconds(i64::try_from(ttl_secs).unwrap_or(i64::MAX));
+                let expires_at = i64::try_from(ttl_secs)
+                    .ok()
+                    .and_then(|ttl| {
+                        jiff::Timestamp::now()
+                            .checked_add(jiff::SignedDuration::from_secs(ttl))
+                            .ok()
+                    })
+                    .unwrap_or(jiff::Timestamp::MAX);
                 keys_with_ttl.push(super::types::KeyTtlInfo {
                     key: key.clone(),
                     ttl_seconds: ttl_secs,
-                    expires_at: expires_at.to_rfc3339(),
+                    expires_at: crate::rfc3339::with_utc_offset(expires_at),
                 });
             }
         }

@@ -124,28 +124,32 @@ async fn a_machine_declared_in_yaml_drives_routes_without_a_schema() {
     assert!(
         coverage
             .unreached_states
-            .contains(&"order.cancelled".to_string()),
+            .iter()
+            .any(|value| value == "order.cancelled"),
         "nothing cancelled anything: {:?}",
         coverage.unreached_states
     );
     assert!(
         !coverage
             .unreached_states
-            .contains(&"order.paid".to_string()),
+            .iter()
+            .any(|value| value == "order.paid"),
         "`paid` was reached: {:?}",
         coverage.unreached_states
     );
     assert!(
         coverage
             .untaken_edges
-            .contains(&"order.shipped --deliver->".to_string()),
+            .iter()
+            .any(|value| value == "order.shipped --deliver->"),
         "nothing delivered: {:?}",
         coverage.untaken_edges
     );
     assert!(
         !coverage
             .untaken_edges
-            .contains(&"order.created --pay->".to_string()),
+            .iter()
+            .any(|value| value == "order.created --pay->"),
         "`pay` was taken: {:?}",
         coverage.untaken_edges
     );
