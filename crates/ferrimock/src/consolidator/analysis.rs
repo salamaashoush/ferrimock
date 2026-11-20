@@ -1904,7 +1904,7 @@ mod tests {
         assert!(analysis.has_variables);
         assert!(analysis.has_varying_variables);
         assert_eq!(analysis.varying_variables.len(), 1);
-        assert!(analysis.varying_variables.contains(&"id".to_string()));
+        assert!(analysis.varying_variables.iter().any(|value| value == "id"));
         assert_eq!(analysis.constant_variables.len(), 0);
     }
 
@@ -2089,7 +2089,7 @@ mod tests {
         assert!(analysis.has_variables);
         assert!(analysis.has_varying_variables);
         assert_eq!(analysis.varying_variables.len(), 1);
-        assert!(analysis.varying_variables.contains(&"id".to_string()));
+        assert!(analysis.varying_variables.iter().any(|value| value == "id"));
         assert_eq!(analysis.constant_variables.len(), 1);
         assert_eq!(
             analysis.constant_variables[0],

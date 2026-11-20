@@ -1019,9 +1019,9 @@ async fn test_categorical_detection_accepts_true_enums() {
     // Should detect as categorical
     if let FieldType::Categorical { values } = field_type {
         assert_eq!(values.len(), 3, "Should have 3 unique enum values");
-        assert!(values.contains(&"pending".to_string()));
-        assert!(values.contains(&"approved".to_string()));
-        assert!(values.contains(&"rejected".to_string()));
+        assert!(values.iter().any(|value| value == "pending"));
+        assert!(values.iter().any(|value| value == "approved"));
+        assert!(values.iter().any(|value| value == "rejected"));
         assert!(confidence >= 0.75, "Should have high confidence");
     } else {
         panic!("Expected Categorical type, got {field_type:?}");

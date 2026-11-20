@@ -1475,15 +1475,15 @@ async fn test_neither_capture_filter_set() {
     // Verify URLs are present
     let urls: Vec<String> = all.iter().map(|i| i.request.uri.clone()).collect();
     assert!(
-        urls.contains(&"/api/success".to_string()),
+        urls.iter().any(|value| value == "/api/success"),
         "Should have recorded success URL"
     );
     assert!(
-        urls.contains(&"/api/redirect".to_string()),
+        urls.iter().any(|value| value == "/api/redirect"),
         "Should have recorded redirect URL"
     );
     assert!(
-        urls.contains(&"/api/error".to_string()),
+        urls.iter().any(|value| value == "/api/error"),
         "Should have recorded error URL"
     );
 }

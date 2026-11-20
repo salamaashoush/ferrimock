@@ -526,8 +526,8 @@ mocks:
 
     let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
-    assert!(match_config.methods.contains(&"GET".to_string()));
-    assert!(match_config.urls.contains(&"/api/health".to_string()));
+    assert!(match_config.methods.iter().any(|value| value == "GET"));
+    assert!(match_config.urls.iter().any(|value| value == "/api/health"));
 }
 
 #[test]
@@ -546,9 +546,9 @@ mocks:
     let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
     assert_eq!(match_config.methods.len(), 3);
-    assert!(match_config.methods.contains(&"GET".to_string()));
-    assert!(match_config.methods.contains(&"POST".to_string()));
-    assert!(match_config.methods.contains(&"DELETE".to_string()));
+    assert!(match_config.methods.iter().any(|value| value == "GET"));
+    assert!(match_config.methods.iter().any(|value| value == "POST"));
+    assert!(match_config.methods.iter().any(|value| value == "DELETE"));
     assert_eq!(match_config.urls.len(), 3);
 }
 
@@ -589,7 +589,7 @@ mocks:
 
     let config: MockCollectionConfig = serde_yaml_ng::from_str(yaml).unwrap();
     let match_config = config.mocks[0].match_config.as_ref().unwrap();
-    assert!(match_config.methods.contains(&"get".to_string()));
+    assert!(match_config.methods.iter().any(|value| value == "get"));
 }
 
 #[test]
