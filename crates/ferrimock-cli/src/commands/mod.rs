@@ -52,51 +52,7 @@ pub enum MockAction {
     ///   mock create "/api/orders" -m POST -s 201 -b @order.json
     ///   mock create
     #[command(visible_alias = "new", verbatim_doc_comment)]
-    Create {
-        /// URL pattern to match (omit to start interactive wizard)
-        #[arg(value_name = "URL")]
-        url: Option<String>,
-
-        /// Output file path (defaults to `mocks/collections/MOCK_ID.yaml`)
-        #[arg(short = 'o', long, value_name = "FILE")]
-        output: Option<String>,
-
-        /// HTTP method (GET, POST, etc.)
-        #[arg(short = 'm', long, value_name = "METHOD", default_value = "GET")]
-        method: String,
-
-        /// Response status code
-        #[arg(short = 's', long, value_name = "CODE", default_value = "200")]
-        status: u16,
-
-        /// Response body (JSON string or @file.json)
-        #[arg(short = 'b', long, value_name = "BODY")]
-        body: Option<String>,
-
-        /// Generate a body template with fake data instead of a fixed body
-        #[arg(short = 't', long)]
-        template: bool,
-
-        /// Mock ID (auto-generated if not provided)
-        #[arg(short = 'i', long, value_name = "ID")]
-        id: Option<String>,
-
-        /// Mock priority (higher = matched first)
-        #[arg(short = 'p', long, value_name = "PRIORITY", default_value = "100")]
-        priority: u32,
-
-        /// Collection name/scope
-        #[arg(short = 'c', long, value_name = "NAME")]
-        collection: Option<String>,
-
-        /// Mock kind: http (default), ws (WebSocket), or sse (Server-Sent Events)
-        #[arg(short = 'k', long, value_name = "KIND", default_value = "http")]
-        kind: String,
-
-        /// Launch interactive wizard for step-by-step mock creation
-        #[arg(short = 'I', long)]
-        interactive: bool,
-    },
+    Create(Box<MockCreateArgs>),
 
     /// List the mocks in the collections directory
     #[command(visible_alias = "ls")]
@@ -130,43 +86,7 @@ pub enum MockAction {
     ///   mock test -m POST /api/users -H "Content-Type: application/json" --body '{"name": "Ann"}'
     ///   mock test -m GET /api/users/123 --debug
     #[command(visible_alias = "t", verbatim_doc_comment)]
-    Test {
-        /// HTTP method
-        #[arg(short = 'm', long, value_name = "METHOD", default_value = "GET")]
-        method: String,
-
-        /// Request path
-        #[arg(value_name = "PATH")]
-        path: String,
-
-        /// Query string (optional)
-        #[arg(short = 'q', long, value_name = "QUERY")]
-        query: Option<String>,
-
-        /// Request headers (can be used multiple times, format: "Name: Value")
-        #[arg(short = 'H', long = "header", value_name = "HEADER", action = clap::ArgAction::Append)]
-        headers: Vec<String>,
-
-        /// Request body (JSON string or @file.json)
-        #[arg(short = 'b', long, value_name = "BODY")]
-        body: Option<String>,
-
-        /// Render the response with fake data (show actual mock output)
-        #[arg(short = 'r', long)]
-        render: bool,
-
-        /// Debug mode - show verbose matching information for all mocks
-        #[arg(short = 'd', long)]
-        debug: bool,
-
-        /// Load mocks from a specific file instead of the collections directory
-        #[arg(short = 'f', long = "mock-file", value_name = "FILE")]
-        mock_file: Option<String>,
-
-        /// Output in JSON format for programmatic use
-        #[arg(short = 'j', long)]
-        json: bool,
-    },
+    Test(Box<MockTestArgs>),
 
     /// Load the collections directory and report how many mocks it holds
     #[command(visible_alias = "r")]
@@ -241,84 +161,7 @@ pub enum MockAction {
     /// infrastructure headers are stripped, and access_token query
     /// parameters are removed. Each flag below keeps one of those.
     #[command(visible_alias = "conv")]
-    Convert {
-        /// Input HAR file
-        #[arg(value_name = "INPUT")]
-        input: String,
-
-        /// Output mock collection file
-        #[arg(value_name = "OUTPUT")]
-        output: String,
-
-        /// Output format: json, yaml. Defaults to the output file's extension,
-        /// then to yaml.
-        #[arg(short = 'f', long, value_name = "FORMAT", value_parser = ["json", "yaml"])]
-        format: Option<String>,
-
-        // Accepted so existing scripts keep working; conversion has always
-        // matched recorded URLs exactly and never read this.
-        #[arg(short = 'm', long, value_name = "STRATEGY", value_parser = ["exact", "pattern"], default_value = "pattern", hide = true)]
-        matching: String,
-
-        /// Interactive pattern editing
-        #[arg(short = 'I', long)]
-        interactive: bool,
-
-        /// Include OPTIONS preflight
-        #[arg(long)]
-        preflight: bool,
-
-        /// Include redirect responses (3xx)
-        #[arg(long)]
-        redirects: bool,
-
-        /// Keep browser headers
-        #[arg(long)]
-        browser_headers: bool,
-
-        /// Keep absolute URLs (don't normalize to relative paths)
-        #[arg(long)]
-        absolute_urls: bool,
-
-        /// Only include entries from these domains (comma-separated, e.g. "api.example.com,cdn.example.com").
-        /// Subdomains are included automatically. When not set, all domains are included.
-        #[arg(long, value_name = "DOMAINS", value_delimiter = ',')]
-        domains: Vec<String>,
-
-        /// Include static assets (.js, .css, .png, etc.)
-        #[arg(long)]
-        static_assets: bool,
-
-        /// Keep sensitive headers (Authorization, Cookie, Set-Cookie)
-        #[arg(long)]
-        keep_sensitive_headers: bool,
-
-        /// Keep infrastructure headers (date, server, x-envoy-*, alt-svc)
-        #[arg(long)]
-        keep_infra_headers: bool,
-
-        /// Extract large/binary response bodies to separate files
-        #[arg(long)]
-        extract_bodies: bool,
-
-        /// Body size threshold in KB for extraction (default: 100)
-        #[arg(long, value_name = "KB", default_value = "100")]
-        body_threshold_kb: usize,
-
-        /// Answer every repeat of a request with the first recording of it,
-        /// instead of replaying the recorded answers in order
-        #[arg(long)]
-        flatten_repeats: bool,
-
-        /// Drop each entry's recorded latency instead of keeping it as a delay.
-        ///
-        /// A recording made against a real service carries its real latency, so
-        /// mocks converted from one wait exactly as long as the service did.
-        /// That is what you want for a demonstration and never what you want in
-        /// a test suite.
-        #[arg(long)]
-        no_delays: bool,
-    },
+    Convert(Box<MockConvertArgs>),
 
     /// Write a mock collection out as a HAR file
     #[command(visible_alias = "exp")]
@@ -349,54 +192,7 @@ pub enum MockAction {
     ///   mock consolidate recordings/session.json mocks/api.yaml --verify
     ///   mock consolidate recordings/session.json mocks/api.yaml --no-templates
     #[command(visible_alias = "opt", verbatim_doc_comment)]
-    Consolidate {
-        /// Input mock collection
-        #[arg(value_name = "INPUT")]
-        input: String,
-
-        /// Output consolidated mocks
-        #[arg(value_name = "OUTPUT")]
-        output: String,
-
-        /// Output format: json, yaml
-        #[arg(short = 'f', long, value_name = "FORMAT", value_parser = ["json", "yaml"], default_value = "json")]
-        format: String,
-
-        /// Min similar requests to form pattern
-        #[arg(long, value_name = "N", default_value = "3")]
-        min_pattern: usize,
-
-        /// Skip template extraction
-        #[arg(long)]
-        no_templates: bool,
-
-        /// Template endpoints recorded only once, reading each value for what it
-        /// is rather than as a fixed answer
-        ///
-        /// A lone recording is otherwise reproduced verbatim, so its mock
-        /// answers that one request and nothing else. This widens paths whose
-        /// segments read as identifiers and generates the fields whose values
-        /// the detector can place, at the cost of no longer replaying the
-        /// recording exactly.
-        #[arg(long)]
-        generalize: bool,
-
-        /// Replay a recording through the consolidated mocks and report what changed
-        ///
-        /// Takes a recording session (JSON/YAML) or a HAR file -- the formats
-        /// that keep requests alongside responses. A consolidated mock
-        /// collection cannot be used here: it no longer records what was asked.
-        #[arg(long, value_name = "RECORDING")]
-        verify: Option<String>,
-
-        /// Fail when behavioural fidelity falls below this ratio (implies --verify)
-        #[arg(long, value_name = "RATIO", requires = "verify")]
-        fail_under: Option<f64>,
-
-        /// Show detailed stats
-        #[arg(short = 'v', long)]
-        verbose: bool,
-    },
+    Consolidate(Box<MockConsolidateArgs>),
 
     /// Serve the mocks over HTTP, with nothing upstream
     ///
@@ -411,53 +207,272 @@ pub enum MockAction {
     ///   mock serve --mocks ./mocks/api/ --cors --log-matches
     ///   mock serve -f mocks/api-users.yaml
     #[command(visible_alias = "sv", verbatim_doc_comment)]
-    Serve {
-        /// Mock collections directory (same as --mocks)
-        #[arg(value_name = "DIR")]
-        dir: Option<String>,
+    Serve(Box<MockServeArgs>),
+}
 
-        /// Port to listen on
-        #[arg(short = 'p', long, default_value = "3006")]
-        port: u16,
+#[derive(Args, Debug, Clone)]
+pub struct MockCreateArgs {
+    /// URL pattern to match (omit to start interactive wizard)
+    #[arg(value_name = "URL")]
+    pub url: Option<String>,
 
-        /// Host to bind to
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
+    /// Output file path (defaults to `mocks/collections/MOCK_ID.yaml`)
+    #[arg(short = 'o', long, value_name = "FILE")]
+    pub output: Option<String>,
 
-        /// Mock collections directory
-        #[arg(short = 'm', long, value_name = "DIR")]
-        mocks: Option<String>,
+    /// HTTP method (GET, POST, etc.)
+    #[arg(short = 'm', long, value_name = "METHOD", default_value = "GET")]
+    pub method: String,
 
-        /// Load a specific mock file (can be combined with --mocks)
-        #[arg(short = 'f', long = "mock-file", value_name = "FILE")]
-        mock_file: Option<String>,
+    /// Response status code
+    #[arg(short = 's', long, value_name = "CODE", default_value = "200")]
+    pub status: u16,
 
-        /// Watch mock files and hot-reload on change
-        #[arg(short = 'w', long)]
-        watch: bool,
+    /// Response body (JSON string or @file.json)
+    #[arg(short = 'b', long, value_name = "BODY")]
+    pub body: Option<String>,
 
-        /// Enable CORS headers for browser access
-        #[arg(long)]
-        cors: bool,
+    /// Generate a body template with fake data instead of a fixed body
+    #[arg(short = 't', long)]
+    pub template: bool,
 
-        /// Enable template rendering endpoint (POST /__mock/render)
-        #[arg(long)]
-        enable_render_endpoint: bool,
+    /// Mock ID (auto-generated if not provided)
+    #[arg(short = 'i', long, value_name = "ID")]
+    pub id: Option<String>,
 
-        /// Log mock match details for every request (mock ID, captures, elapsed time)
-        #[arg(long)]
-        log_matches: bool,
+    /// Mock priority (higher = matched first)
+    #[arg(short = 'p', long, value_name = "PRIORITY", default_value = "100")]
+    pub priority: u32,
 
-        /// Enable verbose request logging
-        #[arg(short = 'v', long)]
-        verbose: bool,
+    /// Collection name/scope
+    #[arg(short = 'c', long, value_name = "NAME")]
+    pub collection: Option<String>,
 
-        /// Open browser to server URL
-        #[arg(short = 'o', long)]
-        open: bool,
+    /// Mock kind: http (default), ws (WebSocket), or sse (Server-Sent Events)
+    #[arg(short = 'k', long, value_name = "KIND", default_value = "http")]
+    pub kind: String,
 
-        /// Omit the near-miss explanation from unmatched (404) responses
-        #[arg(long)]
-        no_explain: bool,
-    },
+    /// Launch interactive wizard for step-by-step mock creation
+    #[arg(short = 'I', long)]
+    pub interactive: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct MockTestArgs {
+    /// HTTP method
+    #[arg(short = 'm', long, value_name = "METHOD", default_value = "GET")]
+    pub method: String,
+
+    /// Request path
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// Query string (optional)
+    #[arg(short = 'q', long, value_name = "QUERY")]
+    pub query: Option<String>,
+
+    /// Request headers (can be used multiple times, format: "Name: Value")
+    #[arg(short = 'H', long = "header", value_name = "HEADER", action = clap::ArgAction::Append)]
+    pub headers: Vec<String>,
+
+    /// Request body (JSON string or @file.json)
+    #[arg(short = 'b', long, value_name = "BODY")]
+    pub body: Option<String>,
+
+    /// Render the response with fake data (show actual mock output)
+    #[arg(short = 'r', long)]
+    pub render: bool,
+
+    /// Debug mode - show verbose matching information for all mocks
+    #[arg(short = 'd', long)]
+    pub debug: bool,
+
+    /// Load mocks from a specific file instead of the collections directory
+    #[arg(short = 'f', long = "mock-file", value_name = "FILE")]
+    pub mock_file: Option<String>,
+
+    /// Output in JSON format for programmatic use
+    #[arg(short = 'j', long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct MockConvertArgs {
+    /// Input HAR file
+    #[arg(value_name = "INPUT")]
+    pub input: String,
+
+    /// Output mock collection file
+    #[arg(value_name = "OUTPUT")]
+    pub output: String,
+
+    /// Output format: json, yaml. Defaults to the output file's extension,
+    /// then to yaml.
+    #[arg(short = 'f', long, value_name = "FORMAT", value_parser = ["json", "yaml"])]
+    pub format: Option<String>,
+
+    // Accepted so existing scripts keep working; conversion has always
+    // matched recorded URLs exactly and never read this.
+    #[arg(short = 'm', long, value_name = "STRATEGY", value_parser = ["exact", "pattern"], default_value = "pattern", hide = true)]
+    pub matching: String,
+
+    /// Interactive pattern editing
+    #[arg(short = 'I', long)]
+    pub interactive: bool,
+
+    /// Include OPTIONS preflight
+    #[arg(long)]
+    pub preflight: bool,
+
+    /// Include redirect responses (3xx)
+    #[arg(long)]
+    pub redirects: bool,
+
+    /// Keep browser headers
+    #[arg(long)]
+    pub browser_headers: bool,
+
+    /// Keep absolute URLs (don't normalize to relative paths)
+    #[arg(long)]
+    pub absolute_urls: bool,
+
+    /// Only include entries from these domains (comma-separated, e.g. "api.example.com,cdn.example.com").
+    /// Subdomains are included automatically. When not set, all domains are included.
+    #[arg(long, value_name = "DOMAINS", value_delimiter = ',')]
+    pub domains: Vec<String>,
+
+    /// Include static assets (.js, .css, .png, etc.)
+    #[arg(long)]
+    pub static_assets: bool,
+
+    /// Keep sensitive headers (Authorization, Cookie, Set-Cookie)
+    #[arg(long)]
+    pub keep_sensitive_headers: bool,
+
+    /// Keep infrastructure headers (date, server, x-envoy-*, alt-svc)
+    #[arg(long)]
+    pub keep_infra_headers: bool,
+
+    /// Extract large/binary response bodies to separate files
+    #[arg(long)]
+    pub extract_bodies: bool,
+
+    /// Body size threshold in KB for extraction (default: 100)
+    #[arg(long, value_name = "KB", default_value = "100")]
+    pub body_threshold_kb: usize,
+
+    /// Answer every repeat of a request with the first recording of it,
+    /// instead of replaying the recorded answers in order
+    #[arg(long)]
+    pub flatten_repeats: bool,
+
+    /// Drop each entry's recorded latency instead of keeping it as a delay.
+    ///
+    /// A recording made against a real service carries its real latency, so
+    /// mocks converted from one wait exactly as long as the service did.
+    /// That is what you want for a demonstration and never what you want in
+    /// a test suite.
+    #[arg(long)]
+    pub no_delays: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct MockConsolidateArgs {
+    /// Input mock collection
+    #[arg(value_name = "INPUT")]
+    pub input: String,
+
+    /// Output consolidated mocks
+    #[arg(value_name = "OUTPUT")]
+    pub output: String,
+
+    /// Output format: json, yaml
+    #[arg(short = 'f', long, value_name = "FORMAT", value_parser = ["json", "yaml"], default_value = "json")]
+    pub format: String,
+
+    /// Min similar requests to form pattern
+    #[arg(long, value_name = "N", default_value = "3")]
+    pub min_pattern: usize,
+
+    /// Skip template extraction
+    #[arg(long)]
+    pub no_templates: bool,
+
+    /// Template endpoints recorded only once, reading each value for what it
+    /// is rather than as a fixed answer
+    ///
+    /// A lone recording is otherwise reproduced verbatim, so its mock
+    /// answers that one request and nothing else. This widens paths whose
+    /// segments read as identifiers and generates the fields whose values
+    /// the detector can place, at the cost of no longer replaying the
+    /// recording exactly.
+    #[arg(long)]
+    pub generalize: bool,
+
+    /// Replay a recording through the consolidated mocks and report what changed
+    ///
+    /// Takes a recording session (JSON/YAML) or a HAR file -- the formats
+    /// that keep requests alongside responses. A consolidated mock
+    /// collection cannot be used here: it no longer records what was asked.
+    #[arg(long, value_name = "RECORDING")]
+    pub verify: Option<String>,
+
+    /// Fail when behavioural fidelity falls below this ratio (implies --verify)
+    #[arg(long, value_name = "RATIO", requires = "verify")]
+    pub fail_under: Option<f64>,
+
+    /// Show detailed stats
+    #[arg(short = 'v', long)]
+    pub verbose: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct MockServeArgs {
+    /// Mock collections directory (same as --mocks)
+    #[arg(value_name = "DIR")]
+    pub dir: Option<String>,
+
+    /// Port to listen on
+    #[arg(short = 'p', long, default_value = "3006")]
+    pub port: u16,
+
+    /// Host to bind to
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+
+    /// Mock collections directory
+    #[arg(short = 'm', long, value_name = "DIR")]
+    pub mocks: Option<String>,
+
+    /// Load a specific mock file (can be combined with --mocks)
+    #[arg(short = 'f', long = "mock-file", value_name = "FILE")]
+    pub mock_file: Option<String>,
+
+    /// Watch mock files and hot-reload on change
+    #[arg(short = 'w', long)]
+    pub watch: bool,
+
+    /// Enable CORS headers for browser access
+    #[arg(long)]
+    pub cors: bool,
+
+    /// Enable template rendering endpoint (POST /__mock/render)
+    #[arg(long)]
+    pub enable_render_endpoint: bool,
+
+    /// Log mock match details for every request (mock ID, captures, elapsed time)
+    #[arg(long)]
+    pub log_matches: bool,
+
+    /// Enable verbose request logging
+    #[arg(short = 'v', long)]
+    pub verbose: bool,
+
+    /// Open browser to server URL
+    #[arg(short = 'o', long)]
+    pub open: bool,
+
+    /// Omit the near-miss explanation from unmatched (404) responses
+    #[arg(long)]
+    pub no_explain: bool,
 }
